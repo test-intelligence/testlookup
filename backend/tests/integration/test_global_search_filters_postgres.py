@@ -198,3 +198,32 @@ async def test_a_release_in_scope_filters_tests_and_releases(world):
     assert tests == {str(w.cases["match_upload"]), str(w.cases["passed"]), str(w.cases["other_suite"])}
     assert result["parsed"]["release_unresolved"] is None
     assert "defect" in result["parsed"]["unsupported_by"]
+
+
+async def test_one_test_run_three_times_is_one_hit_at_its_newest_run(world):
+    """D-17: one hit per logical test (project, fingerprint), not one per execution."""
+    w, factory = world
+    now = datetime.now(timezone.utc)
+    newest = uuid.uuid4()
+    rows = (
+        (uuid.uuid4(), w.run_old, now - timedelta(days=10)),
+        (uuid.uuid4(), w.run_upload, now - timedelta(hours=2)),
+        (newest, w.run_live, now - timedelta(hours=1)),
+    )
+    engine = create_async_engine(_dsn(), pool_size=1, max_overflow=0)
+    try:
+        async with engine.begin() as conn:
+            for case_id, run, created in rows:
+                await conn.execute(text(
+                    "INSERT INTO test_cases (id, test_run_id, test_name, status, suite_name, test_fingerprint, "
+                    "created_at) VALUES (:i, :r, :n, 'FAILED', 'API Regression', :f, :c)"
+                ), {"i": case_id, "r": run, "n": f"multi-{w.tag}", "f": f"fp-multi-{w.tag}", "c": created})
+    finally:
+        await engine.dispose()
+
+    result = await _search(factory, w.member(), f"multi-{w.tag}", entity_types="test_case")
+    hits = [i for i in result["items"] if i["entity_type"] == "test_case"]
+    assert len(hits) == 1, f"expected one hit for one test run three times, got {len(hits)}"
+    assert hits[0]["entity_id"] == str(newest)
+    assert hits[0]["navigation_url"] == f"/runs/{w.run_live}/tests/{newest}"
+    assert hits[0]["metadata"]["executions"] == 3

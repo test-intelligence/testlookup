@@ -206,6 +206,26 @@ describe('BisectNarrowing — the commits between the two builds', () => {
     )
   })
 
+  it('D-11 supplied (offline, ranges stored): the supplied commits listed with the offline-supplied line, no merge caveat', () => {
+    renderBlock(answer({
+      compare: compare({
+        state: 'supplied', reason: null, commit_count: 2, commits: commits.slice(0, 2), has_location_signal: true,
+        caveat: 'Suspects, not culprits.', run_level_commit_count: 5,
+      }),
+    }))
+    expect(document.querySelector('[data-bisect-compare-reason]')).toBeNull()
+    expect(document.querySelector('[data-bisect-supplied]')).not.toBeNull()
+    expect(document.querySelector('[data-bisect-fetched]')).toBeNull()
+    expect(document.querySelector('[data-bisect-supplied-line]')).toHaveTextContent(BISECT_SENTENCES.supplied)
+    expect(document.querySelector('[data-bisect-narrowed-heading]')).toHaveTextContent(
+      'Narrowed to 2 commits (the run-level range since the last green run has 5)',
+    )
+    expect(document.querySelectorAll('[data-bisect-commit]')).toHaveLength(2)
+    // No git host compared anything: no three-dot caveat.
+    expect(document.querySelector('[data-bisect-merge-caveat]')).toBeNull()
+    expect(compareLine(answer({ compare: compare({ state: 'supplied', reason: null }) }))).toBeNull()
+  })
+
   it('same commit: no code change explains the failure', () => {
     renderBlock(answer({ bad: { ...BAD, commit_hash: 'GOODSENTINEL01' }, compare: compare({ state: 'not_attempted', reason: 'same_commit' }) }))
     expect(document.querySelector('[data-bisect-compare-reason]')).toHaveTextContent(BISECT_SENTENCES.same_commit)

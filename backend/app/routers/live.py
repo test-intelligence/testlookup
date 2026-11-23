@@ -601,6 +601,25 @@ async def _record_ws_session(
     return outcome
 
 
+def bootstrap_session_states(active: list[dict], project_id: str) -> list[dict]:
+    """The project's active Redis sessions in the shape ``/stream/active`` returns.
+
+    D-86 (2026-11-21): ``initial_state`` / ``reconcile_required`` sent the raw
+    Redis payloads, which carry no ``test_run_id``, so a row the socket
+    bootstrapped linked to ``/runs/<the SDK's id>`` (a slug the run page
+    refuses). Each payload goes through the same builder the poll uses. Keys
+    whose value is None are left out, so a client merging these rows over the
+    ones the poll gave it keeps what only the poll knows (``run_seq``).
+    """
+    from app.services.stream_service import build_live_session_state
+
+    return [
+        build_live_session_state(s).model_dump(mode="json", exclude_none=True)
+        for s in active
+        if s.get("project_id") == project_id
+    ]
+
+
 # ── WebSocket endpoint ─────────────────────────────────────────────────────
 
 @router.websocket("/live/{project_id}")
@@ -680,7 +699,7 @@ async def live_updates(websocket: WebSocket, project_id: str):
             async with project_delivery_lock(project_id):
                 high_water = await latest_live_sequence(project_id)
                 active = await RedisLiveRunState.get_all_active()
-                project_sessions = [s for s in active if s.get("project_id") == project_id]
+                project_sessions = bootstrap_session_states(active, project_id)
                 replay: list[dict] = []
                 if session.last_event_id:
                     replay, reconcile = await replay_live_notifications(

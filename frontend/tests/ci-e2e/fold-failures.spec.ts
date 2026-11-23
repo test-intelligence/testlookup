@@ -13,9 +13,9 @@
  * the rollout specs).
  */
 import { expect, test, type Page } from '@playwright/test'
-import { landmark } from '../lib/production-pages'
+import { landmark, type ApiRequest } from '../lib/production-pages'
 import { MAIN, networkQuiet, openRollout, requestsTo } from '../lib/rollout'
-import { FAILURES_ON, TOP_FAILING_PATH } from '../visual/production/fixtures'
+import { FAILURES_ON, TOP_FAILING_PATH, offlineNarrowing } from '../visual/production/fixtures'
 
 /** The fold budget of the page template (§2): primary content top, px below the scroller's top. */
 const FOLD_BUDGET_PX = 300
@@ -122,9 +122,24 @@ const ROWS_WITH_RUNS = [
 
 const SUSPECTS = /^\/api\/v1\/runs\/[^/]+\/suspects$/
 
+/**
+ * D-11: Suspects ranks against the narrowing's first failure. In this world each row's last failure IS its
+ * first one (a streak of one), so the default narrowing's `bad` (the fixtures' newest run) is moved onto the
+ * requested run -- the panel must still ask for the row's own run, never the project's newest failed one.
+ */
+const STREAK_OF_ONE = (request: ApiRequest) => {
+  const answer = offlineNarrowing(request) as { run_id: string; bad: Record<string, unknown> }
+  const row = ROWS_WITH_RUNS.find((r) => r.last_failed_run_id === answer.run_id)
+  return { ...answer, bad: { ...answer.bad, run_id: answer.run_id, build_number: row?.last_failed_build ?? answer.bad.build_number } }
+}
+
 test("a row's Suspects asks for the run of that test's own last failure", async ({ page }) => {
   const { api, errors } = await openRollout(page, '/failures', {
-    handlers: [[TOP_FAILING_PATH, () => ({ items: ROWS_WITH_RUNS })], ...FAILURES_ON],
+    handlers: [
+      [TOP_FAILING_PATH, () => ({ items: ROWS_WITH_RUNS })],
+      [/^\/api\/v1\/runs\/[^/]+\/bisect$/, STREAK_OF_ONE],
+      ...FAILURES_ON,
+    ],
     ready,
   })
   await networkQuiet(page, api)
@@ -133,7 +148,8 @@ test("a row's Suspects asks for the run of that test's own last failure", async 
   await table.getByRole('button', { name: 'Suspects for checkout total includes tax' }).click()
   const panel = page.getByRole('complementary', { name: 'Suspects: checkout total includes tax' })
   await expect(panel.getByTestId('suspects-run')).toContainText('in run build-127')
-  await expect(panel.getByRole('link', { name: 'build-127' })).toHaveAttribute('href', '/runs/run-older')
+  // The panel also shows the narrowing's first-failure link (#build-127, D-11): read the Suspects run line's own.
+  await expect(panel.getByTestId('suspects-run').getByRole('link', { name: 'build-127' })).toHaveAttribute('href', '/runs/run-older')
   await expect.poll(() => requestsTo(api, SUSPECTS)).toEqual([
     'GET /api/v1/runs/run-older/suspects?fingerprint=fp-hon05-1',
   ])

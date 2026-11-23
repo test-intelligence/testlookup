@@ -122,6 +122,16 @@ const recommendationTone = (recommendation: string) => ({
 });
 
 /**
+ * D-139: a failed request's toast carries the server's sentence ("No release
+ * decision found for this run…"), never Axios's "Request failed with status
+ * code 404". A 404 is not toasted globally, so this toast is the only one.
+ */
+const serverError = (err: unknown, fallback: string): string => {
+  const detail = (err as { response?: { data?: { detail?: unknown } } } | null)?.response?.data?.detail;
+  return extractErrorMessage(detail, fallback);
+};
+
+/**
  * "What would this policy have said about run X?" — the document as edited
  * (saved or not) against a past run, beside the form at >= 1280 px.
  *
@@ -144,7 +154,7 @@ function PolicySimulator({
       const result = await simulatePolicy(simRunId.trim(), doc);
       setSimResult(result);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Simulation failed');
+      toast.error(serverError(err, 'Simulation failed'));
     } finally {
       setSimulating(false);
     }
@@ -365,7 +375,7 @@ export default function PolicyEditorPage() {
       toast.success(`Draft v${created.version} created from v${loadedPolicy.version}.`);
       navigate(`/policies/${created.id}`);
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Could not create the draft');
+      toast.error(serverError(err, 'Could not create the draft'));
     } finally {
       setBranching(false);
     }
@@ -377,7 +387,7 @@ export default function PolicyEditorPage() {
       toast.success('Policy deactivated');
       refreshPolicies();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Failed');
+      toast.error(serverError(err, 'Could not deactivate the policy'));
     }
   };
 

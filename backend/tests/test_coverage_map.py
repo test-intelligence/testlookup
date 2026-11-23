@@ -219,7 +219,7 @@ def test_both_populations_carry_the_tenant_and_is_active_guard():
 def test_deleted_canonicals_are_excluded_and_the_window_is_a_bind():
     sql, params = svc.build_statement(svc.CoverageLevel(1), _scope(days=7), now=FROZEN)
     assert "WHERE c.status <> 'deleted'" in sql
-    assert "tr.created_at >= :period_start" in sql
+    assert "COALESCE(tr.start_time, tr.created_at) >= :period_start" in sql
     assert params["period_start"] == datetime(2026, 9, 15, tzinfo=timezone.utc)
 
 

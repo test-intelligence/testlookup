@@ -36,13 +36,13 @@ from typing import Any, Optional
 
 import httpx
 import structlog
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.db.postgres import release_read_connection
 from app.db.redis_client import get_redis
-from app.models.postgres import LaunchStatus, TestCase, TestRun, TestStatus
+from app.models.postgres import LaunchStatus, RunCommitRange, TestCase, TestRun, TestStatus
 from app.models.schemas import BisectResponse
 from app.services import commit_attribution_service as cas
 from app.services import github_checks_service, github_target
@@ -236,6 +236,57 @@ async def _resolve_target(db: AsyncSession, run: TestRun) -> tuple[Optional[str]
     return None, None
 
 
+def _ranked_with_links(
+    commits: list[dict[str, Any]], loc: Any, ci_repo: Optional[str], api_base: Optional[str],
+) -> list[dict[str, Any]]:
+    """``score_commits`` plus each commit's link (the host's ``web_url``, else one built on the project's host)."""
+    ranked = cas.score_commits(commits, loc)
+    web_urls = {c.get("sha"): c.get("web_url") for c in commits if c.get("web_url")}
+    for item in ranked:
+        sha = item.get("sha") or ""
+        item["commit_url"] = web_urls.get(sha) or cas._commit_html_url(ci_repo, api_base, sha)
+    return ranked
+
+
+async def _supplied_between(db: AsyncSession, run: TestRun, narrowing: Narrowing) -> list[dict[str, Any]]:
+    """The commits the CI supplied with the builds after ``good`` up to and including ``bad`` (D-11).
+
+    ONE read of ``run_commit_ranges`` rows with ``source = supplied`` for the
+    runs of ``bad``'s branch series (the walk's series key) created after the
+    good build and no later than the bad one -- the runs the walk stepped over,
+    capped list or not. Oldest first (each row is oldest -> newest), de-duplicated
+    by sha (the first occurrence wins); a commit without a sha is kept."""
+    good, bad = narrowing.good, narrowing.bad
+    if good is None or bad is None:
+        return []
+    result = await db.execute(
+        select(RunCommitRange.commits)
+        .join(TestRun, TestRun.id == RunCommitRange.run_id)
+        .where(
+            RunCommitRange.project_id == run.project_id,
+            TestRun.project_id == run.project_id,
+            RunCommitRange.source == cas.SOURCE_SUPPLIED,
+            func.coalesce(func.lower(TestRun.branch), "") == series_key(bad.branch),
+            TestRun.created_at > good.created_at,
+            TestRun.created_at <= bad.created_at,
+        )
+        .order_by(TestRun.created_at.asc(), TestRun.id.asc())
+    )
+    seen: set[str] = set()
+    commits: list[dict[str, Any]] = []
+    for (row_commits,) in result.all():
+        for commit in row_commits or []:
+            if not isinstance(commit, dict):
+                continue
+            sha = str(commit.get("sha") or "").strip().lower()
+            if sha:
+                if sha in seen:
+                    continue
+                seen.add(sha)
+            commits.append(commit)
+    return commits
+
+
 async def compare_narrowed(
     db: AsyncSession,
     run: TestRun,
@@ -254,15 +305,32 @@ async def compare_narrowed(
     gate = compare_gate(narrowing)
     if gate is not None:
         return _compare("not_attempted", gate, run_level_commit_count=rlcc)
-    if settings.AI_OFFLINE_MODE:
-        return _compare("unavailable", "offline_mode", run_level_commit_count=rlcc)
     if narrowing.good is None or narrowing.bad is None:  # compare_gate already said so; for the type checker
         return _compare("not_attempted", "not_narrowed", run_level_commit_count=rlcc)
+    async def _supplied_or(reason: str) -> dict:
+        # D-11: the commits the CI SUPPLIED with the builds after the pass up to
+        # the first failure are already stored: list those whenever the host
+        # cannot be asked (offline, or no usable integration). Only when none of
+        # those builds carries a supplied range is the answer ``reason``.
+        supplied = await _supplied_between(db, run, narrowing)
+        if not supplied:
+            return _compare("unavailable", reason, run_level_commit_count=rlcc)
+        test_cases = await cas._target_test_cases(db, run, cluster_id=None, fingerprint=fingerprint)
+        loc = cas.build_locator(test_cases)
+        api_base = await cas._commit_link_api_base(db, run)
+        return _compare(
+            "supplied", None, commit_count=len(supplied),
+            commits=_ranked_with_links(supplied, loc, run.ci_repo, api_base)[:LISTED_COMMITS_MAX],
+            has_location_signal=bool(loc.has_signal), caveat=cas.MONOREPO_CAVEAT, run_level_commit_count=rlcc,
+        )
+
+    if settings.AI_OFFLINE_MODE:
+        return await _supplied_or("offline_mode")
 
     host, target = await _resolve_target(db, run)
     if target is None or host is None:
         reason, _api_base = await github_target.github_target_status(db, run.project_id, ci_repo=run.ci_repo)
-        return _compare("unavailable", reason or "no_integration", run_level_commit_count=rlcc)
+        return await _supplied_or(reason or "no_integration")
     test_cases = await cas._target_test_cases(db, run, cluster_id=None, fingerprint=fingerprint)
     loc = cas.build_locator(test_cases)
     api_base = await cas._commit_link_api_base(db, run)
@@ -302,11 +370,7 @@ async def compare_narrowed(
         commits = _cacheable(fetched)
         await _cache_set(key, {"host": host, "commits": commits}, COMPARE_CACHE_TTL_SECONDS, run_id=run_id)
 
-    ranked = cas.score_commits(commits, loc)
-    web_urls = {c.get("sha"): c.get("web_url") for c in commits if c.get("web_url")}
-    for item in ranked:
-        sha = item.get("sha") or ""
-        item["commit_url"] = web_urls.get(sha) or cas._commit_html_url(ci_repo, api_base, sha)
+    ranked = _ranked_with_links(commits, loc, ci_repo, api_base)
     return _compare(
         "fetched", None, host=host, cached=cached is not None, commit_count=len(commits),
         truncated=len(commits) >= cas._MAX_COMMITS, commits=ranked[:LISTED_COMMITS_MAX],

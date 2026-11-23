@@ -35,6 +35,44 @@ export function isRunCompletion(event: Pick<LiveEvent, 'type' | 'run_id'>): bool
   return event.type === 'live_run_complete' && !!event.run_id
 }
 
+/**
+ * D-87 (2026-11-21): the one key a session row is known by on this page.
+ *
+ * The server lists a run under the SDK's id (`ci-build-42`) from Redis and
+ * LiveSession rows, but under its UUID from the TestRun fallback, so keying by
+ * `run_id` alone held one run twice for up to the bridge's grace period.
+ * `test_run_id` is the canonical TestRun id every source agrees on.
+ */
+export function sessionKey(s: Pick<LiveSessionState, 'run_id' | 'test_run_id'>): string {
+  return s.test_run_id || s.run_id
+}
+
+/** The row an event is about: the same SDK id, or the same canonical run id when the event names one. */
+function isSameRun(s: LiveSessionState, event: Pick<LiveEvent, 'run_id' | 'test_run_id'>): boolean {
+  return s.run_id === event.run_id || (!!event.test_run_id && s.test_run_id === event.test_run_id)
+}
+
+/**
+ * D-94 (2026-11-21): fold a socket bootstrap (`initial_state` /
+ * `reconcile_required`) into the rows the page already holds.
+ *
+ * The bootstrap lists the ACTIVE runs only. Replacing the list with it threw
+ * away the completed sessions the first poll had loaded, and the table read
+ * "No active execution sessions" until the next poll. Completed rows are kept;
+ * running rows are what the bootstrap says, each laid over the row the page
+ * held for it so fields only the poll knows (`run_seq`) survive.
+ */
+export function mergeBootstrapSessions(
+  prev: LiveSessionState[],
+  active: LiveSessionState[],
+): LiveSessionState[] {
+  const held = new Map(prev.map(s => [sessionKey(s), s]))
+  const activeRows = active.map(s => ({ ...held.get(sessionKey(s)), ...s }))
+  const activeKeys = new Set(activeRows.map(sessionKey))
+  const kept = prev.filter(s => s.status !== 'running' && !activeKeys.has(sessionKey(s)))
+  return [...activeRows, ...kept]
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
@@ -102,11 +140,14 @@ export function expandLiveFrame(
 /** One update applied to the sessions table: the hook's three branches before W25e, unchanged. */
 function applyLiveUpdate(prev: LiveSessionState[], event: LiveEvent): LiveSessionState[] {
   if (event.type === 'live_run_started') {
-    const exists = prev.some(s => s.run_id === event.run_id)
+    const exists = prev.some(s => isSameRun(s, event))
     if (exists) return prev
     return [
       {
         run_id: event.run_id ?? '',
+        // D-86: the canonical TestRun id the server now sends with the start
+        // frame; without it the row links to the SDK's id, which /runs refuses.
+        ...(event.test_run_id ? { test_run_id: event.test_run_id } : {}),
         project_id: event.project_id ?? '',
         build_number: event.build_number ?? '',
         status: 'running',
@@ -118,7 +159,7 @@ function applyLiveUpdate(prev: LiveSessionState[], event: LiveEvent): LiveSessio
   }
   if (event.type === 'live_test_result' && event.run_id) {
     return prev.map(s =>
-      s.run_id === event.run_id
+      isSameRun(s, event)
         ? {
             ...s,
             passed:     event.passed  ?? s.passed,
@@ -135,7 +176,7 @@ function applyLiveUpdate(prev: LiveSessionState[], event: LiveEvent): LiveSessio
   }
   if (isRunCompletion(event)) {
     return prev.map(s =>
-      s.run_id === event.run_id
+      isSameRun(s, event)
         ? {
             ...s,
             status: 'completed',

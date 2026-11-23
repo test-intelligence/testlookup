@@ -76,7 +76,7 @@ def test_the_statement_carries_the_tenant_guard_and_the_failing_statuses():
     sql, params = svc.build_statement(_scope(), include_edges=False, now=NOW)
     assert "is_active" in sql  # the life-cycle guard of the shared tenant helper
     assert "tc.status IN ('FAILED', 'BROKEN')" in sql
-    assert "tr.created_at >= :period_start" in sql
+    assert "COALESCE(tr.start_time, tr.created_at) >= :period_start" in sql
     assert params["period_start"] == datetime(2026, 8, 23, tzinfo=timezone.utc)
     # The signature patterns are binds, merged in.
     assert {"fsig_space", "fsig_first_line", "fsig_noise_template", "fsig_word", "fsig_digit",

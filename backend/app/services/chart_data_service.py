@@ -72,6 +72,7 @@ from app.models.viz_contracts import MAX_POINTS_PER_SERIES, MAX_SERIES
 # every branch. Re-spelling it here is exactly the drift that read a deleted
 # project's runs into the trend chart at 229x the true number.
 from app.services.analytics_service import _tenant_filter as tenant_filter_sql
+from app.services.run_time import RUN_TIME_SQL
 from app.services.analytics_scope import (
     AnalyticsScope,
     cache_identity,
@@ -164,11 +165,11 @@ _EFFECTIVE_SUITE = effective_suite_sql()
 #:   fragments -- inherit it. Keys, grouping and filters are unchanged.
 DIMENSIONS: dict[str, DimensionDef] = {
     "day": DimensionDef(
-        sql="TO_CHAR(DATE_TRUNC('day', tr.created_at AT TIME ZONE 'UTC'), 'YYYY-MM-DD')",
+        sql=f"TO_CHAR(DATE_TRUNC('day', {RUN_TIME_SQL} AT TIME ZONE 'UTC'), 'YYYY-MM-DD')",
         time=True,
     ),
     "week": DimensionDef(
-        sql="TO_CHAR(DATE_TRUNC('week', tr.created_at AT TIME ZONE 'UTC'), 'YYYY-MM-DD')",
+        sql=f"TO_CHAR(DATE_TRUNC('week', {RUN_TIME_SQL} AT TIME ZONE 'UTC'), 'YYYY-MM-DD')",
         time=True,
     ),
     "project": DimensionDef(sql="tr.project_id::text", entity="project"),
@@ -898,7 +899,7 @@ def build_statement(
         SELECT
             {', '.join(select_parts)}
         {source}
-        WHERE tr.created_at >= :period_start
+        WHERE {RUN_TIME_SQL} >= :period_start
           {tenant_filter_sql(
               params,
               project_id=scope.project,
@@ -1255,7 +1256,7 @@ def assemble(
         axis = list(buckets)
         other_buckets: list[str] = []
         on_axis = set(axis)
-        # A run whose ``created_at`` is in the future buckets past the last day
+        # A run whose run time is in the future buckets past the last day
         # of a generated axis. It used to vanish silently; it is counted and
         # declared instead (``outside_window``).
         outside_axis = sorted(
@@ -1565,7 +1566,7 @@ def build_comparability_statement(
                 {series_out} AS series_key,
                 {DIMENSIONS['suite'].sql} AS suite_key
             FROM test_cases tc JOIN test_runs tr ON tr.id = tc.test_run_id
-            WHERE tr.created_at >= :period_start
+            WHERE {RUN_TIME_SQL} >= :period_start
               {tenant_filter_sql(
                   params,
                   project_id=scope.project,
@@ -1710,6 +1711,12 @@ def definitions(
             "contributes nothing here."
         ),
         "timezone": "UTC",
+        "run_time": (
+            "A run is placed by when it executed: test_runs.start_time (the "
+            "executed_at a report carried), else when it was received "
+            "(created_at). The window and the day/week buckets read the same "
+            "time, so a backfilled run lands on the day it ran."
+        ),
         "bucket": (
             "ISO weeks, labelled by their Monday, in UTC. The first week reaches "
             "back to its Monday, so it holds only the part inside the window."
@@ -1742,7 +1749,8 @@ def definitions(
     }
     if DIMENSIONS[spec.bucket_dimension].time:
         out["outside_window"] = (
-            "A run whose created_at is after the current UTC day falls outside "
+            "A run whose run time (start_time, else created_at) is after the "
+            "current UTC day falls outside "
             "the generated axis. It is not drawn; meta.outside_window counts "
             "what it held, so a clock-skewed run is missing loudly rather than "
             "quietly."

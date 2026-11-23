@@ -132,7 +132,7 @@ describe('RunPicker — the server is searched, not the page\'s 100 runs', () =>
   it('shows the selected run in today\'s words (read once, by id)', async () => {
     svc.getRun.mockResolvedValue(run(7, { id: RUN_UUID, status: 'FAILED', branch: 'release/2.4' }))
     renderPicker({ value: RUN_UUID })
-    await waitFor(() => expect(screen.getByTestId('compare-left-picker')).toHaveTextContent(/^Run #7 · FAILED · release\/2\.4 · /))
+    await waitFor(() => expect(screen.getByTestId('compare-left-picker')).toHaveTextContent(/^Build 207 · Run #7 · FAILED · release\/2\.4 · /))
     expect(svc.getRun).toHaveBeenCalledWith(RUN_UUID, { suppressToast: true })
   })
 })

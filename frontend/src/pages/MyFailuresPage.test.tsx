@@ -183,10 +183,10 @@ describe('MyFailuresPage', () => {
     // Suite context renders alongside the test name. Project name is
     // intentionally omitted per-row (it's chosen in the global project
     // dropdown — see the row comment in MyFailuresPage.tsx), and the run
-    // identifier shows the raw build_number ("42") / "Run #N", not a
-    // "Build N" label.
+    // identifier is the build label (D-67: a bare number reads "Build 42"),
+    // with "Run #N" muted beside it when the run has one.
     expect(screen.getByText('AuthSuite')).toBeInTheDocument()
-    expect(screen.getByText('42')).toBeInTheDocument()
+    expect(screen.getByText('Build 42')).toBeInTheDocument()
   })
 
   it('shows the CODEOWNERS assignment reason when present (US-8.4)', async () => {
@@ -229,6 +229,8 @@ describe('MyFailuresPage', () => {
     renderPage()
 
     expect(await screen.findByText('Run #5')).toBeInTheDocument()
+    // D-67: the build label leads; "Run #5" is only the per-suite ordinal.
+    expect(screen.getByText('Build 99')).toBeInTheDocument()
     expect(screen.getByText('Jun 08, 14:30')).toBeInTheDocument()
   })
 

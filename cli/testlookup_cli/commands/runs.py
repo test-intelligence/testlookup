@@ -21,13 +21,18 @@ MAX_SLOWEST = 100
 def list_runs(
     project: str = typer.Option(None, "--project", "-p", help="Project ID"),
     status: str = typer.Option(None, "--status", "-s", help="Filter by status"),
+    days: int = typer.Option(
+        30, "--days", min=0, max=365, help="Runs from the last N days; 0 = all time (the API's default is 30)",
+    ),
     page: int = typer.Option(1, "--page"),
     size: int = typer.Option(20, "--size"),
     profile_name: str = typer.Option(None, "--profile"),
     output_format: str = typer.Option("table", "--output", "-o"),
 ):
-    """List test runs."""
-    params: dict = {"page": page, "size": size}
+    """List test runs from the last 30 days (--days; 0 = all time)."""
+    # D-121: the window used to be the API's unstated 30 days, with no way to
+    # ask for all time; it is sent, and the table title names it.
+    params: dict = {"page": page, "size": size, "days": days}
     if project:
         params["project_id"] = project
     if status:
@@ -36,10 +41,13 @@ def list_runs(
     try:
         data = asyncio.run(client.request("GET", "/api/v1/runs", params=params, profile_name=profile_name))
         items = data.get("items", []) if isinstance(data, dict) else data
+        total = data.get("total") if isinstance(data, dict) else None
+        window = "all time" if days == 0 else f"last {days} day{'' if days == 1 else 's'}"
+        count = f"{total} total, " if isinstance(total, int) else ""
         output.render(
             items, output_format,
             columns=["id", "build_number", "branch", "status", "pass_rate", "total_tests", "failed_tests", "created_at"],
-            title="Test Runs",
+            title=f"Test Runs ({count}{window})",
         )
     except Exception as e:
         output.print_error(str(e))

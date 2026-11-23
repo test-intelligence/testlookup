@@ -23,13 +23,15 @@ import type { LiveSessionState } from '@/types/live-stream'
 import { LIVE_PROTOCOL_BATCH, LIVE_RECONCILE_FRAME } from '@/types/liveFrames'
 import { REFRESH_INTERVALS } from '@/config/refreshIntervals'
 import { keyPart, type ScopeValue } from '@/lib/scopeParams'
-import { applyLiveUpdates, expandLiveFrame, isRunCompletion } from './liveFrameModel'
+import { applyLiveUpdates, expandLiveFrame, isRunCompletion, mergeBootstrapSessions, sessionKey } from './liveFrameModel'
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
 export interface LiveEvent {
   type: string
   run_id?: string
+  /** The canonical TestRun id (a `live_run_started` frame carries it, D-86). */
+  test_run_id?: string | null
   build_number?: string
   project_id?: string
   last_test?: string
@@ -126,9 +128,12 @@ export function mergeBridgedSessions(
   apiSessions: LiveSessionState[],
   nowMs: number,
 ): LiveSessionState[] {
-  const apiRunIds = new Set(apiSessions.map(s => s.run_id))
+  // D-87: matched on the canonical run id. The API can list a run under its
+  // UUID while the page holds it under the SDK's id; matching on `run_id`
+  // alone bridged the held row next to the API's, and the run showed twice.
+  const apiKeys = new Set(apiSessions.flatMap(s => [s.run_id, sessionKey(s)]))
   const localOnly = prev.filter(s => {
-    if (s.status !== 'completed' || apiRunIds.has(s.run_id)) return false
+    if (s.status !== 'completed' || apiKeys.has(s.run_id) || apiKeys.has(sessionKey(s))) return false
     const completedAt = s.completed_at ? new Date(s.completed_at).getTime() : 0
     return completedAt > 0 && nowMs - completedAt < SESSION_RACE_GRACE_MS
   })
@@ -156,7 +161,13 @@ export function useLiveExecution(projectId?: string, suiteName?: ScopeValue, day
   useEffect(() => { tokenRef.current = token }, [token])
 
   // ── SWR polling (initial load + fallback when WS is down) ──────────────
-  const { data, mutate } = useSWR(
+  // D-94: set once the first poll has answered (or failed). Until then the
+  // page shows its loading state, even if a socket bootstrap lands first: that
+  // frame lists the active runs only, so the table read "No active execution
+  // sessions" and then filled in the completed ones. Never reset, so changing
+  // the window does not flash the spinner.
+  const [polledOnce, setPolledOnce] = useState(false)
+  const { mutate } = useSWR(
     // `keyPart`: one suite stays the scalar key it always was; several enter
     // as one sorted joined string, never an array rebuilt per render.
     ['live-active', projectId, keyPart(suiteName), days],
@@ -164,8 +175,12 @@ export function useLiveExecution(projectId?: string, suiteName?: ScopeValue, day
     {
       refreshInterval: wsStatus === 'open' ? 10_000 : 5_000,
       revalidateOnFocus: false,
+      onError: () => {
+        if (mountedRef.current) setPolledOnce(true)
+      },
       onSuccess: (d) => {
         if (!mountedRef.current) return
+        setPolledOnce(true)
         // Merge: keep any locally-tracked completed sessions not yet in the API response
         // (race window between WS push and SWR re-fetch)
         setSessions(prev => mergeBridgedSessions(prev, d.sessions, Date.now()))
@@ -225,12 +240,18 @@ export function useLiveExecution(projectId?: string, suiteName?: ScopeValue, day
       lastEventIdsRef.current[cursorKey] = sequenceId
     }
 
+    // D-94: a bootstrap lists the active runs only; merge it, never replace
+    // the list with it (that dropped the completed sessions the poll loaded).
     if (type === 'initial_state' && Array.isArray(msg.sessions)) {
-      setSessions(msg.sessions as LiveSessionState[])
+      const active = msg.sessions as LiveSessionState[]
+      setSessions(prev => mergeBootstrapSessions(prev, active))
       return
     }
     if (type === 'reconcile_required') {
-      if (Array.isArray(msg.sessions)) setSessions(msg.sessions as LiveSessionState[])
+      if (Array.isArray(msg.sessions)) {
+        const active = msg.sessions as LiveSessionState[]
+        setSessions(prev => mergeBootstrapSessions(prev, active))
+      }
       void mutate()
       return
     }
@@ -353,7 +374,8 @@ export function useLiveExecution(projectId?: string, suiteName?: ScopeValue, day
     recentEvents,
     wsStatus,
     stats,
-    isLoading: !data && !sessions.length,
+    // D-94: loading until the first poll answers (or fails), see `polledOnce`.
+    isLoading: !polledOnce,
     mutate,
   }
 

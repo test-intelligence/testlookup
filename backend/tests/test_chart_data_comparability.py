@@ -303,7 +303,7 @@ def test_it_carries_the_chart_s_scope_fragments() -> None:
         _scope(release_ids=(R1, R2), suite_names=("Checkout",)),
     )
     for fragment in (
-        "tr.created_at >= :period_start",
+        "COALESCE(tr.start_time, tr.created_at) >= :period_start",
         "tr.project_id = :project_id",
         "tr.primary_release_id IN :release_ids",
         "IN :suite_names" if "suite_names" in chart_params else "= :suite_name",

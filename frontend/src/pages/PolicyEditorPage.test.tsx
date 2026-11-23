@@ -410,6 +410,21 @@ describe('the editor layout (UX redesign P5 item 6)', () => {
     )
     expect(screen.getByText('CONDITIONAL_GO')).toBeInTheDocument()
   })
+
+  // D-139: the toast read Axios's "Request failed with status code 404" and dropped the server's sentence.
+  it('a refused simulation shows the server sentence, not the status code', async () => {
+    const { simulatePolicy } = await import('../services/policyService')
+    const detail = 'No release decision found for this run. Trigger deep investigation first.'
+    ;(simulatePolicy as ReturnType<typeof vi.fn>).mockRejectedValue(
+      Object.assign(new Error('Request failed with status code 404'), { response: { status: 404, data: { detail } } }),
+    )
+    mockToastError.mockClear()
+    renderAt('/policies/new')
+    fireEvent.change(screen.getByLabelText('Run ID'), { target: { value: 'run-54' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Simulate' }))
+    await waitFor(() => expect(mockToastError).toHaveBeenCalledWith(detail))
+    expect(mockToastError).not.toHaveBeenCalledWith(expect.stringMatching(/status code/))
+  })
 })
 
 describe('the list (UX redesign P5)', () => {

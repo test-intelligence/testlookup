@@ -176,6 +176,31 @@ Existing usernames that contain `@` keep working for sign-in.
 | `POST /deep-investigate/{run_id}` in Rules mode | accepted | 422 "requires LLM or Auto mode" |
 | `POST /analyze` for a test with a human correction | returns the correction | the engine's answer, replacing the correction |
 
+### Results, history and run names (batch 3)
+
+- **Charts, dashboard windows and the Runs list window use a run's execution
+  time** (`coalesce(start_time, created_at)`) instead of its upload time. A
+  back-filled run moves to the day it ran. Migration `0259` adds the matching
+  index `ix_test_runs_project_run_time` (built `CONCURRENTLY`). The Summary
+  report still windows on upload time. In chart-rows answers, `created_at`
+  now holds the run time.
+- `POST /api/v1/ingest` accepts `executed_at`, and its `task_id` can be polled
+  at `GET /api/v1/ingest/uploads/{task_id}` (it always answered 404). A batch
+  for a deleted build fails at once with `run_deleted` instead of retrying; a
+  failed batch leaves a `run.ingest_failed` activity and its queued object is
+  deleted. On `POST /ingest/file`, a `commit_range` that is not JSON is a 422.
+- The regression diff's baseline is the newest earlier passing run on the
+  same branch by execution time; its answer adds `baseline_kind`,
+  `baseline_threshold` and `first_failing_test`. The bisect compare can answer
+  `state: "supplied"` with the commits stored with the builds.
+- Project export keeps commit SHAs, `sha256:` digests and long file paths
+  instead of redacting them. Real tokens are still redacted.
+- Search returns one hit per test (with its run count), not one per execution.
+- **MCP tools default to a 30-day window** (was 7) to match the API, and say
+  which window they read. `testlookup runs list` gains `--days` (default 30).
+- The CLI warns when a saved profile overrides `TESTLOOKUP_API_KEY` or
+  `TESTLOOKUP_URL`; `ci-verdict` also takes the run id as an argument.
+
 ### Overrides, reports and approvals (batch 2b)
 
 - An override now queues a snapshot rebuild on the `default` queue; the Runs

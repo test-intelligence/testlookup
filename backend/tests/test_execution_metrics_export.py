@@ -239,6 +239,8 @@ def run_api():
             return _result(scalar=uuid.uuid4() if state["member"] else None)
         if "FROM test_cases tc" in sql:
             return _result(rows=state["cases"][: params["limit"]])
+        if "live_sessions" in sql:  # the guard's streaming-run fallback (D-86): no session
+            return _result(scalar=None)
         if "test_runs.build_number" in sql:
             found = state["run_project"] is not None
             return _result(one=SimpleNamespace(id=RUN, build_number=state["build"]) if found else None)

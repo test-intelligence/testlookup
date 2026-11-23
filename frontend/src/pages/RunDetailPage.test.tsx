@@ -83,7 +83,7 @@ describe('RunDetailPage', () => {
       </MemoryRouter>,
     )
 
-    expect(await screen.findByText(/Run #42/i)).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { level: 1, name: 'Build 42' })).toBeInTheDocument()
 
     mockProjectState.activeProjectId = 'proj-2'
     mockProjectState.activeProject = { id: 'proj-2', name: 'Project Two' }
@@ -226,7 +226,7 @@ describe('RunDetailPage — the release chip', () => {
         </Routes>
       </MemoryRouter>,
     )
-    await screen.findByText(/Run #42/i)
+    await screen.findByRole('heading', { level: 1, name: 'Build 42' })
   }
 
   it('reads Unattributed for a run no release claims, and still opens the release input', async () => {

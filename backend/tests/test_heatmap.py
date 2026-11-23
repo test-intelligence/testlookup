@@ -263,7 +263,7 @@ def test_rows_and_columns_are_ranked_and_cut_in_sql() -> None:
 def test_test_run_columns_are_the_last_runs_by_time_then_id() -> None:
     """M-205e: never by build label -- labels repeat and sort as text."""
     sql, params = svc.build_statement(_spec("test_run"), _scope(), now=FROZEN)
-    assert "ORDER BY tr.created_at DESC, tr.id DESC" in sql
+    assert "ORDER BY COALESCE(tr.start_time, tr.created_at) DESC, tr.id DESC" in sql
     assert "LIMIT :heatmap_runs" in sql
     assert "build_number DESC" not in sql
     assert 'ORDER BY fails DESC, y_key COLLATE "C" ASC' in sql

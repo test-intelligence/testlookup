@@ -191,7 +191,7 @@ def test_readiness_states_the_server_verdict_and_its_downgrades(monkeypatch):
     text = _run(tools, "check_release_readiness", "proj-1")
 
     # D-120: the windowed project signal is named as such, never "Release Readiness".
-    assert "Project readiness (last 7 days): **RED** (policy band: red)" in text
+    assert "Project readiness (last 30 days): **RED** (policy band: red)" in text
     assert "Release Readiness" not in text
     assert "| Avg Pass Rate | **96.4%** |" in text
     assert "### ❌ Blockers (policy hard caps that fired)" in text
@@ -217,7 +217,7 @@ def test_readiness_without_downgrades_lists_no_blockers(monkeypatch, readiness, 
     tools, _ = _tools(monkeypatch, summary)
     text = _run(tools, "check_release_readiness", "proj-1")
 
-    assert f"Project readiness (last 7 days): **{readiness}**" in text
+    assert f"Project readiness (last 30 days): **{readiness}**" in text
     assert words in text
     # D-120: AMBER is not translated into a release recommendation.
     assert "Conditional Go" not in text
@@ -322,7 +322,7 @@ def test_an_amber_project_with_a_no_go_release_leads_with_the_release(monkeypatc
     first_heading = next(line for line in text.splitlines() if line.startswith("#"))
     assert first_heading == "## 🔴 Active release 2026.11: **NO_GO**, 5 blockers"
     assert "- CRITICAL defect open: Card declined" in text
-    assert "### 🟡 Project readiness (last 7 days): **AMBER** (policy band: orange)" in text
+    assert "### 🟡 Project readiness (last 30 days): **AMBER** (policy band: orange)" in text
     recommendation = text.split("### Recommendation")[1]
     assert "**No-Go**" in recommendation and "2026.11" in recommendation
     assert "Conditional Go" not in text
@@ -334,7 +334,7 @@ def test_an_amber_project_with_a_go_release_lists_it_and_does_not_say_conditiona
     tools, _ = _tools(monkeypatch, _amber_with_releases([go, never]))
     text = _run(tools, "check_release_readiness", "proj-1")
 
-    assert text.splitlines()[0].startswith("## 🟡 Project readiness (last 7 days): **AMBER**")
+    assert text.splitlines()[0].startswith("## 🟡 Project readiness (last 30 days): **AMBER**")
     active = text.split("### Active releases")[1].split("###")[0]
     assert "- 2026.12: 🟢 **GO**" in active
     assert "- 2027.01: gate not evaluated yet" in active
@@ -347,7 +347,7 @@ def test_a_failed_release_read_is_reported_not_fatal(monkeypatch):
     tools, _ = _tools(monkeypatch, _amber_with_releases(error))
     text = _run(tools, "check_release_readiness", "proj-1")
 
-    assert "Project readiness (last 7 days): **AMBER**" in text
+    assert "Project readiness (last 30 days): **AMBER**" in text
     assert "in-progress releases could not be read (HTTP 500)" in text
 
 

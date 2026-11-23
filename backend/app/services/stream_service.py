@@ -1836,9 +1836,19 @@ def _fallback_status(run_status) -> str:
     return "running" if value == LaunchStatus.IN_PROGRESS.value else "completed"
 
 
-def build_test_run_fallback_state(run) -> LiveSessionState:
+async def _live_session_run_ids(db: AsyncSession, run_ids: list[uuid.UUID]) -> dict[uuid.UUID, str]:
+    """``LiveSession.run_id`` (the SDK's id) for each of these TestRun ids that has a session."""
+    if not run_ids:
+        return {}
+    rows = (
+        await db.execute(select(LiveSession.id, LiveSession.run_id).where(LiveSession.id.in_(run_ids)))
+    ).all()
+    return {row[0]: row[1] for row in rows if row[1]}
+
+
+def build_test_run_fallback_state(run, session_run_id: str | None = None) -> LiveSessionState:
     return LiveSessionState(
-        run_id=str(run.id),
+        run_id=session_run_id or str(run.id),
         test_run_id=str(run.id),
         project_id=str(run.project_id),
         build_number=run.build_number or "",
@@ -2009,11 +2019,21 @@ async def list_active_sessions(
         tr_stmt = tr_stmt.where(run_suite)
 
     tr_runs = (await db.execute(tr_stmt)).scalars().all()
+    fallback_runs = []
     for run in tr_runs:
         if run.id in seen_run_ids:
             continue
         seen_run_ids.add(run.id)
-        completed_sessions.append(build_test_run_fallback_state(run))
+        fallback_runs.append(run)
+    # D-87 (2026-11-21): a run whose LiveSession has left Redis but is not yet
+    # ``completed`` reaches this fallback. Listing it under its UUID while the
+    # page still held it under the SDK's id showed one run twice; give it the
+    # session's own ``run_id`` when there is one, as the other two sources do.
+    session_run_ids = await _live_session_run_ids(db, [run.id for run in fallback_runs])
+    for run in fallback_runs:
+        completed_sessions.append(
+            build_test_run_fallback_state(run, session_run_id=session_run_ids.get(run.id))
+        )
 
     sessions = active_sessions + completed_sessions
 

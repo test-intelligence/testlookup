@@ -205,6 +205,14 @@ describe('sdkSnippets — W18 DEV-03 runner snippets', () => {
     expect(code).toContain('testlookup_robot_listener.TestLookupListener')
   })
 
+  it('D-92: every install step names the "All client SDKs" button the panel shows', () => {
+    for (const { id } of SDK_TABS) {
+      const install = getInstallSnippet(id)
+      expect(install).not.toContain('SDK Downloads')
+      expect(install).toContain('"All client SDKs" above')
+    }
+  })
+
   it('the default runner keeps the existing snippet', () => {
     expect(getRunnerSnippet('javascript', PROJECT_ID, SERVER_URL, 'jest-mocha')).toBe(getRunnerSnippet('javascript', PROJECT_ID, SERVER_URL))
     expect(getRunnerSnippet('python', PROJECT_ID, SERVER_URL, 'pytest')).toBe(getRunnerSnippet('python', PROJECT_ID, SERVER_URL))

@@ -65,8 +65,9 @@ describe('LiveExecutionPage — the feed under batched frames (W25e E-3)', () =>
     expect(omittedResultsSentence(2)).toBe('2 more results not listed')
     expect(within(feed()).getByText('More results')).toBeInTheDocument()
     expect(within(feed()).getByText('· 2 more results not listed')).toBeInTheDocument()
-    // Each listed result is still its own row.
-    expect(within(feed()).getAllByText('Test result')).toHaveLength(2)
+    // Each listed result is still its own row, titled by its test (D-90).
+    expect(within(feed()).getByText('test_a')).toBeInTheDocument()
+    expect(within(feed()).getByText('test_b')).toBeInTheDocument()
   })
 
   it('a warning folded 3 times says so once; a single warning reads as before', () => {
@@ -84,7 +85,8 @@ describe('LiveExecutionPage — the feed under batched frames (W25e E-3)', () =>
 
     expect(within(feed()).queryByText('More results')).toBeNull()
     expect(within(feed()).queryByText(/more results not listed/)).toBeNull()
-    expect(within(feed()).getAllByText('Test result')).toHaveLength(1) // the FAILED one
+    expect(within(feed()).getByText('test_b')).toBeInTheDocument() // the FAILED one
+    expect(within(feed()).queryByText('test_a')).toBeNull()
     expect(within(feed()).getAllByText('Warning')).toHaveLength(2)
     expect(within(feed()).queryByText('Run started')).toBeNull()
 

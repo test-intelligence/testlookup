@@ -88,13 +88,21 @@ curl -X POST "http://localhost:8000/api/v1/ingest" \
 
 Optional JSON fields include `run_ai` (default `true`): `false` stores the run without the AI analysis, the suite comparison or an automatic Investigator run, the JSON twin of the upload's `run_ai` form field and the CLI's `--no-ai`. Each result may also carry `http_exchanges` (see [Capturing HTTP exchanges](#capturing-http-exchanges)).
 
-Both endpoints answer `202 Accepted` with `run_id`, `task_id` and `total_results`. `GET /api/v1/ingest/uploads/{task_id}` reports how processing of an uploaded file ended (`pending`, `parsing`, `ingesting`, `succeeded` or `failed`). Sending the same `project_id` and `build_number` again updates that run instead of creating a second one.
+Both endpoints answer `202 Accepted` with `run_id`, `task_id` and `total_results`. `GET /api/v1/ingest/uploads/{task_id}` reports how processing ended, for a file or a JSON batch (`pending`, `parsing`, `ingesting`, `succeeded` or `failed`). A failure is also listed in the project's Activity. When a commit range was sent, the `succeeded` result says what became of it in `commit_range`: `stored`, `truncated` (only the first 100 commits were kept), `ignored_malformed` (no usable commit in it) or `store_failed`. On the file form, a `commit_range` that is not a JSON list or object is refused with `422`.
+
+Both endpoints take an optional `executed_at` (ISO-8601): when the tests ran. Without it, the time the results arrive is used.
+
+Sending the same build twice:
+
+- A JSON batch with the same CI identity (build number, plus the CI provider, repository, job and run URL when sent) joins the existing run.
+- A file upload always creates a new run, and a repeated build number gets a suffix (`ci-1234-2`).
+- A JSON batch for a run that was deleted from the project is refused with `409`; send it under a new build number.
 
 The full request schema is in the live API reference at `/api-docs` on your instance.
 
 ## 3. CLI
 
-The `testlookup` CLI wraps the same API for terminals and CI scripts. It is installed from the repository (`pip install ./cli`); it is not published to PyPI. Point it at your instance with `TESTLOOKUP_URL` and `TESTLOOKUP_API_KEY`, or sign in once with `testlookup auth login`.
+The `testlookup` CLI wraps the same API for terminals and CI scripts. It is not published to PyPI: install the wheel your deployment serves (`GET /api/v1/sdk/cli/info` names the file, then `pip install <server>/api/v1/sdk/cli/<filename>`; see [CLI, SDKs & MCP](cli-sdk-mcp.md#the-cli)), or from a clone of the repository (`pip install ./cli`). Point it at your instance with `TESTLOOKUP_URL` and `TESTLOOKUP_API_KEY`, or sign in once with `testlookup auth login`.
 
 ```bash
 testlookup upload file results.xml --project "$PROJECT_ID" --build "$BUILD_ID"

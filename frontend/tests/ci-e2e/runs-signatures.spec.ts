@@ -50,7 +50,8 @@ test('equal-count builds with different errors are different groups, titled by t
   const [chip240, chip239] = [await chip(b240.id).textContent(), await chip(b239.id).textContent()]
   expect(chip240?.trim()).toBeTruthy()
   expect(chip239?.trim(), 'build 239 is not in build 240\'s group').not.toBe(chip240?.trim())
-  await expect(chip(b240.id)).toHaveAttribute('title', SIGNATURE.assertion.label)
+  // D-46: the hover text is the error, then how many builds failed this way (a group of one says nothing more).
+  await expect(chip(b240.id)).toHaveAttribute('title', `${SIGNATURE.assertion.label} (4 builds failed this way)`)
   await expect(chip(b239.id)).toHaveAttribute('title', SIGNATURE.npe.label)
   // A passed build has no chip.
   await expect(page.locator(`#run-row-${runs[2].id} [data-signature-chip]`)).toHaveCount(0)

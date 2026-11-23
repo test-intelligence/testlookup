@@ -19,6 +19,7 @@ import httpx
 import client as api  # type: ignore[import]
 import release_resolver  # type: ignore[import]
 from tools.metrics import (  # type: ignore[import]
+    DEFAULT_WINDOW_DAYS,
     PENDING_TEXT,
     SUMMARY_KPIS,
     describe_downgrade,
@@ -144,7 +145,7 @@ def register(mcp) -> None:  # noqa: ANN001
     @mcp.tool()
     async def check_release_readiness(
         project_id: str,
-        days: int = 7,
+        days: int = DEFAULT_WINDOW_DAYS,
         release_id: str | None = None,
     ) -> str:
         """
@@ -161,7 +162,7 @@ def register(mcp) -> None:  # noqa: ANN001
 
         Args:
             project_id: Project UUID.
-            days: Analysis window for the project signal (1-90, default 7).
+            days: Analysis window for the project signal (1-90, default 30).
             release_id: Optional release UUID; reads the release's own gate decision.
         """
         if release_id:

@@ -21,8 +21,11 @@ person TYPED into an exported column; this module scrubs every exported row:
   ``/[REDACTED]`` as its path and ``[REDACTED]`` as every query value;
 * **JSON / ARRAY columns** (S-5): :func:`scrub_json`;
 * **free text** (S-6): every ``String`` / ``Text`` column not named in
-  ``TEXT_PASS_EXEMPT`` → the text pass (``http_exchange_redaction.text_pass`` plus
-  the JWT and secret-host rules below), settled to a fixed point.
+  ``TEXT_PASS_EXEMPT`` → the text pass (``http_exchange_redaction.text_pass`` with
+  ``token_shape_pass.token_pass`` as its token step, plus the JWT and secret-host
+  rules below), settled to a fixed point. A prefixed digest (``sha256:<hex>``), an SRI
+  value and a file path are not tokens (S-C-1); a commit SHA / lockfile hash under a
+  ``JSON_HEX_KEYS`` key stays byte-exact (D-12).
 
 Every function is idempotent: scrubbing a scrubbed row changes nothing.
 PURE: no I/O, no session, no logging of content.
@@ -37,9 +40,11 @@ from sqlalchemy import JSON, String, Text
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 
 from app.models.postgres import Base
-from app.services.http_exchange_redaction import URL_PARTS_RE, redact_url, text_pass
-from app.services.redaction_service import REDACTED, SENSITIVE_KEYS, is_log_secret_name
+from app.services.http_exchange_redaction import URL_PARTS_RE, redact_url
+from app.services.http_exchange_redaction import _pair_pass as pair_pass
+from app.services.redaction_service import REDACTED, SENSITIVE_KEYS, is_log_secret_name, redact_text
 from app.services.secret_service import SECRET_FIELDS
+from app.services.token_shape_pass import token_pass
 
 #: Hosts whose URL PATH (and query) is the credential: an incoming-webhook URL. Matched on the
 #: host itself or as a suffix (``<tenant>.webhook.office.com``).
@@ -146,6 +151,19 @@ TEXT_PASS_EXEMPT: Mapping[str, frozenset[str]] = {
     "evidence_artifacts": frozenset({"cluster_id", "content_sha256"}),
 }
 
+#: JSON keys whose string leaves (directly, or inside the list / object under the key) are digests: a leaf
+#: that matches ``HEX_DIGEST_RE`` stays BYTE-EXACT (D-12 / S-C-1: a 40-hex commit SHA or a lockfile sha256 is
+#: exactly what the generic 40+ token rule redacts, and an imported run lost its commits and its dependency
+#: drift). Exempt by (table, column) AND key AND shape: any other leaf under the key still gets the text pass,
+#: and a bare hex run anywhere else is still redacted (``openssl rand -hex`` secrets have that shape).
+JSON_HEX_KEYS: Mapping[tuple[str, str], frozenset[str]] = {
+    ("run_commit_ranges", "commits"): frozenset({"sha", "parents"}),
+    ("test_runs", "run_context"): frozenset({"dependency_fingerprints"}),
+}
+#: A git object id (7 … 40 hex, 64 for sha256 repositories) or a sha256 file digest.
+HEX_DIGEST_RE = r"[0-9a-fA-F]{7,64}"
+_HEX_DIGEST = re.compile(HEX_DIGEST_RE)
+
 _SECRET_FIELD_NAMES: frozenset[str] = frozenset(name for names in SECRET_FIELDS.values() for name in names)
 _CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
 _URL_PARTS = re.compile(URL_PARTS_RE)
@@ -193,8 +211,16 @@ def _settle(text: str, step: Callable[[str], str]) -> str:
     return text
 
 
+def _text_pass(text: str) -> str:
+    """``http_exchange_redaction.text_pass`` (secret-named pairs → token shapes → ``redact_text`` → token
+    shapes) with :func:`token_shape_pass.token_pass` as the token step: a prefixed digest / SRI value is kept
+    and a path gets the generic 40+ rule per segment (S-C-1), every provider shape and every other 40+ run is
+    still ``[REDACTED]`` whole. ``text_pass`` itself stays the SDKs' contract (``sdk-vectors/http_exchange``)."""
+    return token_pass(redact_text(token_pass(pair_pass(text))))
+
+
 def _text_once(text: str) -> str:
-    text = text_pass(text)
+    text = _text_pass(text)
     text = _JWT.sub(REDACTED, text)
     return _SECRET_HOST_IN_TEXT.sub(lambda match: f"{match.group(1)}/{REDACTED}", text)
 
@@ -263,29 +289,32 @@ def _names_a_secret(node: Mapping[str, Any]) -> bool:
     return any(isinstance(node.get(key), str) and is_secret_name(node.get(key)) for key in _PAIR_NAME_KEYS)
 
 
-def _walk(value: Any, depth: int) -> Any:
+def _walk(value: Any, depth: int, hex_keys: frozenset[str], hex_ok: bool) -> Any:
     if isinstance(value, (dict, list, tuple)) and depth > JSON_DEPTH_MAX:
         return REDACTED
     if isinstance(value, dict):
         pair = _names_a_secret(value)
         return {
             key: (REDACTED if value_ is not None and (is_secret_name(key) or (pair and key in _PAIR_VALUE_KEYS))
-                  else _walk(value_, depth + 1))
+                  else _walk(value_, depth + 1, hex_keys, hex_ok or key in hex_keys))
             for key, value_ in value.items()
         }
     if isinstance(value, (list, tuple)):
-        return [_walk(item, depth + 1) for item in value]
+        return [_walk(item, depth + 1, hex_keys, hex_ok) for item in value]
     if isinstance(value, str):
+        if hex_ok and _HEX_DIGEST.fullmatch(value):
+            return value
         return scrub_text(value)
     return value
 
 
-def scrub_json(value: Any) -> Any:
+def scrub_json(value: Any, *, hex_keys: frozenset[str] = frozenset()) -> Any:
     """A JSON / ARRAY value (S-5): a key named like a secret (:func:`is_secret_name`) → ``[REDACTED]``;
     the ``value`` of a ``{"name": <secret name>, "value": …}`` pair → ``[REDACTED]`` (W30); every string leaf →
-    :func:`scrub_text`; lists walked IN FULL; a container deeper than ``JSON_DEPTH_MAX`` → ``[REDACTED]``.
-    Keys are kept. Idempotent."""
-    return _walk(value, 1)
+    :func:`scrub_text`, except a ``HEX_DIGEST_RE`` leaf under a key of ``hex_keys`` (the column's
+    ``JSON_HEX_KEYS`` entry), kept byte-exact; lists walked IN FULL; a container deeper than
+    ``JSON_DEPTH_MAX`` → ``[REDACTED]``. Keys are kept. Idempotent."""
+    return _walk(value, 1, hex_keys, False)
 
 
 # ── rows ─────────────────────────────────────────────────────────────────────
@@ -346,7 +375,7 @@ def _scrub_value(table: str, column: str, value: Any, kind: str, row: Mapping[st
     if column in URL_COLUMNS.get(table, ()):
         return strip_url_credentials(value) if isinstance(value, str) else value
     if kind == "json" or isinstance(value, (dict, list, tuple)):
-        return scrub_json(value)
+        return scrub_json(value, hex_keys=JSON_HEX_KEYS.get((table, column), frozenset()))
     if kind == "text" and isinstance(value, str) and column not in TEXT_PASS_EXEMPT.get(table, ()):
         return scrub_text(value)
     return value

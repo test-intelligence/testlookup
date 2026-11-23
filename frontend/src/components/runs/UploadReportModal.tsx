@@ -179,7 +179,7 @@ export default function UploadReportModal({
     if (!picked.length) return
     const bad = picked.find((f) => !isAcceptedFile(f.name))
     if (bad) {
-      rejectFiles(`Unsupported file type: ${bad.name}. Upload .xml (JUnit/TestNG/Robot/NUnit/xUnit), .trx, .json (Allure/Playwright/Cypress/Cucumber), or .zip files.`)
+      rejectFiles(`Unsupported file type: ${bad.name}. Upload .xml (JUnit/TestNG/Robot/NUnit/xUnit), .trx, .json (Allure/Playwright/Cypress/Cucumber/pytest), or .zip files.`)
       return
     }
     // A .zip can only be uploaded on its own — bundling it with others would
@@ -327,7 +327,7 @@ export default function UploadReportModal({
     <InlineFormSection
       title="Upload test report"
       titleId="upload-report-title"
-      description="JUnit · TestNG · Allure · Playwright · Cypress · Robot · Cucumber · NUnit · TRX · xUnit"
+      description="JUnit · TestNG · Allure · Playwright · Cypress · pytest · Robot · Cucumber · NUnit · TRX · xUnit"
       onClose={onClose}
       canClose={!busy}
       closeLabel="Close"

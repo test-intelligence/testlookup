@@ -12,6 +12,7 @@ import { SWRConfig } from 'swr'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { CommitRangeStatus, RegressionDiff } from '@/types/regressionDiff'
+import type { TestRun } from '@/types/runs'
 import { drift, driftEntry, narrowing } from '@/test/bisectDriftMocks'
 import { formatDay } from '@/utils/formatters'
 
@@ -344,6 +345,90 @@ describe('RunChangesTab — Narrow and the bisect param (W23b FAIL-12)', () => {
       '/runs/run-1?tab=changes&bisect=top')
     await waitFor(() => expect(new URLSearchParams(seenSearch).get('bisect')).toBeNull())
     expect(bisectCalls()).toHaveLength(0)
+  })
+
+  it('D-10: ?bisect=top with no new failure but a failing test opens the narrowing on the run\'s first failing test', async () => {
+    await renderAt({
+      ...BASE,
+      new_failing_tests: [],
+      new_failing_count: 0,
+      first_failing_test: { test_name: 'checkout_sentinel_test', suite_name: 'payments', test_fingerprint: 'fp-sentinel-checkout' },
+    }, '/runs/run-1?tab=changes&bisect=top')
+    await waitFor(() => expect(new URLSearchParams(seenSearch).get('bisect')).toBe('fp-sentinel-checkout'))
+    expect(new URLSearchParams(seenSearch).get('tab')).toBe('changes')
+    await waitFor(() => expect(bisectCalls()).toHaveLength(1))
+    expect(bisectCalls()[0][1]).toEqual({ params: { fingerprint: 'fp-sentinel-checkout' } })
+    const box = document.querySelector('[data-narrow-standalone]') as HTMLElement
+    const block = await within(box).findByRole('region', { name: 'Narrowed range' })
+    expect(within(block).getByRole('heading', { level: 3 })).toHaveTextContent('Narrowed range for checkout_sentinel_test')
+  })
+
+  it('D-10: with no baseline at all, ?bisect=top still opens the first failing test', async () => {
+    getData.mockImplementation((url: unknown) => Promise.resolve(
+      String(url).endsWith('/bisect')
+        ? narrowing({ run_id: 'run-1', fingerprint: 'fp-sentinel-checkout' })
+        : { baseline_available: false, first_failing_test: { test_name: 'checkout_sentinel_test', suite_name: null, test_fingerprint: 'fp-sentinel-checkout' } },
+    ))
+    render(
+      <SWRConfig value={{ provider: () => new Map(), dedupingInterval: 0 }}>
+        <MemoryRouter initialEntries={['/runs/run-1?tab=changes&bisect=top']}>
+          <RunChangesTab runId="run-1" run={undefined} onCompareWithPrevious={() => {}} />
+          <LocationProbe />
+        </MemoryRouter>
+      </SWRConfig>,
+    )
+    await screen.findByText('No recent passing baseline run found for comparison.')
+    await waitFor(() => expect(new URLSearchParams(seenSearch).get('bisect')).toBe('fp-sentinel-checkout'))
+    await waitFor(() => expect(bisectCalls()).toHaveLength(1))
+    expect(document.querySelector('[data-narrow-standalone]')).not.toBeNull()
+  })
+})
+
+describe('RunChangesTab — how the baseline was chosen (D-10) and the whole-run compare link (D-16)', () => {
+  beforeEach(() => getData.mockReset())
+
+  const RUN = { id: 'run-1', build_number: '42', primary_suite_name: 'payments' } as unknown as TestRun
+
+  async function renderRun(diff: RegressionDiff) {
+    getData.mockResolvedValue(diff)
+    render(
+      <SWRConfig value={{ provider: () => new Map() }}>
+        <MemoryRouter>
+          <RunChangesTab runId="run-1" run={RUN} onCompareWithPrevious={() => {}} />
+        </MemoryRouter>
+      </SWRConfig>,
+    )
+    await screen.findByText('Pass rate delta')
+  }
+
+  it('a passing baseline: "last good run", no note, "(last good)" on the compare link', async () => {
+    await renderRun({ ...BASE, baseline_kind: 'passing', baseline_threshold: 76.5 })
+    expect(screen.getByRole('region', { name: 'What changed since the last good run' })).toBeInTheDocument()
+    expect(document.querySelector('[data-baseline-kind-note]')).toBeNull()
+    expect(screen.getByRole('link', { name: 'Compare with build #41 (last good)' })).toBeInTheDocument()
+  })
+
+  it('a threshold baseline says so: "nearest run above 76.5%", in the title, a note and the link', async () => {
+    await renderRun({ ...BASE, baseline_kind: 'threshold', baseline_threshold: 76.5 })
+    const main = screen.getByRole('region', { name: 'What changed since the nearest run above 76.5%' })
+    expect(within(main).getByRole('heading', { level: 2 })).toHaveTextContent('What changed since the nearest run above 76.5%')
+    expect(screen.queryByRole('region', { name: 'What changed since the last good run' })).toBeNull()
+    expect((document.querySelector('[data-baseline-kind-note]') as HTMLElement).textContent).toBe(
+      'No earlier run of this branch passed every test: compared with the nearest run at or above 76.5% pass rate.',
+    )
+    expect(screen.getByRole('link', { name: 'Compare with build #41 (nearest run above 76.5%)' })).toBeInTheDocument()
+  })
+
+  it('D-16: the baseline compare link is whole-run (left, right, no suite) although the run has a suite', async () => {
+    await renderRun({ ...BASE })
+    const link = screen.getByRole('link', { name: 'Compare with build #41 (last good)' })
+    const url = new URL(link.getAttribute('href') as string, 'http://x.test')
+    expect(url.pathname).toBe('/runs/compare')
+    expect(url.searchParams.get('left')).toBe('run-0')
+    expect(url.searchParams.get('right')).toBe('run-1')
+    expect(url.searchParams.has('suite')).toBe(false)
+    // The suite-scoped "previous run" button beside it keeps its scope.
+    expect(screen.getByRole('button', { name: 'Compare with the previous run' })).toBeEnabled()
   })
 })
 

@@ -1324,6 +1324,8 @@ async def test_stream_service_list_active_sessions_combines_sources():
         FakeExecuteResult(scalars=[project_id]),
         FakeExecuteResult(scalars=[completed_session]),
         FakeExecuteResult(scalars=[fallback_run]),
+        # D-87: the fallback run's LiveSession run_id lookup (none here).
+        FakeExecuteResult(rows=[]),
     ])
     active = [
         {
@@ -1353,6 +1355,32 @@ async def test_stream_service_list_active_sessions_combines_sources():
 
     assert result.count == 3
     assert [session.run_id for session in result.sessions] == ["active-run", "completed-run", str(fallback_run.id)]
+
+
+@pytest.mark.asyncio
+async def test_list_active_sessions_names_a_fallback_run_by_its_live_session_id():
+    """D-87: a live_stream TestRun whose LiveSession is still open is listed
+    under the SDK's run id (as Redis and the session rows are), not its UUID,
+    so the Live page does not hold the one run under two keys."""
+    project_id = uuid.uuid4()
+    fallback_run = SimpleNamespace(
+        id=uuid.uuid4(), project_id=project_id, build_number="ci-42",
+        total_tests=5, passed_tests=5, failed_tests=0, skipped_tests=0, broken_tests=0,
+        pass_rate=100.0, start_time=datetime(2026, 1, 3, tzinfo=timezone.utc),
+        end_time=datetime(2026, 1, 3, tzinfo=timezone.utc),
+    )
+    db = FakeAsyncDB([
+        FakeExecuteResult(scalars=[project_id]),
+        FakeExecuteResult(scalars=[]),
+        FakeExecuteResult(scalars=[fallback_run]),
+        FakeExecuteResult(rows=[(fallback_run.id, "ci-build-42")]),
+    ])
+    live_state_module = SimpleNamespace(RedisLiveRunState=SimpleNamespace(get_all_active=AsyncMock(return_value=[])))
+    with patch.dict(sys.modules, {"app.streams.live_run_state": live_state_module}), \
+         patch("app.services.runs_service.fetch_run_seq_map", AsyncMock(return_value={})):
+        result = await stream_service.list_active_sessions(db, str(project_id))
+
+    assert [(s.run_id, s.test_run_id) for s in result.sessions] == [("ci-build-42", str(fallback_run.id))]
 
 
 @pytest.mark.asyncio

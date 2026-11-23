@@ -43,6 +43,23 @@ A key is shown **once**; store it in your CI secret store straight away. It carr
 
 An uploaded report arrives after the suite finishes. A **reporter SDK** instead streams each test result as it completes, so the run appears on [Runs → Live](/docs/live) while it is still executing and its partial results are visible straight away. SDKs exist for Python (pytest), Java (TestNG and JUnit 5), JavaScript/TypeScript (Jest and Mocha) and Go; download them from **Connect a test runner** on the Live page. When the suite finishes, the SDK closes the session and the run is finalised like any other.
 
+## Drop folder (object store)
+
+A CI job that can write to TestLookup's object store (the bundled S3 store, or your own S3 / MinIO) can hand results over without calling the API:
+
+1. Write the results under `<project>/runs/<build>/` in the results bucket (`MINIO_BUCKET_NAME`, `test-telemetry` by default): Allure results as `allure/*-result.json`, TestNG reports as `testng/*.xml`. `<project>` is the project's id or its slug.
+2. Write `<project>/runs/<build>/upload_complete.json` **last**. It is a small JSON object: `build_number` (defaults to `<build>`), and optionally `jenkins_job`, `branch`, `commit_hash`, `trigger_source`, `release_name`, `ocp_pod_name`, `ocp_namespace`. The project always comes from the folder, never from the file.
+
+The run appears on **Runs** within about two minutes. A background sweep (the *drop-folder watcher*) lists each active project's `runs/` folder every minute and queues each new `upload_complete.json` for processing; no bucket notification or webhook is needed. Things to know:
+
+- **Use a new build folder for every run.** A folder is picked up once; writing `upload_complete.json` again in the same folder does not process it again.
+- **Earlier folders are not processed.** Folders that already had `upload_complete.json` when the watcher first ran are recorded and skipped.
+- **A folder without `upload_complete.json` stops being checked after 24 hours.** Write it within a day of the first file.
+- The watcher runs in the beat and worker processes and is switched by the `drop_folder_watcher` feature flag (on by default, under **Settings → System → Feature flags**). The minimal `docker-compose.dev-lite.yml` stack has no beat process, so the drop folder does nothing there.
+- An external MinIO can also notify `POST /webhooks/minio` for an immediate pick-up.
+
+Anyone who can write to the bucket can file a run in any project, because the folder names the project: give each CI job credentials that can write only under its own project's prefix.
+
 ## Capturing HTTP exchanges
 
 The Python pytest plugin (reporter 1.3.0 or later) can record the HTTP calls each test makes through `requests` or `httpx`: method, URL, status, duration, headers and bodies. It is **off by default**: turn it on per run with `pytest --testlookup-capture-http`, `TESTLOOKUP_CAPTURE_HTTP=1`, or `testlookup.capture_http=true` in `testlookup.properties`. The reporter's own calls to TestLookup are never recorded.
@@ -122,9 +139,17 @@ sequenceDiagram
 
 ### Project and run resolution
 
-`project_id` and `build_number` identify the run. A repeated `(project, build_number)` is **idempotent** — re-sending the same build updates the existing run rather than creating a second one. Useful for retries; surprising if you reuse build numbers across genuinely different runs.
+`project_id` and `build_number` name the run. What happens when the same build arrives twice depends on how it was sent:
 
-> **Tip.** Idempotent here means *the duplicate is absorbed*, not *the row is overwritten wholesale*. Re-sending updates the run's timestamps but does not necessarily replace every scalar field.
+- **JSON batch and SDK deliveries** (`POST /api/v1/ingest`, the SDK reporters) with the same CI identity join one run. The identity is the build number plus the CI provider, repository, job and run URL when they are sent, so a CI retry of the same job adds to its run, while two different jobs that reuse a build number stay two runs.
+- **File uploads** (the upload form, `POST /api/v1/ingest/file`, `testlookup upload`) always create a new run. A repeated build number gets a suffix (`main-1865-2`, `main-1865-3`) so both runs stay visible.
+- A JSON batch or SDK delivery for a run that was **deleted** from the project is refused with `409`. Send it again under a new build number.
+
+> **Tip.** Joining a run adds the new results to it; it does not replace the run's other fields. A value the first delivery did not send (a CI link, a pull request number) is filled in; one it did send is kept.
+
+### When the tests ran
+
+Both routes take an optional `executed_at` (ISO-8601, for example `2026-11-20T08:15:00Z`): the time the tests ran. Send it when you upload results some time after the run, such as a backfill or a report sent the next morning. Without it, the time the results arrive is used. A time in the future, or one too old to be believable, is ignored in the same way.
 
 ### Test fingerprints
 
@@ -161,7 +186,7 @@ Returns `{"items": [...], "total": N, "page": 1, "size": 10, "pages": N}`.
 
 ## CI integration
 
-The pattern is the same everywhere: run tests, then post the report. With the CLI (installed from the repository's `cli/` folder):
+The pattern is the same everywhere: run tests, then post the report. With the CLI (this server serves it as a wheel: see [API, CLI, SDKs and MCP](/docs/integrations) for the install):
 
 ```bash
 testlookup upload file reports/junit.xml --project "$TESTLOOKUP_PROJECT" --build "$CI_BUILD_NUMBER"

@@ -7,7 +7,7 @@ before they enter the graph state that the unchanged summary stage renders:
 
 * :func:`scrub` removes secrets and personal data through the existing redaction helpers
   (``privacy_service.sanitize_for_llm`` → ``redaction_service.redact_text``) plus W23b's
-  whole-token rule (``run_context_vocab.TOKEN_SHAPES``, imported, not copied). Its output is what
+  whole-token rule (``run_context_vocab.TOKEN_SHAPES`` through ``token_shape_pass.token_pass``). Its output is what
   is stored (``agent_invocations.input_payload``) and hashed (``input_sha256``).
 * :func:`wrap_untrusted` / :func:`excerpt_slices` put a scrubbed, neutralised value between
   ``UNTRUSTED_OPEN`` and ``UNTRUSTED_CLOSE``, cut so the WRAPPED length equals the cap the
@@ -40,15 +40,11 @@ import unicodedata
 from app.services.inline_input_vocab import UNTRUSTED_CLOSE, UNTRUSTED_OPEN
 from app.services.privacy_service import sanitize_for_llm
 from app.services.redaction_service import REDACTED, redact_text
-from app.services.run_context_vocab import TOKEN_SHAPES
+from app.services.token_shape_pass import token_pass
 
 #: The two markers' combined length: a wrapped value of ``limit`` characters carries at most
 #: ``limit - WRAP_OVERHEAD`` characters of content.
 WRAP_OVERHEAD = len(UNTRUSTED_OPEN) + len(UNTRUSTED_CLOSE)
-
-# W23b's provider-token shapes, the specific ones first (the generic 40+ run last), each matched
-# run replaced WHOLE by "[REDACTED]".
-_TOKEN_SHAPE_RES = tuple(re.compile(shape) for shape in TOKEN_SHAPES)
 
 # The heads of the redaction rules whose tail is not bounded by a delimiter character (see the
 # module docstring, point 2). Each match runs to where the redaction rule's own tail would stop
@@ -64,9 +60,10 @@ _CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
 
 
 def _replace_token_shapes(text: str) -> str:
-    for shape in _TOKEN_SHAPE_RES:
-        text = shape.sub(REDACTED, text)
-    return text
+    # W23b's provider-token shapes, the specific ones first, each matched run replaced WHOLE by
+    # "[REDACTED]"; the generic 40+ run keeps prefixed digests and applies per path segment
+    # (S-C-2: a stack-trace path such as ``com/storefront/checkout/…/CouponRoundingService`` is not a key).
+    return token_pass(text)
 
 
 def scrub(text: str) -> str:

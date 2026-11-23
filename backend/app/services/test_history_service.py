@@ -28,6 +28,7 @@ from sqlalchemy import func, select
 
 from app.models.postgres import TestCase, TestRun
 from app.services.flaky_signals import compute_intermittency_signals
+from app.services.run_time import run_time_column
 
 logger = structlog.get_logger(__name__)
 
@@ -100,8 +101,8 @@ async def load_test_history(
         return {}
 
     cutoff = (now or datetime.now(timezone.utc)) - timedelta(days=window_days)
-    run_time = func.coalesce(TestRun.start_time, TestRun.created_at)
-    rank = func.row_number().over(
+    run_time = run_time_column()
+    rank =func.row_number().over(
         partition_by=TestCase.test_fingerprint,
         order_by=(run_time.desc(), TestCase.created_at.desc()),
     ).label("rn")

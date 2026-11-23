@@ -1159,32 +1159,27 @@ export default function TrendsPage() {
   //
   // /trends has its own opinionated default of 14d (trend analysis
   // wants a meaningful baseline window; 1d or 7d hides the regression
-  // signal). On every mount we reset the shared store to 14 so
-  // navigating here always lands on the trend-friendly window
-  // regardless of what the user last picked on /runs or /coverage.
-  // The toolbar's window picker (the shared `WindowPicker`) still writes
-  // the shared store so the user can pick 30d / 90d for a wider lens and
-  // that propagates downstream. (User request 2026-05-19.)
+  // signal), so navigating here lands on 14 days whatever the user last
+  // picked on /runs or /coverage (user request 2026-05-19). The toolbar's
+  // window picker still writes the shared store, so 30d / 90d chosen here
+  // propagates downstream.
   //
-  // The reset is an effect, so it lands AFTER the first render, whose data
-  // hooks have already asked for the stored window: a cold load from any
-  // other window made every page read twice (30 days, then 14; pinned by
-  // Wave 2.6 C0). So until the store holds the reset, the page reads the
-  // window it is about to set, and the first request is the only one. The
-  // hand-over is adjusted during render (as RunsPage does), not in the
-  // effect: this repo forbids a synchronous setState inside useEffect.
+  // D-18: the 14 days are HELD BY THE PAGE, not written to the store. A
+  // mount effect used to reset the store to 14, so merely opening Trends
+  // changed the window of every other page. The page holds 14 from its
+  // first render (one request per read, as Wave 2.6 C0 pinned) until the
+  // reader picks a window here or the setting changes elsewhere; from then
+  // on it follows the store, snapped to this page's set.
   const storedDays = useTimeWindowStore(s => s.days)
   const setStoredDays = useTimeWindowStore(s => s.setDays)
-  const [resetPending, setResetPending] = useState(true)
-  if (resetPending && storedDays === TRENDS_DEFAULT_WINDOW) setResetPending(false)
-  useEffect(() => {
-    setStoredDays(TRENDS_DEFAULT_WINDOW)
-    // Intentional one-shot on mount — the window picker still updates the
-    // store reactively, so this doesn't re-fire on every render and
-    // clobber the user's selection.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-  const days = (resetPending ? TRENDS_DEFAULT_WINDOW : snapToAllowed(storedDays, WINDOWS)) as Window
+  const [arrivalDays] = useState(storedDays)
+  const [holdDefault, setHoldDefault] = useState(true)
+  if (holdDefault && storedDays !== arrivalDays) setHoldDefault(false)
+  const days = (holdDefault ? TRENDS_DEFAULT_WINDOW : snapToAllowed(storedDays, WINDOWS)) as Window
+  const chooseWindow = (next: number) => {
+    setHoldDefault(false)
+    setStoredDays(next)
+  }
   // The page's own tabs (`?tab=`): Volume by default.
   const [tab, setTab] = useTabParam<TrendsTab>(TRENDS_TAB_IDS, 'volume')
 
@@ -1208,6 +1203,10 @@ export default function TrendsPage() {
   }, [chartsKey])
   const applyExtra = useCallback(
     (view: SavedView) => {
+      // D-18: a saved view states its window; applying one ends the page's
+      // 14-day hold even when that window equals the stored one (a default
+      // view of 30 days, with 30 already stored, changed nothing to notice).
+      setHoldDefault(false)
       const charts = (view.filters as { charts?: unknown } | null | undefined)?.charts ?? null
       chartConfigStore.applyView(charts, TRENDS_CHART_KEYS)
       // Compare's chosen suites / releases live in the URL: the view's go there.
@@ -1486,7 +1485,7 @@ export default function TrendsPage() {
               options={suiteOptions}
               allLabel="All suites"
             />
-            <WindowPicker options={WINDOWS} />
+            <WindowPicker options={WINDOWS} value={days} onChange={chooseWindow} />
             {viewsMenu && <SavedViewsMenu {...viewsMenu} variant="ghost" />}
           </div>
         }

@@ -26,10 +26,11 @@ import { describe, expect, it } from 'vitest'
 import pageSource from './LiveExecutionPage.tsx?raw'
 
 describe('LiveExecutionPage — Sessions table dedup key (regression)', () => {
-  it('dedupedSessions keys the Map by s.run_id, not s.build_number', () => {
-    // The exact line we want to lock in:
-    //   const key = s.run_id
-    expect(pageSource).toMatch(/const\s+key\s*=\s*s\.run_id/)
+  it('dedupedSessions keys the Map by the run (sessionKey), not s.build_number', () => {
+    // The exact line we want to lock in. D-87 (2026-11-21): the run is
+    // keyed by `sessionKey(s)` (its canonical `test_run_id`, else `run_id`),
+    // because the server lists one run under the SDK's id and under its UUID.
+    expect(pageSource).toMatch(/const\s+key\s*=\s*sessionKey\(s\)/)
     // And the OLD shape must NOT come back as a dedup key:
     expect(pageSource).not.toMatch(/const\s+key\s*=\s*s\.build_number/)
   })

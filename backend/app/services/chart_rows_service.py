@@ -8,13 +8,14 @@ never its display label). What comes back is a page of execution rows and the
 number that reconciles with the mark.
 
 **The population is the chart's, by construction.** The window
-(``tr.created_at >= window_start``), the tenant fragment, the release and suite
+(the run time ``COALESCE(tr.start_time, tr.created_at) >= window_start``,
+``run_time.RUN_TIME_SQL``, D-19), the tenant fragment, the release and suite
 fragments are the ones ``chart_data_service.build_statement`` uses, and a
 selector compares the dimension's OWN hard-coded expression
 (``chart_data_service.DIMENSIONS``) with the key: a suite key is matched on the
 effective suite, lower-cased and ``(none)``-filled exactly as the chart
 bucketed it. Two selectors are rewritten into an index-friendly but EQUIVALENT
-form: ``day``/``week`` are half-open UTC ranges on ``tr.created_at`` (never
+form: ``day``/``week`` are half-open UTC ranges on the run time (never
 ``TO_CHAR(...) = :day``), and ``release``/``project``/``status``/``test`` are
 plain column equalities.
 
@@ -58,6 +59,7 @@ from app.services.analytics_scope import (
     suite_filter_sql,
 )
 from app.services.analytics_service import _tenant_filter as tenant_filter_sql
+from app.services.run_time import RUN_TIME_SQL
 # VIZ-207's ONE signature expression (BE3's M0): the failure-groups route
 # groups by it and this route selects by it, so a group and its rows cannot
 # disagree about which executions belong to it. Its regexes are BINDS, which
@@ -192,7 +194,7 @@ _PAGE_COLUMNS = f"""
                 tc.status AS status,
                 tc.duration_ms AS duration_ms,
                 tr.id AS run_id,
-                tr.created_at AS created_at,
+                {RUN_TIME_SQL} AS created_at,
                 tc.failure_category AS failure_category,
                 {_ERROR_LINE_SQL} AS error_line,
                 tr.primary_release_id AS release_id,
@@ -475,7 +477,7 @@ def selector_predicate(selector: Selector, params: dict) -> str:
     if dim in ("day", "week"):
         params[f"{name}_from"] = selector.start
         params[f"{name}_to"] = selector.end
-        return f"AND tr.created_at >= :{name}_from AND tr.created_at < :{name}_to"
+        return f"AND {RUN_TIME_SQL} >= :{name}_from AND {RUN_TIME_SQL} < :{name}_to"
     if dim == "release":
         if selector.value is None:
             return "AND tr.primary_release_id IS NULL"
@@ -505,7 +507,8 @@ def build_rows_statement(
     One statement is one snapshot: the total and the page cannot disagree
     because ingestion committed between two reads. The page is a LATERAL
     subquery so it keeps its own ``ORDER BY ... LIMIT`` plan (an ordered
-    nested loop from ``ix_test_runs_created_at``) instead of being computed
+    nested loop on the run time, ``ix_test_runs_project_run_time`` when the
+    scope names projects) instead of being computed
     after the count.
     """
     params: dict[str, Any] = {
@@ -515,7 +518,7 @@ def build_rows_statement(
         **FAILURE_SIGNATURE_PARAMS,
     }
     where = [
-        "tr.created_at >= :period_start",
+        f"{RUN_TIME_SQL} >= :period_start",
         tenant_filter_sql(
             params, project_id=scope.project, allowed_project_ids=scope.allowed_project_ids,
         ),
@@ -554,7 +557,7 @@ def build_rows_statement(
             FROM test_cases tc JOIN test_runs tr ON tr.id = tc.test_run_id
             LEFT JOIN releases r ON r.id = tr.primary_release_id
             WHERE {where_sql}
-            ORDER BY tr.created_at DESC, tc.id DESC
+            ORDER BY {RUN_TIME_SQL} DESC, tc.id DESC
             LIMIT :rows_limit OFFSET :rows_offset
         ) p ON TRUE
         ORDER BY p.created_at DESC NULLS LAST, p.id DESC NULLS LAST
@@ -575,7 +578,7 @@ def _signature_statement(where_sql: str) -> str:
     """
     return f"""
         WITH candidates AS MATERIALIZED (
-            SELECT tc.id, tc.error_message, tr.created_at AS run_created_at
+            SELECT tc.id, tc.error_message, {RUN_TIME_SQL} AS run_created_at
             FROM test_cases tc JOIN test_runs tr ON tr.id = tc.test_run_id
             WHERE {where_sql}
         ), matched AS MATERIALIZED (
@@ -688,16 +691,26 @@ def definitions(req: RowsRequest, grain: str) -> dict:
         "selector": (
             "A bucket_<dimension> value is the chart's KEY for that bucket (a "
             "point's x, a series' key), never its display label. day and week "
-            "are UTC calendar ranges on the run's created_at; suite is the "
+            "are UTC calendar ranges on the run's run time (start_time, else "
+            "created_at); suite is the "
             "effective suite, lower-cased, '(none)' when absent; error_signature "
             f"is a failure group's id (its signature, '{NO_MESSAGE_ID}' for the "
             "executions with no message), matched with the failure groups' own "
             "signature expression."
         ),
         "chart_grain": grain,
-        "order": "Newest run first (the run's created_at, UTC), then the test case id, descending.",
-        "created_at": "The RUN's created_at, the clock every chart buckets by.",
-        "window": "The run's created_at on or after the window start (UTC midnight), as on the chart.",
+        "order": (
+            "Newest run first (the run's run time: start_time, else created_at, UTC), "
+            "then the test case id, descending."
+        ),
+        "created_at": (
+            "The RUN's run time -- when it executed (start_time), else when it "
+            "was received (created_at) -- the clock every chart buckets by."
+        ),
+        "window": (
+            "The run's run time (start_time, else created_at) on or after the "
+            "window start (UTC midnight), as on the chart."
+        ),
         "error_line": (
             f"The first line of the error message, trimmed, at most {ERROR_LINE_CHARS} "
             "characters, by the rule the failure groups read their lines with; "

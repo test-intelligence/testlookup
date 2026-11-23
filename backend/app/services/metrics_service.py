@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.postgres import Defect, Project, TestCase, TestRun
 from app.services.defect_status import ACTIVE_STATUSES
+from app.services.run_time import RUN_TIME_SQL, run_time_column
 from app.services.analytics_scope import (
     ReleaseArg,
     SuiteArg,
@@ -690,10 +691,10 @@ async def get_trend_data(
     """
     query = scoped_text(f"""
         SELECT
-            DATE_TRUNC('day', tr.created_at AT TIME ZONE 'UTC') AS day,
+            DATE_TRUNC('day', {RUN_TIME_SQL} AT TIME ZONE 'UTC') AS day,
             {select_values}
         FROM test_runs tr
-        WHERE tr.created_at >= :period_start
+        WHERE {RUN_TIME_SQL} >= :period_start
           {project_filter}
           {release_filter}
           {suite_filter}
@@ -759,7 +760,9 @@ async def _period_stats(
     *,
     allowed_project_ids: Optional[frozenset[uuid.UUID]] = None,
 ) -> dict:
-    conditions = [TestRun.created_at >= start, TestRun.created_at < end]
+    # D-19: the run time (start_time, else created_at), the clock of every chart.
+    run_time = run_time_column()
+    conditions = [run_time >= start, run_time < end]
     # Release scoping (S5-3b). Reads the DENORMALIZED column added in migration
     # 0152 rather than joining ``release_test_run_links``: a join would multiply
     # rows for a run linked to more than one release, inflating every SUM in

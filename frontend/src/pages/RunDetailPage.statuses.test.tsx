@@ -90,7 +90,7 @@ async function renderRun(run: Record<string, unknown>) {
       </Routes>
     </MemoryRouter>,
   )
-  await screen.findByText(/Run #upload-uat/i)
+  await screen.findByRole('heading', { level: 1, name: 'upload-uat' })
 }
 
 /** Sum every "<n> <label>" bucket rendered in the header. */

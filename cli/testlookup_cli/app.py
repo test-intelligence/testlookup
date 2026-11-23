@@ -87,7 +87,7 @@ app.add_typer(activity_app, name="activity")
 # W34 STRAT-11: authored test cases, read-only (`tests` is a run's results).
 app.add_typer(cases_app, name="cases")
 
-# Single top-level command (not a group): `testlookup ci-verdict --run <id>`.
+# Single top-level command (not a group): `testlookup ci-verdict <id>` (or `--run <id>`).
 # US-5.2 — exits 0 when the only failures in a run are quarantined tests.
 app.command("ci-verdict")(ci_verdict)
 

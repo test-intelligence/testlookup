@@ -76,6 +76,13 @@ describe('parseBisect', () => {
     expect(notFetched?.compare.state).toBe('timed_out')
   })
 
+  it('D-11: keeps the commits of a supplied compare (offline, the CI-supplied ranges in between)', () => {
+    const fetched = fetchedCompare()
+    const parsed = parseBisect(narrowing({ compare: { ...fetched, state: 'supplied', reason: null, host: null } }))
+    expect(parsed?.compare.state).toBe('supplied')
+    expect(parsed?.compare.commits).toHaveLength(3)
+  })
+
   it('defaults a commit missing optional fields', () => {
     const parsed = parseBisect(narrowing({ compare: { ...fetchedCompare(), commits: [{ sha: 'cafesentinel01' } as never] } }))
     expect(parsed?.compare.commits[0]).toEqual({

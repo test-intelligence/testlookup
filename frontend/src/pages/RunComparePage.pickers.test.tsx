@@ -69,7 +69,7 @@ beforeEach(() => {
 describe('RunComparePage — the run pickers (FAIL-06)', () => {
   it('"Runs in suite" is text from the server — no disabled select anywhere on the page', async () => {
     const { container } = renderPage('/runs/compare?mode=latest&suite=Auth')
-    await waitFor(() => expect(container.querySelector('[data-runs-in-suite-text]')).toHaveTextContent('12 runs in suite · latest Run #431 · main'))
+    await waitFor(() => expect(container.querySelector('[data-runs-in-suite-text]')).toHaveTextContent('12 runs in suite · latest Build 831 · Run #431 · main'))
     expect(container.querySelector('select[disabled]')).toBeNull()
     expect(svc.searchRuns).toHaveBeenCalledWith('p1', { q: '', suite_name: 'Auth', page: 1, size: 20, days: 0 })
   })
@@ -96,8 +96,8 @@ describe('RunComparePage — the run pickers (FAIL-06)', () => {
 
   it('a deep link\'s two runs are labelled from one read each', async () => {
     renderPage(`/runs/compare?mode=manual&left=${LEFT}&right=${RIGHT}`)
-    await waitFor(() => expect(screen.getByTestId('compare-left-picker')).toHaveTextContent(/^Run #7 · PASSED · main · /))
-    await waitFor(() => expect(screen.getByTestId('compare-right-picker')).toHaveTextContent(/^Run #9 · FAILED · main · /))
+    await waitFor(() => expect(screen.getByTestId('compare-left-picker')).toHaveTextContent(/^Build 407 · Run #7 · PASSED · main · /))
+    await waitFor(() => expect(screen.getByTestId('compare-right-picker')).toHaveTextContent(/^Build 409 · Run #9 · FAILED · main · /))
     expect(svc.getRun).toHaveBeenCalledWith(LEFT, { suppressToast: true })
     expect(svc.getRun).toHaveBeenCalledWith(RIGHT, { suppressToast: true })
   })

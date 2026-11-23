@@ -69,6 +69,8 @@ def client():
         sql = str(stmt)
         if "project_members" in sql:
             return _result(uuid.uuid4() if state["member"] else None)
+        if "live_sessions" in sql:  # the guard's streaming-run fallback (D-86): no session
+            return _result(None)
         if "test_runs" in sql:
             return _result(state["run_project"])
         raise AssertionError(sql)

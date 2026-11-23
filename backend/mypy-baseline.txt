@@ -25,7 +25,6 @@
 1 app/routers/flaky_quarantine.py
 2 app/routers/gitlab_integration.py
 3 app/routers/health.py
-1 app/routers/ingest.py
 1 app/routers/integration_health.py
 1 app/routers/my_failures.py
 1 app/routers/ownership.py

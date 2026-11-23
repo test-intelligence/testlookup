@@ -17,13 +17,14 @@ import logging
 import uuid
 from typing import Any, Optional
 
-from sqlalchemy import select
+from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.models.postgres import RunBaseline, TestCase, TestRun
+from app.models.postgres import LaunchStatus, RunBaseline, TestCase, TestRun
 from app.models.schemas import CommitRangeStatus, RegressionDiffCommit
 from app.services.run_diff_service import config_drift
+from app.services.run_time import run_time_column
 
 logger = logging.getLogger("services.regression_diff")
 
@@ -36,6 +37,76 @@ COMMIT_RANGE_REASONS = (
 
 #: At most this many commits are listed (the count is the stored range's).
 _LISTED_COMMITS = 50
+
+#: How the diff's baseline was chosen (D-10): ``passing`` = the newest earlier
+#: finished run with no failed or broken test; ``threshold`` = no such run, so
+#: the newest earlier run at or above ``baseline_threshold()`` (the labelled
+#: fallback). ``None`` when there is no baseline at all.
+BASELINE_KINDS = ("passing", "threshold")
+
+#: A feature-branch run with no earlier run of its own series falls back to
+#: these branches (the same fallback as the bisect narrowing).
+_FALLBACK_BRANCHES = ("main", "master")
+
+
+def baseline_threshold() -> float:
+    """The fallback baseline's minimum pass rate (76.5 with the default 90)."""
+    return settings.RELEASE_PASS_RATE_THRESHOLD * 0.85
+
+
+def _run_time_column():
+    """Execution time, falling back to receipt (D-19's one definition)."""
+    return run_time_column()
+
+
+def _baseline_query(run: TestRun):
+    """The ONE statement choosing the diff's baseline (D-10, S-C-4).
+
+    Candidates: the project's finished runs (not ``IN_PROGRESS``) that ran
+    before this one by execution time (``coalesce(start_time, created_at)``,
+    not upload order), on the run's own branch series (case-insensitive; runs
+    with no branch form their own series) -- or, for a run not on main/master,
+    on main/master as a fallback. Among them, in order: the run's own series
+    first, then a PASSED run (no failed or broken test) before one that only
+    clears ``baseline_threshold()``, then the newest."""
+    run_series = (getattr(run, "branch", None) or "").lower()
+    run_time = getattr(run, "start_time", None) or run.created_at
+    series = func.coalesce(func.lower(TestRun.branch), "")
+    passing = and_(
+        TestRun.status == LaunchStatus.PASSED.value,
+        func.coalesce(TestRun.failed_tests, 0) == 0,
+        func.coalesce(TestRun.broken_tests, 0) == 0,
+    )
+    series_terms = [series == run_series]
+    if run_series not in _FALLBACK_BRANCHES:
+        series_terms.append(series.in_(_FALLBACK_BRANCHES))
+    run_time_col = _run_time_column()
+    return (
+        select(TestRun)
+        .where(
+            TestRun.project_id == run.project_id,
+            TestRun.id != run.id,
+            TestRun.status != LaunchStatus.IN_PROGRESS.value,
+            run_time_col < run_time,
+            or_(*series_terms),
+            or_(passing, TestRun.pass_rate >= baseline_threshold()),
+        )
+        .order_by(
+            case((series == run_series, 0), else_=1),
+            case((passing, 0), else_=1),
+            run_time_col.desc(),
+            TestRun.id.desc(),
+        )
+        .limit(1)
+    )
+
+
+def _baseline_kind(baseline: Any) -> str:
+    """``passing`` when the chosen baseline had no failed or broken test, else ``threshold``."""
+    status = getattr(baseline, "status", None)
+    status = getattr(status, "value", status)
+    clean = not (getattr(baseline, "failed_tests", 0) or 0) and not (getattr(baseline, "broken_tests", 0) or 0)
+    return "passing" if status == LaunchStatus.PASSED.value and clean else "threshold"
 
 
 def _uuid_or_none(value: Any) -> Optional[uuid.UUID]:
@@ -163,14 +234,21 @@ async def baseline_purged(db: AsyncSession, run_id: uuid.UUID) -> Optional[dict]
     }
 
 
+def _hex_sha(value: object) -> Optional[str]:
+    """A git object id (7 … 64 hex) or None: a stored ``[REDACTED]`` (D-12, an export before the fix) or any
+    other non-hex value is shown as unknown, never cut to ``[REDACTE``."""
+    text = str(value or "")
+    return text if 7 <= len(text) <= 64 and all(ch in "0123456789abcdefABCDEF" for ch in text) else None
+
+
 def _listed(commits: list[dict]) -> list[dict]:
     return [
         RegressionDiffCommit(
-            sha=str(c.get("sha") or "")[:8],
+            sha=(_hex_sha(c.get("sha")) or "")[:8],
             message=c.get("message") or "",
             author=c.get("author"),
             timestamp=c.get("committed_at"),
-            full_sha=c.get("sha"),
+            full_sha=_hex_sha(c.get("sha")),
             commit_url=c.get("commit_url"),
         ).model_dump()
         for c in commits[:_LISTED_COMMITS]
@@ -198,28 +276,10 @@ async def compute_regression_diff(run: TestRun, db: AsyncSession) -> dict:
     # was purged.
     purged = await baseline_purged(db, run_id)
 
-    # Find last passing baseline run (pass_rate >= threshold * 0.85) before this run
-    baseline_result = await db.execute(
-        select(TestRun)
-        .where(
-            TestRun.project_id == run.project_id,
-            TestRun.id != run_id,
-            TestRun.pass_rate >= settings.RELEASE_PASS_RATE_THRESHOLD * 0.85,
-            TestRun.created_at < run.created_at,
-        )
-        .order_by(TestRun.created_at.desc())
-        .limit(1)
-    )
+    # D-10 / S-C-4: the last good run of this branch by execution time; the
+    # pass-rate threshold only as a labelled fallback (``baseline_kind``).
+    baseline_result = await db.execute(_baseline_query(run))
     baseline = baseline_result.scalar_one_or_none()
-
-    if not baseline:
-        return {
-            "run_id": str(run_id),
-            "baseline_run_id": None,
-            "baseline_available": False,
-            "message": "No recent passing baseline run found for this project",
-            "baseline_purged": purged,
-        }
 
     # Get failing test fingerprints in current run
     current_failed = await db.execute(
@@ -231,6 +291,26 @@ async def compute_regression_diff(run: TestRun, db: AsyncSession) -> dict:
         for r in current_failed.all()
         if r.test_fingerprint
     }
+    # D-10: the run's first failing test (by name, then fingerprint), so the
+    # tab's ``?bisect=top`` still opens a narrowing when nothing is NEW.
+    first_failing = min(
+        ({"test_name": info["test_name"], "suite_name": info["suite_name"], "test_fingerprint": fp}
+         for fp, info in current_failed_fps.items()),
+        key=lambda t: (str(t["test_name"] or ""), t["test_fingerprint"]),
+        default=None,
+    )
+
+    if not baseline:
+        return {
+            "run_id": str(run_id),
+            "baseline_run_id": None,
+            "baseline_available": False,
+            "baseline_kind": None,
+            "baseline_threshold": baseline_threshold(),
+            "first_failing_test": first_failing,
+            "message": "No recent passing baseline run found for this project",
+            "baseline_purged": purged,
+        }
 
     # Get failing test fingerprints in baseline run
     baseline_failed = await db.execute(
@@ -261,6 +341,9 @@ async def compute_regression_diff(run: TestRun, db: AsyncSession) -> dict:
         "run_id": str(run_id),
         "baseline_run_id": str(baseline.id),
         "baseline_available": True,
+        "baseline_kind": _baseline_kind(baseline),
+        "baseline_threshold": baseline_threshold(),
+        "first_failing_test": first_failing,
         "build_number": run.build_number,
         "baseline_build_number": baseline.build_number,
         "pass_rate": run.pass_rate,

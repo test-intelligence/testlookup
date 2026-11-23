@@ -28,6 +28,7 @@ Direct handler error branches (dependency/service errors can add others):
 
 ```python
 HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='This API key is restricted to a different project')
+HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail='Upload could not be queued')
 HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail='Upload storage is temporarily unavailable')
 ```
 
@@ -110,7 +111,7 @@ The Cypress and Playwright parsers are gated behind the ``cypress_ingest``
 and ``playwright_ingest`` feature flags respectively — 503 is returned if
 a disabled format is requested.
 
-Source: [backend/app/routers/ingest.py:311](../../../backend/app/routers/ingest.py#L311).
+Source: [backend/app/routers/ingest.py:379](../../../backend/app/routers/ingest.py#L379).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_api_key_context`, `get_current_user_or_api_key`, `get_db`.
 
@@ -207,7 +208,7 @@ Project-scoped: 404 if unknown/expired, 403 if the caller can't access the
 run's project (so a leaked/guessed task_id can't reveal another tenant's
 run).
 
-Source: [backend/app/routers/ingest.py:625](../../../backend/app/routers/ingest.py#L625).
+Source: [backend/app/routers/ingest.py:682](../../../backend/app/routers/ingest.py#L682).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_api_key_context`, `get_current_user_or_api_key`, `get_db`.
 

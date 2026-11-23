@@ -9,7 +9,8 @@ import { seedActiveProject } from './apiMock';
  * that re-fetches. We mock GET /api/v1/runs with 30 deterministic runs and
  * branch on the ?status= param so the filter demonstrably narrows the set.
  *
- * The Build column renders "Run #<run_seq>" (unique to the table; cluster /
+ * The Build column links the build label ("Build <1000 + run_seq>", D-67; the
+ * muted "Run #<run_seq>" beside it is not a link; cluster /
  * velocity cards use "#<build_number>"), so the run_seq labels are safe row
  * anchors. Created-at ascends with run_seq, so seq 30 is newest (top in the
  * default desc sort) and seq 1 is oldest (page 2).
@@ -56,7 +57,7 @@ async function mockRuns(page: Page) {
 }
 
 const runLink = (page: Page, seq: number) =>
-  page.getByRole('link', { name: `Run #${seq}`, exact: true });
+  page.getByRole('link', { name: `Build ${1000 + seq}`, exact: true });
 
 test.describe('Runs table — filter / sort / pagination', () => {
   test.beforeEach(async ({ page }) => {

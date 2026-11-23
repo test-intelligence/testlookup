@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import base64
 import copy
+import hashlib
 import urllib.parse
 from types import SimpleNamespace
 from typing import Any
@@ -404,8 +405,14 @@ def test_history_identifiers_stay_byte_exact() -> None:
         ("run_commit_ranges", {"base_commit": git_sha("base"), "head_commit": git_sha("head")}),
         ("evidence_artifacts", {"cluster_id": "C-" + "3" * 18, "content_sha256": real_sha256}),
     ]
+    # Since S-C-1 a path-like prefix (``<uuid>/builds/build-2001/``) is kept by the text pass itself (the generic
+    # 40+ rule runs per path segment); the exemption still pins them byte-exact whatever the pass does.
+    kept_by_the_path_rule = {("test_runs", "minio_prefix"), ("test_cases", "minio_s3_prefix")}
     for table, row in cases:
         for column, value in row.items():
+            if (table, column) in kept_by_the_path_rule:
+                assert scrub.scrub_text(value) == value, f"{table}.{column}: a path must survive the text pass"
+                continue
             assert scrub.scrub_text(value) != value or len(value) < 40 or "cluster_id" == column, (
                 f"{table}.{column}: the sample would not exercise the exemption")
         assert scrub.scrub_row(_spec(table), row) == row, table
@@ -501,3 +508,92 @@ def test_a_document_nested_past_the_cap_is_redacted_not_truncated_silently() -> 
     out = scrub.scrub_document({"test_run_id": "r", "body": node})
     flat = repr(out)
     assert "deep" not in flat and REDACTED in flat
+
+
+# ── D-12 / S-C-1: digests, commit SHAs and file paths are not tokens ────────
+
+def _git_sha(seed: str) -> str:
+    return hashlib.sha1(("commit " + seed).encode()).hexdigest()          # 40 hex, like `git rev-parse`
+
+
+def _export_commits() -> list[dict[str, Any]]:
+    commits: list[dict[str, Any]] = [
+        {"sha": _git_sha(str(n)), "parents": [_git_sha(str(n - 1))], "author": "Ben Dev",
+         "message": f"fix rounding {n}", "committed_at": "2026-11-20T10:00:00Z",
+         "files": ["backend/app/services/commit_attribution_service.py",
+                   "frontend/src/pages/checkout/components/CouponSummaryPanel.tsx"]}
+        for n in range(1, 4)
+    ]
+    commits.append({"sha": _git_sha("short")[:8], "message": "short sha", "files": []})
+    return commits
+
+
+def _export_run_context() -> dict[str, Any]:
+    return {
+        "v": 1,
+        "runtime": {"python": "3.12.4"},
+        "dependency_fingerprints": {"poetry.lock": hashlib.sha256(b"poetry").hexdigest(),
+                                    "package-lock.json": hashlib.sha256(b"npm").hexdigest()},
+        "image_digests": {"registry.example.test/payments/api:1.4.2": "sha256:" + hashlib.sha256(b"img").hexdigest()},
+        "env": {"TZ": "UTC"},
+    }
+
+
+def test_a_supplied_commit_range_round_trips_byte_exact() -> None:
+    """D-12: each 40-hex ``commits[].sha`` (and its parents and long file paths) was exported as ``[REDACTED]``."""
+    commits = _export_commits()
+    row = {"commits": copy.deepcopy(commits), "base_commit": commits[0]["parents"][0]}
+    assert scrub.scrub_text(commits[0]["sha"]) == REDACTED          # the shape the free-text pass redacts
+    out = scrub.scrub_row(_spec("run_commit_ranges"), row)
+    assert out == row
+    assert scrub.scrub_row(_spec("run_commit_ranges"), out) == out
+
+
+def test_a_run_context_round_trips_byte_exact() -> None:
+    """S-C-1: lockfile sha256 values and image digests were exported as ``[REDACTED]``."""
+    row = {"run_context": _export_run_context()}
+    out = scrub.scrub_row(_spec("test_runs"), copy.deepcopy(row))
+    assert out == row
+
+
+def test_tokens_under_the_digest_keys_are_still_redacted() -> None:
+    sentinels = _sentinels()
+    b64_secret = "wJalr" + "XUtnFEMI/K7MDENG/bPxRfi" + "CYzQ9Xk2LmP0"          # 40 chars, an AWS secret's shape
+    assert len(b64_secret) == 40
+    row = {"commits": [
+        {"sha": b64_secret, "parents": [sentinels["ghp"], "deadbeef" + "x" * 40], "message": "leak " + b64_secret,
+         "files": ["src/" + b64_secret, "config/" + sentinels["jwt"]], "author": sentinels["aws_key"]},
+        {"sha": sentinels["jwt"]},
+    ]}
+    out = scrub.scrub_row(_spec("run_commit_ranges"), row)
+    text = repr(out)
+    _assert_clean(text, sentinels)
+    assert b64_secret not in text and "XUtnFEMI" not in text
+    assert out["commits"][0]["sha"] == REDACTED
+    assert out["commits"][0]["message"] == "leak " + REDACTED
+    # a bare hex run OUTSIDE the digest keys is still redacted (``openssl rand -hex`` secrets have that shape)
+    hex_secret = "a3f9" * 16
+    out = scrub.scrub_row(_spec("test_runs"), {"run_context": {"env": {"BUILD_IMAGE": hex_secret}},
+                                               "error_message": "token " + hex_secret})
+    assert hex_secret not in repr(out)
+    # ...and the digest keys belong to their own (table, column) only
+    out = scrub.scrub_row(_spec("projects"), {"component_owner_map": {"sha": hex_secret}})
+    assert out["component_owner_map"]["sha"] == REDACTED
+
+
+def test_stack_trace_paths_and_digests_survive_the_free_text_pass() -> None:
+    """S-C-1 (b): a path of 40+ characters before its first dot was cut to ``[REDACTED].py``."""
+    digest = "sha256:" + hashlib.sha256(b"layer").hexdigest()
+    trace = (
+        "java.lang.ArithmeticException: Rounding necessary\n"
+        "\tat com/storefront/checkout/coupon/CouponRoundingService.apply(CouponRoundingService.java:118)\n"
+        '  File "/home/runner/work/payments/backend/app/services/commit_attribution_service.py", line 1131\n'
+        "pulled registry.example.test/payments/api@" + digest + "\n"
+    )
+    out = scrub.scrub_row(_spec("test_cases"), {"stack_trace": trace})
+    assert out["stack_trace"] == trace
+    sentinels = _sentinels()
+    leaky = trace + "env GITHUB_TOKEN " + sentinels["ghp"] + " jwt " + sentinels["jwt"]
+    out = scrub.scrub_row(_spec("test_cases"), {"stack_trace": leaky})
+    _assert_clean(out["stack_trace"], sentinels)
+    assert out["stack_trace"].startswith(trace)

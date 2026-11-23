@@ -20,8 +20,8 @@ import type { BisectNarrowing as Narrowing, BisectRunRef } from '@/types/bisect'
 import { safeCommitHref } from '@/pages/run/commitRangeReasons'
 import BisectCommitList from './BisectCommitList'
 import {
-  BLOCK_HEADING, LOAD_ERROR_LINE, LOADING_LINE, NO_LOCATION_LINE, RETRY_LABEL, TRUNCATED_LINE,
-  canRetry, compareLine, listedLine, mergeCaveat, metaParts, narrowedHeading, runHref, stateSegments,
+  BLOCK_HEADING, LOAD_ERROR_LINE, LOADING_LINE, NO_LOCATION_LINE, RETRY_LABEL, SUPPLIED_LINE, TRUNCATED_LINE,
+  canRetry, compareLine, isSuppliedList, listedLine, mergeCaveat, metaParts, narrowedHeading, runHref, stateSegments,
   untestedLine, untestedMoreLine, type Segment,
 } from './bisectModel'
 
@@ -104,15 +104,19 @@ function NarrowingBody({ n, runBuild, onRetry }: { n: Narrowing; runBuild?: stri
           </ul>
         </details>
       )}
-      {c.state === 'fetched' ? (
-        <div className="mt-2.5 space-y-1.5" data-bisect-fetched="">
+      {c.state === 'fetched' || isSuppliedList(n) ? (
+        <div
+          className="mt-2.5 space-y-1.5"
+          {...(isSuppliedList(n) ? { 'data-bisect-supplied': '' } : { 'data-bisect-fetched': '' })}
+        >
           <p className="m-0 text-sm font-medium text-[var(--color-text)]" data-bisect-narrowed-heading="">{narrowedHeading(n)}</p>
+          {isSuppliedList(n) && <p className={MUTED_XS} data-bisect-supplied-line="">{SUPPLIED_LINE}</p>}
           {listedLine(n) && <p className={MUTED_XS}>{listedLine(n)}</p>}
           {c.truncated && <p className={MUTED_XS}>{TRUNCATED_LINE}</p>}
           {c.commits.length > 0 && !c.has_location_signal && <p className={MUTED_XS}>{NO_LOCATION_LINE}</p>}
           <BisectCommitList commits={c.commits} />
           {c.caveat && <p className={MUTED_XS} data-bisect-caveat="">{c.caveat}</p>}
-          <p className={MUTED_XS} data-bisect-merge-caveat="">{mergeCaveat(n)}</p>
+          {!isSuppliedList(n) && <p className={MUTED_XS} data-bisect-merge-caveat="">{mergeCaveat(n)}</p>}
         </div>
       ) : reason ? (
         <p className={`${MUTED_XS} mt-2`} data-bisect-compare-reason={c.reason ?? ''}>

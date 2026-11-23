@@ -123,7 +123,7 @@ test.describe('Run detail → test-case drill-down', () => {
     await page.goto(`/runs/${RUN_ID}`);
 
     // Run summary header (build number + status counts).
-    await expect(page.getByRole('heading', { name: /Run #1042/ })).toBeVisible({ timeout: 10000 });
+    await expect(page.getByRole('heading', { name: /Build 1042/ })).toBeVisible({ timeout: 10000 });
     await expect(page.getByText('8 passed')).toBeVisible();
     await expect(page.getByText('2 failed')).toBeVisible();
 

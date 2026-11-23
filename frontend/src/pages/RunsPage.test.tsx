@@ -674,6 +674,23 @@ describe('RunsPage — the page template (P3)', () => {
     expect(facts).toContain('Avg pass rate 50.0%')
   })
 
+  // D-131: one failed upload read "Pipeline broken · 1 of 1 builds failed".
+  it('a window holding one failed run is not "Pipeline broken"', () => {
+    renderRunsPage([run(1, { status: 'FAILED', passed_tests: 0, failed_tests: 3, total_tests: 3, pass_rate: 0, created_at: hoursAgo(1) })])
+    expect(banner()).not.toHaveTextContent('Pipeline broken')
+    expect(banner()).toHaveTextContent('1 build, with failures')
+    expect(banner()).not.toHaveTextContent('1 of 1 builds failed')
+  })
+
+  it('two failed runs are still too few to call the pipeline broken', () => {
+    renderRunsPage(newestFirst([
+      run(1, { status: 'FAILED', passed_tests: 0, failed_tests: 3, total_tests: 3, pass_rate: 0, created_at: hoursAgo(2) }),
+      run(2, { status: 'FAILED', passed_tests: 0, failed_tests: 3, total_tests: 3, pass_rate: 0, created_at: hoursAgo(1) }),
+    ]))
+    expect(banner()).not.toHaveTextContent('Pipeline broken')
+    expect(banner()).toHaveTextContent('2 builds, 2 with failures')
+  })
+
   it('a green window: OK, no Bisect, no signatures button', () => {
     renderRunsPage(greenWindow())
     expect(banner()).toHaveAttribute('data-status-banner', 'ok')
@@ -712,6 +729,36 @@ describe('RunsPage — the page template (P3)', () => {
     expect(useTimeWindowStore.getState().days).toBe(7)
     expect(vi.mocked(useRuns).mock.lastCall?.[0]).toMatchObject({ days: 7, size: 500, order: 'newest' })
     expect(screen.getByRole('combobox', { name: 'Run status' })).toBeInTheDocument()
+  })
+})
+
+// D-67 / D-22 / S-C-3: the Build cell printed "Run #N", a per-suite rank, so the first run of every suite read
+// "Run #1" and builds could not be told apart. D-21: the subtitle said "Jenkins builds" for any reporter.
+describe('RunsPage — the Build cell names the build (D-67, D-21)', () => {
+  it('two runs of different suites, both Run #1, show their own build labels', () => {
+    renderRunsPage(newestFirst([
+      run(1, { build_number: 'cli-demo-1', run_seq: 1, primary_suite_name: 'cli', created_at: hoursAgo(3) }),
+      run(2, { build_number: 'harness-batch-1', run_seq: 1, primary_suite_name: 'harness', created_at: hoursAgo(2) }),
+    ]))
+    const cell = (id: string) => primary().querySelector(`#run-row-${id} [data-run-build-label]`) as HTMLElement
+    expect(cell('run-1')).toHaveTextContent(/^cli-demo-1$/)
+    expect(cell('run-2')).toHaveTextContent(/^harness-batch-1$/)
+    expect(cell('run-1').textContent).not.toBe(cell('run-2').textContent)
+    // The rank stays, muted, as the secondary ordinal.
+    expect(primary().querySelector('#run-row-run-1 [data-run-seq]')).toHaveTextContent('Run #1')
+    expect(screen.getByRole('link', { name: 'harness-batch-1' })).toHaveAttribute('href', '/runs/run-2')
+  })
+
+  it('a numeric label reads "Build N"', () => {
+    renderRunsPage([run(1, { build_number: 240, run_seq: 60, created_at: hoursAgo(1) })])
+    expect(primary().querySelector('#run-row-run-1 [data-run-build-label]')).toHaveTextContent(/^Build 240$/)
+  })
+
+  it('the subtitle does not say Jenkins', () => {
+    renderRunsPage(greenWindow())
+    const header = document.querySelector('[data-page-header]') as HTMLElement
+    expect(header).not.toHaveTextContent(/Jenkins/)
+    expect(header).toHaveTextContent('Runs for Project One')
   })
 })
 
@@ -916,8 +963,10 @@ describe('RunsPage — the failure signatures open in a side panel (P3 drill-dow
     expect(sigUrls()).toHaveLength(1)
     expect(sigUrls()[0][1]).toMatchObject({ params: { run_id: ['run-2', 'run-3', 'run-4'] } })
     const chip = within(primary().querySelector('#run-row-run-4') as HTMLElement).getByRole('button', { name: /^Signature/ })
-    expect(chip).toHaveAttribute('title', 'AssertionError: expected 3 but was 4')
-    expect(chip).toHaveTextContent(/^[0-9a-f]{3}-cluster$/)
+    // D-46: the chip reads the start of the shared error (it was an "abc-cluster" hash); the title has all of it
+    // and how many builds share it.
+    expect(chip).toHaveAttribute('title', 'AssertionError: expected 3 but was 4 (3 builds failed this way)')
+    expect(chip).toHaveTextContent(/^AssertionError: expected 3 but…$/)
     const passed = primary().querySelector('#run-row-run-1 [data-run-signature]') as HTMLElement
     expect(passed).toHaveTextContent(/^—$/)
     expect(within(passed).queryByRole('button')).toBeNull()

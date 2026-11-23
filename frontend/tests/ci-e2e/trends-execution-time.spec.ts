@@ -162,7 +162,7 @@ test('the suite page: Charts › Suite execution time, and the Runs tab’s Wall
 test('the run header and the Runs table: wall clock and summed test time, each labelled', async ({ page }) => {
   const opened = await openRollout(page, `/runs/${RUN_ID}`, {
     handlers: RUN_PAGE,
-    ready: (p) => p.getByRole('heading', { level: 1, name: /^Run #/ }),
+    ready: (p) => p.getByRole('heading', { level: 1, name: /^Build \d/ }),
   })
   const header = page.locator('[data-run-timing]')
   await expect(header).toContainText('Wall clock')

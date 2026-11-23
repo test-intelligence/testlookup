@@ -140,7 +140,7 @@ def test_the_chart_s_scope_bounds_the_aggregate() -> None:
     rel = str(uuid.UUID(int=4))
     scope = _scope(release_ids=(rel,), suite_names=("Payments", "Orders"))
     sql, params = svc.build_statement(_spec(), scope, now=FROZEN)
-    assert "tr.created_at >= :period_start" in sql
+    assert "COALESCE(tr.start_time, tr.created_at) >= :period_start" in sql
     assert params["period_start"] == charts.window_start(30, now=FROZEN)
     assert "AND tr.project_id = :project_id" in sql and "is_active" in sql
     assert "AND tr.primary_release_id = :release_id" in sql

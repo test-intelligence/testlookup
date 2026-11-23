@@ -149,6 +149,16 @@ List open quarantine proposals and approve the one with the highest flip rate
 
 A `?` marks an optional parameter.
 
+**Time window.** Every tool that takes `days` defaults to the last **30** days,
+the same window as the REST API (`GET /api/v1/runs`) and the web app, and its
+answer names the window it used: `## Test Runs in the last 30 days — Page 1/3
+(54 total)`, `Dashboard Metrics — Last 30 Days`, `Project readiness (last 30
+days)`. Pass `days` to change it; `list_test_runs` takes `days=0` for all time.
+Before this, `list_test_runs`, `get_dashboard_metrics`, `get_test_trends` and
+`check_release_readiness` defaulted to 7 days, so their counts did not match
+the API's or the other tools'. The `testlookup://projects/{project_id}/metrics`
+resource still reads the last 7 days, as its description says.
+
 ### Auth and health
 
 | Tool | Parameters | Description |

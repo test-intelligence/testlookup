@@ -58,6 +58,18 @@ export interface RegressionDiff {
   baseline_available: boolean
   baseline_run_id?: string
   baseline_build_number?: string
+  /**
+   * D-10: how the baseline was chosen. `passing` = the last run of this branch with no failed or broken test;
+   * `threshold` = none, so the nearest earlier run at or above `baseline_threshold` %. Absent on an older server.
+   */
+  baseline_kind?: 'passing' | 'threshold' | null
+  /** D-10: the fallback's minimum pass rate (RELEASE_PASS_RATE_THRESHOLD * 0.85; 76.5 by default). */
+  baseline_threshold?: number
+  /**
+   * D-10: the run's first failing test (by name), on both answers; null when nothing failed. `?bisect=top`
+   * opens it when no failure is new.
+   */
+  first_failing_test?: { test_name: string; suite_name: string | null; test_fingerprint: string } | null
   pass_rate?: number
   baseline_pass_rate?: number
   pass_rate_delta?: number

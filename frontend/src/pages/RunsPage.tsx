@@ -107,6 +107,7 @@ import agentService, { newClientToken } from '@/services/agentService'
 import { pipelineActionError } from '@/services/pipelineActions'
 import type { RunListFilters, TestRun, TestRunListResponse } from '@/types/runs'
 import { shortAgo } from '@/utils/formatters'
+import { runBuildLabel, runSeqLabel } from '@/utils/runOption'
 import { buildCompareWithPreviousHref } from '@/utils/runComparisons'
 import { aiHistoryService } from '@/services/aiHistoryService'
 import { isRunInProgress, measuredRunPassRate, noPassRateReason } from '@/utils/runPassRate'
@@ -141,6 +142,16 @@ const VERDICT_FILTER_LABELS: Record<VerdictFilter, string> = {
 }
 const isVerdictFilter = (value: string): value is VerdictFilter =>
   (VERDICT_FILTERS as readonly string[]).includes(value)
+
+/**
+ * D-30: the status filter lives in the URL too (`?status=failed`), so a reload
+ * or a shared link keeps it. Read case-insensitively; an unknown value reads
+ * as "All statuses".
+ */
+function readStatusFilter(params: URLSearchParams): StatusFilter {
+  const raw = (params.get('status') ?? '').trim().toUpperCase()
+  return (STATUS_FILTERS as readonly string[]).includes(raw) ? (raw as StatusFilter) : ''
+}
 
 /** The search box waits this long after the last key before it asks. */
 export const SEARCH_DEBOUNCE_MS = 300
@@ -459,10 +470,18 @@ function toneFor(score: number): 'good' | 'warn' | 'bad' {
   return 'bad'
 }
 
+/**
+ * D-131: "Pipeline broken" needs this many FINISHED builds in the window. One
+ * failed upload read "Pipeline broken · 1 of 1 builds failed"; below the floor
+ * a failing window is MIXED and the summary says what it holds.
+ */
+const MIN_BUILDS_FOR_BROKEN = 3
+
 function pickVerdict(model: PipelineModel): Verdict {
   if (model.totalRuns === 0) return 'PENDING'
   if (model.failedRuns === 0) return 'HEALTHY'
-  if (model.composite < 33) return 'BROKEN'
+  const finished = model.totalRuns - model.inProgressRuns
+  if (model.composite < 33 && finished >= MIN_BUILDS_FOR_BROKEN) return 'BROKEN'
   return 'MIXED'
 }
 
@@ -547,7 +566,12 @@ function GhostSelect<T extends string | number>({
 /** The verdict in words: the banner's title after the state pill. */
 function verdictSummary(model: PipelineModel, verdict: Verdict): string {
   if (verdict === 'PENDING') return 'no builds in window'
-  if (verdict === 'HEALTHY') return `${model.totalRuns} builds passing`
+  if (verdict === 'HEALTHY') return `${model.totalRuns} build${model.totalRuns === 1 ? '' : 's'} passing`
+  // D-131: a window this small says what it holds, not a proportion.
+  if (model.totalRuns - model.inProgressRuns < MIN_BUILDS_FOR_BROKEN) {
+    if (model.totalRuns === 1) return '1 build, with failures'
+    return `${model.totalRuns} builds, ${model.failedRuns} with failures`
+  }
   const failed = `${model.failedRuns} of ${model.totalRuns} builds failed`
   // "The same error" only when the data shows it: the primary group holds at
   // least 80 % of the failed builds the signatures grouped (two or more).
@@ -965,13 +989,14 @@ function ClusterRow({
 /**
  * A failed, grouped row's signature (FAIL-03): a button, the way into the
  * failure-signature side panel (P3: the cluster card became a drill-down),
- * titled by its group's error. The label keeps the old chip's width
- * (`chipLabelOf`: at most 11 characters), which the table's 1280 px fit
- * depends on.
+ * titled by its group's error. D-46: the label is the start of that error
+ * (`chipLabelOf`), not a `946-cluster` hash; CSS cuts it at 7rem so the
+ * table's 1280 px fit holds, and the title carries the whole error and how
+ * many builds share it.
  */
 function SignatureChip({
-  label, title, isOutlier, onOpen,
-}: { label: string; title: string; isOutlier: boolean; onOpen: () => void }) {
+  label, title, builds, isOutlier, onOpen,
+}: { label: string; title: string; builds: number; isOutlier: boolean; onOpen: () => void }) {
   const hue = isOutlier ? 'var(--status-broken)' : 'var(--status-failed)'
   // The words on the chip's own tint read the hue's -ink (>= 4.5:1 in every theme, W29a UIX-03).
   const ink = isOutlier ? 'var(--status-broken-ink)' : 'var(--status-failed-ink)'
@@ -979,7 +1004,7 @@ function SignatureChip({
     <button
       type="button"
       onClick={onOpen}
-      title={title}
+      title={builds > 1 ? `${title} (${builds} builds failed this way)` : title}
       aria-label={`Signature ${label}: show the failure signatures`}
       data-signature-chip=""
       className={clsx(
@@ -992,8 +1017,8 @@ function SignatureChip({
         color: ink,
       }}
     >
-      <i aria-hidden style={{ width: 6, height: 6, borderRadius: 999, background: 'currentColor' }} />
-      {label}
+      <i aria-hidden style={{ width: 6, height: 6, borderRadius: 999, background: 'currentColor', flexShrink: 0 }} />
+      <span className="max-w-[7rem] truncate" data-signature-chip-label="">{label}</span>
     </button>
   )
 }
@@ -1180,23 +1205,24 @@ function RunsTable({
                       aria-label={`Select #${r.build_number}`}
                     />
                   </Td>
-                  {/* Build column links to the run detail page. Header
-                      label is "Build" for historical continuity, but the
-                      VALUE is the human-readable, per-(project, suite)
-                      incremental "Run #N" — server-side ROW_NUMBER()
-                      over the partition. Falls back to the raw SDK
-                      build_number for legacy rows that pre-date the
-                      run_seq field. */}
+                  {/* Build column links to the run detail page. D-67 /
+                      S-C-3: the VALUE is the build label the reporter sent
+                      (`main-1865`); "Run #N" is a per-(project, suite) rank
+                      that every suite starts at 1, so it sits muted beside
+                      the suite as a secondary ordinal, never as the name.
+                      The label truncates (full text on hover) so a long
+                      SDK slug does not widen the table. */}
                   <Td className="font-mono text-sm font-semibold whitespace-nowrap">
                     {/* The job and branch the retired `/intelligence` rows
                         printed under the build (P4): on hover here, where
                         the table has no width left for a second line. */}
                     <Link
                       to={`/runs/${r.id}`}
-                      title={[r.jenkins_job, r.branch ? `branch ${r.branch}` : null].filter(Boolean).join(' · ') || undefined}
-                      className="text-[var(--color-text)] hover:text-[var(--color-accent)] hover:underline"
+                      title={[runBuildLabel(r), r.jenkins_job, r.branch ? `branch ${r.branch}` : null].filter(Boolean).join(' · ')}
+                      className="inline-block max-w-[10rem] truncate align-bottom text-[var(--color-text)] hover:text-[var(--color-accent)] hover:underline"
+                      data-run-build-label=""
                     >
-                      {r.run_seq != null ? `Run #${r.run_seq}` : `#${String(r.build_number)}`}
+                      {runBuildLabel(r)}
                     </Link>
                     {r.ingestion_source === 'upload' && (
                       <span
@@ -1211,7 +1237,10 @@ function RunsTable({
                         Uploaded
                       </span>
                     )}
-                    <div className="mt-1 font-sans font-normal" data-run-suite="">
+                    <div className="mt-1 font-sans font-normal flex items-center gap-1.5" data-run-suite="">
+                      {r.run_seq != null && (
+                        <span className="text-2xs text-[var(--color-text-muted)]" data-run-seq="">{runSeqLabel(r)}</span>
+                      )}
                       <SuiteBadge
                         primary={r.primary_suite_name}
                         all={r.suite_names}
@@ -1224,6 +1253,7 @@ function RunsTable({
                       <SignatureChip
                         label={sigCell.group.chipLabel}
                         title={sigCell.group.title}
+                        builds={sigCell.group.members.length}
                         isOutlier={sigCell.isOutlier}
                         onOpen={onOpenSignatures}
                       />
@@ -1450,7 +1480,8 @@ export default function RunsPage() {
   const storedDays = useTimeWindowStore(s => s.days)
   const days = snapToAllowed(storedDays, DEFAULT_WINDOW_OPTIONS)
 
-  const [statusFilter, setStatusFilter] = useState<StatusFilter>('')
+  // D-30: read from the URL (written by `setStatusFilter` below), like q / branch / verdict.
+  const statusFilter = readStatusFilter(searchParams)
   // The page-local suite filter (usePageSuiteFilter).
   const { selectedSuite, setSelectedSuite, suiteFilter: pageSuiteFilter, suiteLabel } = usePageSuiteFilter()
 
@@ -1475,7 +1506,7 @@ export default function RunsPage() {
     if (pendingQueries.current.length === 0) latestQuery.current = searchParams
   }, [searchParams])
   // (`bulk_job` rides the same writer: W14 AGT-12's tracked bulk job, `?bulk_job=<id>`.)
-  const writeFilters = useCallback((values: Partial<Record<'q' | 'branch' | 'verdict' | 'bulk_job', string>>) => {
+  const writeFilters = useCallback((values: Partial<Record<'q' | 'branch' | 'verdict' | 'bulk_job' | 'status', string>>) => {
     const next = new URLSearchParams(latestQuery.current)
     for (const [name, value] of Object.entries(values)) {
       if (value) next.set(name, value)
@@ -1485,6 +1516,7 @@ export default function RunsPage() {
     pendingQueries.current.push(next.toString())
     setSearchParams(next, { replace: true })
   }, [setSearchParams])
+  const setStatusFilter = (value: StatusFilter) => writeFilters({ status: value.toLowerCase() })
   // An unknown `verdict` is ignored, and dropped from the URL.
   const rawVerdict = searchParams.get('verdict') ?? ''
   const verdictIsUnknown = rawVerdict !== '' && !isVerdictFilter(rawVerdict)
@@ -1847,7 +1879,8 @@ export default function RunsPage() {
   const canBisect = buildBisectHref(model) !== null
   const signatureCount = model.signatures.groups.length
   const subtitle = [
-    `Jenkins builds for ${projectLabel}`,
+    // D-21: runs come from any reporter (SDK, upload, CI), not only Jenkins.
+    `Runs for ${projectLabel}`,
     suiteLabel ? `Suite ${suiteLabel}` : null,
     `${model.totalRuns} build${model.totalRuns === 1 ? '' : 's'} in window`,
     filtersActive ? 'filtered' : null,

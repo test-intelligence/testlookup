@@ -79,12 +79,42 @@ def set_active_profile(name: str) -> None:
     _write_private(ACTIVE_FILE, name)
 
 
+#: Profile names already warned about, so one command warns once (D-123).
+_env_ignored_warned: set[str] = set()
+
+_ENV_FALLBACK_VARS = ("TESTLOOKUP_API_KEY", "TESTLOOKUP_URL")
+
+
+def _warn_env_ignored(name: str) -> None:
+    """Say on stderr that a saved profile hides ``TESTLOOKUP_API_KEY`` / ``TESTLOOKUP_URL``.
+
+    The precedence is documented (a saved profile wins; the variables are the
+    fallback for an unsaved name), but nothing said so at run time: on a reused
+    CI runner the job ran as whoever last ran ``auth login`` (D-123). Stderr,
+    so ``-o json`` on stdout stays parseable.
+    """
+    ignored = [var for var in _ENV_FALLBACK_VARS if os.environ.get(var)]
+    if not ignored or name in _env_ignored_warned:
+        return
+    _env_ignored_warned.add(name)
+    from testlookup_cli import output  # late: output must not load at config import
+
+    names = " and ".join(ignored)
+    verb = "are" if len(ignored) > 1 else "is"
+    output.print_warning(
+        f"Using saved profile '{name}'; {names} {verb} set and ignored. "
+        "To use the environment, select a profile name that is not saved "
+        "(for example TESTLOOKUP_PROFILE=env)."
+    )
+
+
 def get_profile(name: Optional[str] = None) -> dict:
     """Load a profile by name. Falls back to env vars if no profile found."""
     name = name or get_active_profile_name()
     profiles = _load_profiles()
 
     if name in profiles:
+        _warn_env_ignored(name)
         return profiles[name]
 
     # Fallback to env vars

@@ -7,10 +7,23 @@ job on real (non-quarantined) failures without leaving the shell. The CLI talks
 to a TestLookup server over its REST API. The only state it keeps is a saved
 connection profile.
 
-## Install (from source)
+## Install
 
-The CLI is not published to a package registry. Install it from a clone of the
-repository (Python 3.11 or newer):
+The CLI is not published to a package registry. It needs Python 3.11 or newer.
+
+**From your deployment.** A TestLookup deployment serves the CLI as a wheel,
+without a login. Ask it for the file name, then install that file:
+
+```bash
+curl -s https://testlookup.example.com/api/v1/sdk/cli/info
+# {"available": true, "version": "0.4.0", "filename": "testlookup_cli-0.4.0-py3-none-any.whl", ...}
+pip install https://testlookup.example.com/api/v1/sdk/cli/testlookup_cli-0.4.0-py3-none-any.whl
+```
+
+`"available": false` means the deployment was built without the wheel (images
+built by CI and `k3ssetup/deploy-k3s.sh` include it).
+
+**From source.** Install it from a clone of the repository:
 
 ```bash
 git clone https://github.com/test-intelligence/testlookup.git
@@ -88,6 +101,9 @@ in `profiles.json`, the CLI uses it and ignores `TESTLOOKUP_URL` and
 name that has not been saved, which is the normal case on a CI runner. On a
 machine that already has a saved `default` profile, select an unsaved name (for
 example `TESTLOOKUP_PROFILE=env`) to use the environment variables instead.
+When a saved profile is used while `TESTLOOKUP_API_KEY` or `TESTLOOKUP_URL` is
+set, the CLI prints one warning on stderr naming the ignored variables (stdout,
+and so `-o json`, is unchanged).
 There is no global `--url` option; `auth login --url` sets the URL of the
 profile it saves.
 
@@ -110,7 +126,7 @@ Every group has `--help`, for example `testlookup upload file --help`.
 | `doctor` | (none; run `testlookup doctor`) | One-shot setup check: profile, server reachability and build, credentials |
 | `health` | (none; run `testlookup health`) | Server readiness from `GET /health/ready`, with per-dependency detail |
 | `projects` | `list`, `get <project-id>`, `export <project>`, `import <zip>` | List accessible projects, show one project; export a project's settings and test catalog as a signed ZIP (QA lead), import one as a NEW project (admin) (see [Exporting and importing a project](#exporting-and-importing-a-project)) |
-| `runs` | `list`, `get <run-id>`, `timing <run-id>` | List runs (`--project`, `--status`, `--page`, `--size`), show one run; how long a run took and where the time went (see [Execution time](#execution-time)) |
+| `runs` | `list`, `get <run-id>`, `timing <run-id>` | List runs from the last 30 days (`--days N`, `--days 0` for all time; `--project`, `--status`, `--page`, `--size`), with the window in the table title; show one run; how long a run took and where the time went (see [Execution time](#execution-time)) |
 | `tests` | `list <run-id>`, `get <run-id> <test-id>` | List a run's test cases (`--status`, `--suite`, `--page`, `--size`); show one test case, with `--show-steps` to summarise its step tree |
 | `search` | (none; run `testlookup search "<query>"`) | Global search across tests, runs, suites, defects and more (`--types`, `--project`) |
 | `intelligence` | `show <run-id>`, `refresh <run-id>`, `history <run-id>` | Run intelligence summary (status, pass rate, release recommendation, executive summary); force a refresh; the run's stored AI versions (same as `ai-history`) |
@@ -176,12 +192,13 @@ file, and exits 1 if any file fails.
 | `--commit-range-base <ref>` | Pin the base of the collected commit range |
 | `--no-commit-range` | Do not collect the commit range from local git |
 | `--environment <text>` | The environment the run executed against (`staging`, `prod`, ...); shown on the run and in its configuration drift |
+| `--executed-at <ISO 8601>` | When the tests ran (`2026-11-20T23:10:00Z`, `2026-11-20T23:10:00+01:00` or `2026-11-20`; a time without a zone is UTC), sent as the `executed_at` form field. Charts and time windows then place the run on that day instead of the upload day, which matters for a backfill or a report uploaded the morning after. Checked before anything is sent: a value that is not ISO 8601, in the future, or more than 365 days ago (which the server would replace with the upload time) is a usage error (exit 2) |
 | `--run-context-root <path>` | Directory whose lockfiles are hashed into the run context (default: the working directory) |
 | `--runtime <KEY=VERSION>` | A runtime the tests ran on, e.g. `--runtime java=21.0.2`; repeatable. Beats `TESTLOOKUP_RUNTIME` per key |
 | `--image-digest <NAME=sha256:...>` | An image the tests ran in, with its 64-hex digest; repeatable. Replaces `TESTLOOKUP_IMAGE_DIGESTS` |
 | `--no-run-context` | Send no run context at all (same as `TESTLOOKUP_RUN_CONTEXT=0`) |
 | `--no-ai` | Skip the AI analysis, the suite comparison and the automatic Investigator run of the uploaded run (sends `run_ai=false`) |
-| `--wait` / `--no-wait` | Wait until the server has ingested the report and exit non-zero if it refuses it (over the result cap, unparseable, empty). Default `--no-wait`: the command returns once the upload is accepted. |
+| `--wait` / `--no-wait` | Wait until the server has ingested the report and exit non-zero if it refuses it (over the result cap, unparseable, empty). When the upload carried a commit range, it also prints what became of it: `Commit range: stored`, or a warning when the server cut it, could not read it or failed to save it (the results are ingested either way). Default `--no-wait`: the command returns once the upload is accepted. |
 | `--wait-timeout <seconds>` | How long `--wait` waits (default 600; for `upload dir` one budget covers every file) |
 | `--profile`, `-o`/`--output` | Profile to use; `table`, `json` or `yaml` output |
 
@@ -195,7 +212,8 @@ RUN_ID=$(testlookup upload file results.xml -p "$PROJECT_ID" -b "$BUILD_ID" --wa
 
 ## Gating CI with ci-verdict
 
-`testlookup ci-verdict --run <run-id>` fetches the run's `FAILED` and `BROKEN`
+`testlookup ci-verdict <run-id>` (or `--run <run-id>`, the older spelling,
+which still works; two different ids are a usage error) fetches the run's `FAILED` and `BROKEN`
 test cases and the project's quarantine manifest
 (`GET /api/v1/projects/{project_id}/quarantine/manifest`), then splits the
 failures into real and quarantined. A failure counts as quarantined when its

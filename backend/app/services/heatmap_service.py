@@ -36,7 +36,7 @@ denominator. ``unit: "percent"`` is sent explicitly (OD-7).
 **The same numbers as chart-data.** The day bucket, the effective suite and
 the environment are ``chart_data_service.DIMENSIONS``' own fragments, read
 over the same population (``test_cases`` joined to the run, the run's
-``created_at`` as the clock, the same tenant/release/suite fragments), so a
+run time ``COALESCE(start_time, created_at)`` as the clock (D-19), the same tenant/release/suite fragments), so a
 ``suite_day`` cell's rate equals ``chart-data?metric=pass_rate&group_by=day&
 group_by=suite`` for the same scope. ``n`` here is every execution in the cell
 (the contract's ``counts`` must add up to it); chart-data's ``n`` for a rate is
@@ -84,6 +84,7 @@ from app.services.analytics_scope import (
 # The tenant rule, spelled once for every raw-SQL analytics query (the pin,
 # the membership set, the fail-closed empty set, and ``is_active``).
 from app.services.analytics_service import _tenant_filter as tenant_filter_sql
+from app.services.run_time import RUN_TIME_SQL
 from app.services.chart_data_service import DIMENSIONS as CHART_DIMENSIONS
 from app.services.chart_data_service import (
     request_clock,
@@ -304,7 +305,7 @@ def _grouped_statement(spec: HeatmapSpec, scope: AnalyticsScope, params: dict) -
             {counts},
             COUNT(*) AS n
         FROM test_cases tc JOIN test_runs tr ON tr.id = tc.test_run_id
-        WHERE tr.created_at >= :period_start
+        WHERE {RUN_TIME_SQL} >= :period_start
           {filters}
           {suites}
         GROUP BY {x_sql}, {_SUITE.sql}"""
@@ -432,17 +433,17 @@ def _test_run_statement(spec: HeatmapSpec, scope: AnalyticsScope, params: dict) 
     return f"""
         WITH last_runs AS (
             SELECT tr.id, tr.build_number,
-                   ROW_NUMBER() OVER (ORDER BY tr.created_at DESC, tr.id DESC) AS rn
+                   ROW_NUMBER() OVER (ORDER BY {RUN_TIME_SQL} DESC, tr.id DESC) AS rn
             FROM test_runs tr
-            WHERE tr.created_at >= :period_start
+            WHERE {RUN_TIME_SQL} >= :period_start
               {filters}
               {run_in_suite}
-            ORDER BY tr.created_at DESC, tr.id DESC
+            ORDER BY {RUN_TIME_SQL} DESC, tr.id DESC
             LIMIT :heatmap_runs
         ), run_total AS (
             SELECT COUNT(*) AS total
             FROM test_runs tr
-            WHERE tr.created_at >= :period_start
+            WHERE {RUN_TIME_SQL} >= :period_start
               {filters}
               {run_in_suite}
         ), failing AS (
@@ -456,7 +457,7 @@ def _test_run_statement(spec: HeatmapSpec, scope: AnalyticsScope, params: dict) 
                   {suites}
                 OFFSET 0
             ) f
-            WHERE tr.created_at >= :period_start
+            WHERE {RUN_TIME_SQL} >= :period_start
               {filters}
             GROUP BY f.y_key
         ), y_ranked AS (
@@ -800,7 +801,7 @@ def definitions(spec: HeatmapSpec, now: datetime) -> dict:
             "their run). A run whose per-test rows have not landed yet "
             "contributes nothing here."
         ),
-        "window_clock": "test_runs.created_at, UTC",
+        "window_clock": "the run time: test_runs.start_time, else test_runs.created_at, UTC",
         "timezone": "UTC",
         "rows": (
             f"At most {spec.rows} rows, worst first: the most failed + broken "
@@ -849,7 +850,8 @@ def definitions(spec: HeatmapSpec, now: datetime) -> dict:
         out["columns"] = "Every UTC calendar day of the window, oldest first."
         out["partial_bucket"] = now.astimezone(timezone.utc).date().isoformat()
         out["outside_window"] = (
-            "A run whose created_at is after the current UTC day falls outside "
+            "A run whose run time (start_time, else created_at) is after the "
+            "current UTC day falls outside "
             "the day axis. It is not drawn; meta.outside_window counts what the "
             "shown rows held there."
         )
@@ -870,7 +872,8 @@ def definitions(spec: HeatmapSpec, now: datetime) -> dict:
     else:
         out.update({
             "columns": (
-                f"The last {spec.runs} runs in the window by created_at (then id), "
+                f"The last {spec.runs} runs in the window by run time (start_time, "
+                "else created_at; then id), "
                 "shown oldest to newest. The key is the run id; the label is the "
                 "build number, which can repeat."
             ),

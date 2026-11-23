@@ -58,6 +58,7 @@ import Tabs, { type TabItem } from '@/components/ui/Tabs'
 import { useTabParam } from '@/components/ui/useTabParam'
 import { useAgenticRuntime } from '@/hooks/useAgentOps'
 import { measuredRunPassRate } from '@/utils/runPassRate'
+import { runIdent } from '@/utils/runOption'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { useProjectChangeRedirect, useProjectChangeReset } from '@/hooks/useProjectChange'
 
@@ -1169,18 +1170,19 @@ const MODE_BADGE: Record<string, { label: string; colour: string }> = {
 }
 
 /**
- * A run as the picker names it: `<suite> · Run #N`, the attributes a user
- * recognises (never the run UUID). Run #N matches /runs and /live; legacy rows
- * without it keep the raw build number prefixed with "#".
+ * A run as the picker names it: `<suite> · <build label> · Run #N`, the
+ * attributes a user recognises (never the run UUID). D-67: the build label
+ * first, as on /runs (`runIdent`); `Run #N` repeats in every suite.
  */
 function runOptionLabel(r: {
+  id?: string | null
   primary_suite_name?: string | null
   suite_names?: string[] | null
   run_seq?: number | null
   build_number: string | number
 }): string {
   const suite = r.primary_suite_name || (r.suite_names && r.suite_names[0]) || 'Unknown suite'
-  return `${suite} · ${r.run_seq != null ? `Run #${r.run_seq}` : `#${r.build_number}`}`
+  return `${suite} · ${runIdent(r)}`
 }
 
 /**
@@ -1336,8 +1338,7 @@ export default function AgentStatusPage() {
     const p = pipelines[0]
     if (!runId) return ''
     if (!p) return `Run ${runId.slice(0, 8)}`
-    const run = p.run_seq != null ? `Run #${p.run_seq}` : p.build_number ? `#${p.build_number}` : `Run ${runId.slice(0, 8)}`
-    return `${p.suite_name || 'Unknown suite'} · ${run}`
+    return `${p.suite_name || 'Unknown suite'} · ${runIdent({ id: runId, build_number: p.build_number, run_seq: p.run_seq })}`
   })()
   const pickedRun = recentRuns.find((r) => r.id === runId)
   const anchorLabel = runId ? (pickedRun ? runOptionLabel(pickedRun) : pickedRunLabel) : null

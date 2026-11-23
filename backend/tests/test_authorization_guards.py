@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import uuid
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi import HTTPException
@@ -143,11 +143,44 @@ class TestRequireRunAccess:
     @pytest.mark.asyncio
     async def test_run_not_found_returns_404(self):
         guard = require_run_access()
-        db = _db_returning(_scalar(None))  # TestRun.project_id lookup empty
+        db = _db_returning(
+            _scalar(None),  # TestRun.project_id lookup empty
+            _scalar(None),  # no LiveSession either (D-86)
+        )
         req = _request(run_id=str(uuid.uuid4()))
         with pytest.raises(HTTPException) as exc:
             await guard(req, db, _user())
         assert exc.value.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_a_streaming_run_with_no_test_run_yet_lets_a_member_through(self):
+        """D-86: a run still streaming has a LiveSession but no TestRun yet;
+        the guard takes the project from the session, so GET /runs/{id} can
+        answer with its in-progress payload instead of "Test run not found"."""
+        guard = require_run_access()
+        db = _db_returning(
+            _scalar(None),           # no TestRun yet
+            _scalar(uuid.uuid4()),   # LiveSession.project_id
+            _scalar(uuid.uuid4()),   # ProjectMember found
+        )
+        user = _user()
+        with patch("app.core.deps.enforce_project_role_floor", AsyncMock()):
+            result = await guard(_request(run_id=str(uuid.uuid4())), db, user)
+        assert result is user
+        assert db.execute.await_count == 3
+
+    @pytest.mark.asyncio
+    async def test_a_streaming_run_still_refuses_a_non_member(self):
+        guard = require_run_access()
+        db = _db_returning(
+            _scalar(None),           # no TestRun yet
+            _scalar(uuid.uuid4()),   # LiveSession.project_id
+            _scalar(None),           # not a member
+        )
+        with pytest.raises(HTTPException) as exc:
+            await guard(_request(run_id=str(uuid.uuid4())), db, _user())
+        assert exc.value.status_code == 404
+        assert exc.value.detail == "Test run not found"
 
     @pytest.mark.asyncio
     async def test_admin_bypasses(self):

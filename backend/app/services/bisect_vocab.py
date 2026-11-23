@@ -24,7 +24,7 @@ UNTESTED_LIST_MAX = 20                      # untested_runs items; untested_coun
 BISECT_STATES = ("narrowed", "never_passed", "no_pass_within_bound", "not_failing")
 ANCHOR_CLASSES = ("same_branch", "main_fallback")         # where the good run was found
 TEST_OUTCOMES = ("pass", "fail", "untested")              # per run of the walk (skipped / unknown / absent = untested)
-COMPARE_STATES = ("fetched", "unavailable", "timed_out", "not_attempted")
+COMPARE_STATES = ("fetched", "supplied", "unavailable", "timed_out", "not_attempted")   # supplied: offline, the commits the CI sent with the builds in between (D-11)
 COMPARE_REASONS = (                         # compare.reason when state != "fetched"
     # the git-host reasons, == github_target.GITHUB_UNAVAILABLE_REASONS (github_target.py:42), same words on the SPA
     "offline_mode", "github_checks_off", "no_integration", "integration_disabled", "repo_mismatch", "no_token",
@@ -59,6 +59,9 @@ BISECT_SENTENCES = {                        # fixed copy; the SPA shows these ve
     ),
     "timed_out": "The commit list did not arrive within 8 seconds.",
     "fetch_failed": "The git host refused or failed the compare; the two builds above are exact.",
+    "supplied": (
+        "Offline: these are the commits the CI supplied with the builds after the last pass, up to the first failure."
+    ),
     "merge_caveat": (
         "Compared as the git host's {good_sha}...{bad_sha} (commits reachable from the failure and not from "
         "the pass): with merges or a rebase this is not a straight line."

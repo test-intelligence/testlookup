@@ -1466,6 +1466,19 @@ def require_run_access():
         )
         project_id = result.scalar_one_or_none()
         if not project_id:
+            # D-86 (2026-11-21): a run that is still streaming has a
+            # LiveSession row (its id is the run's canonical UUID) before the
+            # drainer writes the TestRun. GET /runs/{id} answers for it with
+            # an in-progress payload, but only if this guard lets it through:
+            # take the project from the session, then check membership as for
+            # any run.
+            from app.models.postgres import LiveSession
+
+            live = await db.execute(
+                select(LiveSession.project_id).where(LiveSession.id == run_uuid)
+            )
+            project_id = live.scalar_one_or_none()
+        if not project_id:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Test run not found")
 
         if bound_project_id is not None and bound_project_id != project_id:

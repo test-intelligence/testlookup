@@ -73,7 +73,19 @@ describe('UploadReportModal', () => {
     const { uploadBtn, input } = setup()
     selectFile(input, new File(['hi'], 'notes.txt', { type: 'text/plain' }))
     expect(screen.getByText(/unsupported file type/i)).toBeInTheDocument()
+    expect(screen.getByText(/unsupported file type/i)).toHaveTextContent(/pytest/)
     expect(uploadBtn()).toBeDisabled()
+  })
+
+  it('names every format the server reads, pytest included (D-71)', () => {
+    setup()
+    const description = (screen.getByText(/JUnit · TestNG/).textContent ?? '').toLowerCase()
+    // The server's list (routers/ingest.py ``_SUPPORTED_FORMATS`` minus auto).
+    // Vite will not read files outside frontend/, so the backend test
+    // test_json_batch_lifecycle.py checks this list against the server's.
+    const formats = ['junit', 'testng', 'allure', 'cypress', 'playwright', 'pytest',
+      'robot', 'cucumber', 'nunit', 'trx', 'xunit']
+    for (const format of formats) expect(description).toContain(format)
   })
 
   it('rejects an oversized file and clears any prior valid selection', () => {

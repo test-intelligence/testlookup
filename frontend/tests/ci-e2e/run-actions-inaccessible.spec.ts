@@ -48,7 +48,7 @@ test('D-0023: a run that answers 404 opens as Run not found, with no tabs and no
   const { api, errors } = await openRollout(page, `/runs/${FOREIGN_RUN_ID}?tab=analysis`, { handlers, ready: runNotFound })
   await expect(page.getByText('It may have been deleted, or it belongs to a project you are not a member of.')).toBeVisible()
   await expect(page.getByRole('heading', { level: 1, name: 'Run', exact: true })).toBeVisible()
-  await expect(page.getByRole('heading', { level: 1, name: /^Run #/ })).toHaveCount(0)
+  await expect(page.getByRole('heading', { level: 1, name: /^Build \d/ })).toHaveCount(0)
   await expect(page.getByRole('button', { name: 'More actions' })).toHaveCount(0)
   await expect(page.getByRole('tablist', { name: 'Run sections' })).toHaveCount(0)
   await expect(deepRegion(page)).toHaveCount(0)
@@ -87,7 +87,7 @@ test('D-0023: while the run is loading, its actions are disabled; the 404 then s
 
 test("a member's run with failures offers Analyze failures and the run's actions", async ({ page }) => {
   const { api, errors } = await openRollout(page, `/runs/${RUN_ID}?tab=analysis`, { handlers: WORLD, ready: deepRegion })
-  await expect(page.getByRole('heading', { level: 1, name: `Run #${RUN.build_number}` })).toBeVisible()
+  await expect(page.getByRole('heading', { level: 1, name: `Build ${RUN.build_number}` })).toBeVisible()
   await expect(analyze(page)).toBeEnabled()
   await page.getByRole('button', { name: 'More actions' }).click()
   for (const name of RUN_ACTIONS) await expect(page.getByRole('menuitem', { name })).toBeEnabled()
