@@ -37,8 +37,11 @@ def test_known_pipeline_statuses_still_filter():
 
     for name in public:
         assert agents._status_filter_values(name.upper())
-    for internal in workflow_run_state.PipelineRunStatus:
-        assert agents._status_filter_values(internal.value) == [internal.value] or internal.value in public
+    # The members by name: every internal status is accepted, as itself or as the public word it shares.
+    internal_values = [member.value for member in workflow_run_state.PipelineRunStatus.__members__.values()]
+    assert len(internal_values) == 6
+    for value in internal_values:
+        assert value in agents._status_filter_values(value)
     assert agents._status_filter_values("partial")  # a legacy word a stale client may still send
 
 
