@@ -14,6 +14,46 @@ import json
 
 import client as api  # type: ignore[import]
 import untrusted  # type: ignore[import]
+from tools.runs import FAILURE_STATUSES, RUNS_NEWEST_FIRST  # type: ignore[import]
+
+#: ``GET /projects/{id}/investigations``: the route's page cap.
+INVESTIGATION_PAGE_SIZE = 100
+#: Pages read looking for one run's investigation before the answer is "not known".
+INVESTIGATION_MAX_PAGES = 20
+
+
+async def _latest_investigation_for_run(project_id: str, run_id: str) -> tuple[dict | None, bool]:
+    """The newest investigation summary of ``run_id``, and whether the search was complete (TL-QA-08).
+
+    The list is asked for this run only (``run_id``), newest first, so the
+    answer is normally its first row. Every row is still checked against the
+    run and the pages are followed to ``total``: a backend that predates the
+    filter returns the whole project's list, and reading only its first page
+    reported "no investigation" for any run with 100 newer ones elsewhere.
+    """
+    wanted = run_id.strip().lower()
+    offset = 0
+    for _ in range(INVESTIGATION_MAX_PAGES):
+        listing = await api.get(
+            api.path("/api/v1/projects/{project_id}/investigations", project_id=api.uuid_id(project_id)),
+            params={"run_id": run_id, "limit": INVESTIGATION_PAGE_SIZE, "offset": offset},
+        )
+        listing = listing if isinstance(listing, dict) else {}
+        items = listing.get("items") or []
+        for item in items:
+            if isinstance(item, dict) and str(item.get("run_id")).strip().lower() == wanted:
+                return item, True
+        offset += len(items)
+        total = listing.get("total")
+        if not items:
+            return None, True
+        if isinstance(total, int):
+            if offset >= total:
+                return None, True
+        elif len(items) < INVESTIGATION_PAGE_SIZE:
+            # No total to go by: a short page is the last one.
+            return None, True
+    return None, False
 
 
 def without_meta(data):  # noqa: ANN001, ANN201
@@ -52,14 +92,30 @@ def register(mcp) -> None:  # noqa: ANN001
             api.path("/api/v1/metrics/summary"),
             params={"project_id": project_id, "days": 7},
         )
-        return json.dumps(without_meta(data), indent=2, default=str)
+        body = without_meta(data)
+        if not body:
+            # TL-QA-17: a project the caller cannot read is answered 200 with
+            # only the envelope. Without it that was ``{}``: say what it means.
+            return json.dumps(
+                {
+                    "project_id": project_id,
+                    "metrics": None,
+                    "note": "No dashboard metrics were returned for this project "
+                    "(no access to it, or no data in the last 7 days).",
+                },
+                indent=2,
+            )
+        return json.dumps(body, indent=2, default=str)
 
     @mcp.resource("testlookup://projects/{project_id}/runs/latest")
     async def latest_runs(project_id: str) -> str:
-        """The 10 most recent test runs for a project."""
+        """The 10 most recent test runs for a project, however old."""
         data = await api.get(
             api.path("/api/v1/runs"),
-            params={"project_id": project_id, "page": 1, "size": 10},
+            # TL-QA-03: "most recent" is receipt time; the API's default is build order.
+            # TL-QA-18: ``days=0`` is all time. The route's default window is 30
+            # days, so a project quiet for a month read as having no runs.
+            params={"project_id": project_id, "order": RUNS_NEWEST_FIRST, "days": 0, "page": 1, "size": 10},
         )
         return untrusted.document(data)
 
@@ -88,10 +144,14 @@ def register(mcp) -> None:  # noqa: ANN001
 
     @mcp.resource("testlookup://projects/{project_id}/defects/open")
     async def open_defects(project_id: str) -> str:
-        """All currently open defects linked to test failures."""
+        """Live defects linked to test failures: OPEN and IN_PROGRESS, the
+        first 100 (``total`` counts them all)."""
         data = await api.get(
             api.path("/api/v1/analytics/defects"),
-            params={"project_id": project_id, "resolution_status": "OPEN", "size": 100},
+            # TL-QA-16: ACTIVE is the API's word for OPEN + IN_PROGRESS. "OPEN"
+            # alone left out the defects someone has started on, which still
+            # block a release gate.
+            params={"project_id": project_id, "resolution_status": "ACTIVE", "size": 100},
         )
         return untrusted.document(without_meta(data))
 
@@ -105,10 +165,13 @@ def register(mcp) -> None:  # noqa: ANN001
 
     @mcp.resource("testlookup://runs/{run_id}/failures")
     async def run_failures(run_id: str) -> str:
-        """All failed and broken test cases in a run (up to 200)."""
+        """All failed and broken test cases in a run (up to 200; ``total``
+        counts every match)."""
         data = await api.get(
             api.path("/api/v1/runs/{run_id}/tests", run_id=api.uuid_id(run_id)),
-            params={"status": "FAILED", "page": 1, "size": 200},
+            # TL-QA-06: one request for both statuses (``status`` repeats), so
+            # the API orders, pages and counts their union.
+            params={"status": list(FAILURE_STATUSES), "page": 1, "size": 200},
         )
         return untrusted.document(data)
 
@@ -119,20 +182,22 @@ def register(mcp) -> None:  # noqa: ANN001
         note when the run has never been investigated."""
         run = await api.get(api.path("/api/v1/runs/{run_id}", run_id=api.uuid_id(run_id)))
         project_id = (run or {}).get("project_id")
-        latest = None
+        latest, complete = None, True
         if project_id:
-            listing = await api.get(
-                api.path("/api/v1/projects/{project_id}/investigations", project_id=api.uuid_id(project_id)),
-                params={"limit": 100, "offset": 0},
-            )
-            # Newest-first list; the first entry for this run is the latest.
-            latest = next(
-                (
-                    item
-                    for item in (listing or {}).get("items", [])
-                    if str(item.get("run_id")) == str(run_id)
-                ),
-                None,
+            latest, complete = await _latest_investigation_for_run(str(project_id), str(run_id))
+        if latest is None and not complete:
+            # Not "never investigated": the search stopped before the end.
+            return untrusted.document(
+                {
+                    "run_id": run_id,
+                    "investigation": None,
+                    "search_complete": False,
+                    "note": (
+                        "The project's investigations could not be searched to the end, so "
+                        "whether this run was investigated is not known. Use the "
+                        "list_investigations tool, or open the run in the web UI."
+                    ),
+                }
             )
         if latest is None:
             # Same envelope as the found case, so this resource has one shape.

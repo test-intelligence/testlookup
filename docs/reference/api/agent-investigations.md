@@ -194,7 +194,7 @@ List Agent Policies
 
 Every known agent's effective policy (defaults when no row exists).
 
-Source: [backend/app/routers/agent_investigations.py:326](../../../backend/app/routers/agent_investigations.py#L326).
+Source: [backend/app/routers/agent_investigations.py:337](../../../backend/app/routers/agent_investigations.py#L337).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`.
 
@@ -278,7 +278,7 @@ Update Agent Policy
 
 Retired write alias; agent-configs is the single writable resource.
 
-Source: [backend/app/routers/agent_investigations.py:341](../../../backend/app/routers/agent_investigations.py#L341).
+Source: [backend/app/routers/agent_investigations.py:352](../../../backend/app/routers/agent_investigations.py#L352).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_project_role.<locals>._check`.
 
@@ -377,7 +377,7 @@ List Agent Runs
 
 Paged AgentRunEntry ledger, newest first (AI-3).
 
-Source: [backend/app/routers/agent_investigations.py:360](../../../backend/app/routers/agent_investigations.py#L360).
+Source: [backend/app/routers/agent_investigations.py:371](../../../backend/app/routers/agent_investigations.py#L371).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`.
 
@@ -503,7 +503,7 @@ Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_curren
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-project_id: uuid.UUID, limit: int=20, offset: int=0, db: AsyncSession=Depends(get_db), current_user: User=Depends(require_project_access())
+project_id: uuid.UUID, limit: int=20, offset: int=0, run_id: uuid.UUID | None=Query(None, description="Keep only this run's investigations (newest first). A run of another project matches nothing: the list stays scoped to the project in the path."), db: AsyncSession=Depends(get_db), current_user: User=Depends(require_project_access())
 ```
 
 ### Declared wire contract
@@ -542,6 +542,25 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
         "default": 0,
         "title": "Offset",
         "type": "integer"
+      }
+    },
+    {
+      "description": "Keep only this run's investigations (newest first). A run of another project matches nothing: the list stays scoped to the project in the path.",
+      "in": "query",
+      "name": "run_id",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "format": "uuid",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "description": "Keep only this run's investigations (newest first). A run of another project matches nothing: the list stays scoped to the project in the path.",
+        "title": "Run Id"
       }
     },
     {

@@ -30,7 +30,7 @@ import uuid
 from typing import Any, Optional
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -289,25 +289,36 @@ async def list_investigations(
     project_id: uuid.UUID,
     limit: int = 20,
     offset: int = 0,
+    run_id: uuid.UUID | None = Query(
+        None,
+        description=(
+            "Keep only this run's investigations (newest first). A run of another "
+            "project matches nothing: the list stays scoped to the project in the path."
+        ),
+    ),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(require_project_access()),
 ) -> dict[str, Any]:
     """Paged InvestigationSummary list, newest first."""
     limit = max(1, min(int(limit), 100))
     offset = max(0, int(offset))
+    # TL-QA-08: the project in the path always scopes the list; ``run_id`` only
+    # narrows it, so one run's latest investigation is one row, not a scan.
+    scope = [AgentInvestigation.project_id == project_id]
+    if run_id is not None:
+        scope.append(AgentInvestigation.run_id == run_id)
     total = (
         await db.execute(
-            select(func.count(AgentInvestigation.id)).where(
-                AgentInvestigation.project_id == project_id
-            )
+            select(func.count(AgentInvestigation.id)).where(*scope)
         )
     ).scalar() or 0
     rows = (
         await db.execute(
             select(AgentInvestigation, TestRun.build_number)
             .join(TestRun, TestRun.id == AgentInvestigation.run_id)
-            .where(AgentInvestigation.project_id == project_id)
-            .order_by(AgentInvestigation.created_at.desc())
+            .where(*scope)
+            # ``id`` breaks a tie on ``created_at`` so pages never repeat or skip a row.
+            .order_by(AgentInvestigation.created_at.desc(), AgentInvestigation.id.desc())
             .limit(limit)
             .offset(offset)
         )

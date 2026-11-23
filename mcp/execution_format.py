@@ -68,6 +68,20 @@ def pct(value: Any) -> str:
     return CELL_MISSING if number is None else f"{number:+.1f}%"
 
 
+#: A pass rate the API sent as ``null``: no test passed or failed (all skipped, or none yet).
+PASS_RATE_NOT_MEASURED = "not measured"
+
+
+def pass_rate(value: Any, digits: int = 1) -> str:
+    """``75.0`` -> ``75.0%``; ``0`` -> ``0.0%``; ``None`` -> ``not measured`` (TL-QA-02).
+
+    The REST API keeps a run's pass rate ``null`` when nothing passed or
+    failed. That is not 0%: a run of skipped tests has no rate at all.
+    """
+    number = _num(value)
+    return PASS_RATE_NOT_MEASURED if number is None else f"{number:.{digits}f}%"
+
+
 def name(value: Any) -> str:
     """An ingested name, safe inside a markdown table cell."""
     if value is None or value == "":

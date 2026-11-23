@@ -1,8 +1,8 @@
 {
-  "attested_at": "2026-11-22T21:26:46.005850+00:00",
-  "change_id": "prompts-no-release-verdict-2026-11-22",
+  "attested_at": "2026-11-23T17:15:48.749875+00:00",
+  "change_id": "api-mcp-launch-qa-2026-11-23",
   "eval_gate_run_id": null,
-  "eval_manifest_checksum": "6e795e50f961461750848f793cd93d7785adf125bc6e5ff7f4734c8f7392726c",
+  "eval_manifest_checksum": "fe32249b962c6920c2ffe505ff213547fb884ec5bb1d9fef523748d50c6b9e8d",
   "gate_results": [
     {
       "agent_name": "AnalysisAgent",
@@ -93,9 +93,9 @@
       "task_type": "release_decision"
     }
   ],
-  "manifest_digest": "7f6ae1695c5325a297cdf451c1aacc2ff91f63eeb450ff849d7b49279abf48af",
+  "manifest_digest": "0475d1649f7941fe5ead5a282435e5dccbebcead368cc02d0f0eb01b0c6a1181",
   "mode": "source_review",
-  "notes": "D-119 / D-145 / D-120 (product findings 2026-11-21, owner asked for this PR 2026-11-22): no prompt asks the model for a release verdict. summary_executive v2 -> v3 drops the release readiness signal; summary_incident_view v2 -> v3 drops release_impact; summary_renderer_manager v1 -> v2 drops release_recommendation and the release signal (the renderer fills the line from the stored decision, or leaves it out); mcp.release_readiness_report v1 -> v2 points at the stored gate verdict and offers GO / NO-GO / NOT EVALUATED. These prompts feed no scored task and are not gated in prompt_eval_recordings (the W11-REL-07 / W23c-F-1 / F-OR07-2 / D-0010 precedent): reviewed from source, pinned by test_no_summary_prompt_asks_the_model_for_a_release_verdict, test_summary_executive_is_deliberate_v3 and test_mcp_release_readiness_report_reads_the_gate_verdict. Gate results are the real offline run: classification, root_cause and release_decision pass; duplicate_detection insufficient_samples as on main. No model choice, routing or watched source changed. Offline golden verdict as computed: insufficient_samples. Recorded as a source-reviewed pass on the owner's approval (2026-11-22), as the W23c-F-1, F-OR07-2 and D-0010 prompt changes were.",
+  "notes": "API/MCP launch QA (TL-QA-09, TL-QA-10, TL-QA-16; owner asked for this PR 2026-11-23): three MCP templates changed. mcp.investigate_failure v1 -> v2 gives get_test_case its test_id, takes an optional run_id and stops to ask for the run when none is given (no tool finds a run from a test case id); mcp.release_readiness_report v2 -> v3 reads the named release's stored gate first with get_release_gate(evaluate=False) and lists ACTIVE defects; mcp.defect_triage_session v1 -> v2 lists ACTIVE defects (OPEN and IN_PROGRESS). MCP prompts steer an external assistant's tool calls, feed no scored task and are not gated in prompt_eval_recordings: reviewed from source, pinned by mcp/tests/test_mcp_prompt_contract.py, mcp/tests/test_mcp_launch_qa_sweep.py, test_mcp_release_readiness_report_reads_the_gate_verdict and test_mcp_templates_changed_by_the_launch_qa_are_versioned. Gate results are the real offline run: classification, root_cause and release_decision pass; duplicate_detection insufficient_samples as on main. No backend prompt, model choice, routing or watched source changed. Offline golden verdict as computed: insufficient_samples. Recorded as a source-reviewed pass on the owner's approval (2026-11-23), as the 2026-11-22 prompts-no-release-verdict change was.",
   "prompt_versions": {
     "anomaly_narrative": "v1:0298a3b5009f",
     "chat_compression": "v1:68e08a32dff5",

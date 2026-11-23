@@ -51023,6 +51023,10 @@
           },
           "mode": {
             "default": "deep",
+            "enum": [
+              "deep",
+              "offline"
+            ],
             "title": "Mode",
             "type": "string"
           },
@@ -79423,6 +79427,25 @@
             }
           },
           {
+            "description": "Keep only this run's investigations (newest first). A run of another project matches nothing: the list stays scoped to the project in the path.",
+            "in": "query",
+            "name": "run_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Keep only this run's investigations (newest first). A run of another project matches nothing: the list stays scoped to the project in the path.",
+              "title": "Run Id"
+            }
+          },
+          {
             "in": "header",
             "name": "X-API-Key",
             "required": false,
@@ -91494,6 +91517,11 @@
             "schema": {
               "default": "manager",
               "description": "Summary mode: executive | developer | manager",
+              "enum": [
+                "executive",
+                "developer",
+                "manager"
+              ],
               "title": "Mode",
               "type": "string"
             }
@@ -92283,6 +92311,11 @@
             "schema": {
               "default": "executive",
               "description": "Summary mode: executive | developer | manager",
+              "enum": [
+                "executive",
+                "developer",
+                "manager"
+              ],
               "title": "Mode",
               "type": "string"
             }
@@ -92537,18 +92570,24 @@
             }
           },
           {
+            "description": "Test status to keep (PASSED, FAILED, BROKEN, SKIPPED, UNKNOWN; case-insensitive). Repeat it for several: `status=FAILED&status=BROKEN` returns their union, ordered, paged and counted as one list.",
             "in": "query",
             "name": "status",
             "required": false,
             "schema": {
               "anyOf": [
                 {
-                  "type": "string"
+                  "items": {
+                    "type": "string"
+                  },
+                  "maxItems": 5,
+                  "type": "array"
                 },
                 {
                   "type": "null"
                 }
               ],
+              "description": "Test status to keep (PASSED, FAILED, BROKEN, SKIPPED, UNKNOWN; case-insensitive). Repeat it for several: `status=FAILED&status=BROKEN` returns their union, ordered, paged and counted as one list.",
               "title": "Status"
             }
           },
