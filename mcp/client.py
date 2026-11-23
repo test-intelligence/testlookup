@@ -453,6 +453,24 @@ async def put(path: ApiPath, json_body: Optional[dict] = None) -> Any:
     return resp.json()
 
 
+def error_text(exc: Exception) -> str:
+    """One line for a tool that answers in text: the backend's reason, never the request URL.
+
+    ``str(exc)`` on an HTTP error is httpx's status line plus the backend URL,
+    and leaves out the ``detail`` that says why (a 409's state conflict, a
+    403's missing role). This keeps the status and the reason.
+    """
+    payload = error_payload(exc)
+    status = payload.get("status_code")
+    detail = payload.get("detail")
+    if isinstance(detail, (dict, list)):
+        detail = str(detail)[:500]
+    if status:
+        return f"HTTP {status}" + (f": {detail}" if detail else "")
+    said = " ".join(str(part) for part in (payload.get("error"), detail) if part)
+    return said or type(exc).__name__
+
+
 def error_payload(exc: Exception) -> dict[str, Any]:
     """Normalize an HTTP/client error into a structured result dict.
 

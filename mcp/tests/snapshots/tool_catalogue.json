@@ -73,6 +73,7 @@
     "params": [
       "assignee",
       "cluster_id",
+      "confirm_not_filed",
       "dry_run",
       "extra_comment",
       "fingerprint",

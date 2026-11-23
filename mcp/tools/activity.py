@@ -45,7 +45,9 @@ def register(mcp) -> None:  # noqa: ANN001
 
         Args:
             project_id: Project id or exact project name.
-            category: Optional categories to keep (e.g. ["release", "defect"]).
+            category: Optional categories to keep (e.g. ["release", "quality"]).
+                One or more of: runs, analysis, release, quality, configuration,
+                membership, test_management, integration, agent, system.
             since: "7d", "24h", "2w" or an ISO date/time.
             limit: Events per page (1-200, default 50).
             cursor: The `next_cursor` of a previous answer, to read the next page.

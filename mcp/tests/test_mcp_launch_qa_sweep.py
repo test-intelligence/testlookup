@@ -104,7 +104,8 @@ def test_coverage_report_lists_a_skipped_only_suite_last_and_says_when_the_list_
     text = mcp_request(_answer(body), "get_coverage_report", {"project_id": PROJECT})
     rows = [line for line in text.splitlines() if line.startswith("| ") and "Suite" not in line]
 
-    assert [row.split("|")[1].strip() for row in rows] == ["failing", "healthy", "skipped-only"]
+    names = [row.split("|")[1].strip() for row in rows]
+    assert names == [f"<test-output>{name}</test-output>" for name in ("failing", "healthy", "skipped-only")]
     assert rows[0].rstrip().endswith("0.0% |") and rows[2].rstrip().endswith("| not measured |")
     assert "3 of 80 suites shown" in text
 

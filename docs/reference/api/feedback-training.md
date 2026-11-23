@@ -10,7 +10,7 @@ Jira Resolution Webhook
 
 
 
-Source: [backend/app/routers/feedback.py:262](../../../backend/app/routers/feedback.py#L262).
+Source: [backend/app/routers/feedback.py:264](../../../backend/app/routers/feedback.py#L264).
 
 Dependency chain: `get_db`.
 
@@ -67,7 +67,7 @@ The counts are instance-wide (every project's feedback together, no
 per-project breakdown and no feedback text) and are visible to every
 signed-in user, whatever their role or project membership.
 
-Source: [backend/app/routers/feedback.py:439](../../../backend/app/routers/feedback.py#L439).
+Source: [backend/app/routers/feedback.py:441](../../../backend/app/routers/feedback.py#L441).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -144,7 +144,7 @@ Submit Feedback
 
 
 
-Source: [backend/app/routers/feedback.py:323](../../../backend/app/routers/feedback.py#L323).
+Source: [backend/app/routers/feedback.py:325](../../../backend/app/routers/feedback.py#L325).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -241,7 +241,7 @@ Update Feedback
 
 
 
-Source: [backend/app/routers/feedback.py:366](../../../backend/app/routers/feedback.py#L366).
+Source: [backend/app/routers/feedback.py:368](../../../backend/app/routers/feedback.py#L368).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -342,7 +342,7 @@ Bridges the Failure Analysis page (which identifies tests by
 ``test_fingerprint``) to the feedback endpoints (which key on
 ``analysis_id``). Returns 200 with null fields when no analysis exists.
 
-Source: [backend/app/routers/feedback.py:385](../../../backend/app/routers/feedback.py#L385).
+Source: [backend/app/routers/feedback.py:387](../../../backend/app/routers/feedback.py#L387).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`.
 
@@ -442,7 +442,7 @@ Project-scoped via ``require_project_access`` (authorization ratchet);
 any active project member may record an outcome, matching the feedback
 endpoints above.
 
-Source: [backend/app/routers/feedback.py:409](../../../backend/app/routers/feedback.py#L409).
+Source: [backend/app/routers/feedback.py:411](../../../backend/app/routers/feedback.py#L411).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`.
 
@@ -539,7 +539,7 @@ Submit Decision Report Feedback
 
 
 
-Source: [backend/app/routers/feedback.py:348](../../../backend/app/routers/feedback.py#L348).
+Source: [backend/app/routers/feedback.py:350](../../../backend/app/routers/feedback.py#L350).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -645,7 +645,7 @@ Trigger Export
 
 Queue an export of every project's reviewed feedback as training data (ADMIN).
 
-Source: [backend/app/routers/feedback.py:460](../../../backend/app/routers/feedback.py#L460).
+Source: [backend/app/routers/feedback.py:462](../../../backend/app/routers/feedback.py#L462).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -722,7 +722,7 @@ Trigger Finetune
 
 Queue a fine-tune run for one track over the instance's training data (ADMIN).
 
-Source: [backend/app/routers/feedback.py:468](../../../backend/app/routers/feedback.py#L468).
+Source: [backend/app/routers/feedback.py:470](../../../backend/app/routers/feedback.py#L470).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -809,7 +809,7 @@ Promote Model
 
 
 
-Source: [backend/app/routers/feedback.py:477](../../../backend/app/routers/feedback.py#L477).
+Source: [backend/app/routers/feedback.py:479](../../../backend/app/routers/feedback.py#L479).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -900,7 +900,7 @@ The counts are instance-wide (every project's feedback together) and, with
 the rest of this answer, are visible to every signed-in user, whatever
 their role or project membership.
 
-Source: [backend/app/routers/feedback.py:488](../../../backend/app/routers/feedback.py#L488).
+Source: [backend/app/routers/feedback.py:490](../../../backend/app/routers/feedback.py#L490).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 

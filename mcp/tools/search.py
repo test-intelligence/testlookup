@@ -31,6 +31,23 @@ def _step_match_note(result: dict, query: str) -> str:
     return ""
 
 
+def _shown_note(shown: int, total) -> list[str]:  # noqa: ANN001
+    """Says so when the rows shown are fewer than the matches counted."""
+    if isinstance(total, int) and total > shown:
+        return ["", f"*Showing the first {shown} of {total}; narrow the query to see the rest.*"]
+    return []
+
+
+def _parsed_notes(data: dict) -> list[str]:
+    """The query parser's notes: which filters were applied, ignored or not searched."""
+    parsed = data.get("parsed") if isinstance(data.get("parsed"), dict) else {}
+    notes = [note for note in parsed.get("notes") or [] if isinstance(note, str) and note.strip()]
+    if not notes:
+        return []
+    # A note can quote the query back, so it is marked like other echoed text.
+    return ["", "**Filters:**", *[f"- {untrusted.inline(note, limit=300)}" for note in notes]]
+
+
 def _render_global_search(data: dict, query: str) -> str:
     """Render partial metadata before interpreting an empty item list."""
     items = data.get("items", [])
@@ -54,12 +71,13 @@ def _render_global_search(data: dict, query: str) -> str:
         lines.append(f"> Search totals are lower bounds.{detail}")
     if counts:
         lines.append("**Entity counts:** " + ", ".join(f"{k}: {v}" for k, v in counts.items()))
-    for result in items[:10]:
+    for result in items:
         lines.append(
             f"- [{untrusted.short(result.get('entity_type'), missing='?')}] "
             f"**{untrusted.inline(result.get('title'), missing='?')}** "
             f"— {untrusted.inline(result.get('subtitle'), missing='')}"
         )
+    lines += _shown_note(len(items), data.get("total")) + _parsed_notes(data)
     return "\n".join(untrusted.with_notice(lines))
 
 
@@ -90,13 +108,14 @@ def register(mcp) -> None:  # noqa: ANN001
             return f"No test case results for '{query}'."
 
         lines = [f"## Search Results ({data.get('total', 0)} matches)"]
-        for r in items[:10]:
+        for r in items:
             note = _step_match_note(r, query)
             lines.append(
                 f"- **{untrusted.inline(r.get('test_name'), missing='?')}** "
                 f"— {untrusted.inline(r.get('suite_name'), missing='no suite')} "
                 f"[{untrusted.short(r.get('status'), missing='?')}]{note}"
             )
+        lines += _shown_note(len(items), data.get("total")) + _parsed_notes(data)
         return "\n".join(untrusted.with_notice(lines))
 
     @mcp.tool()

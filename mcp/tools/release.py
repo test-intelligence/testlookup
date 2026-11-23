@@ -57,16 +57,19 @@ async def _release_gate(release_id: str) -> str:
     try:
         gate = await api.get(api.path("/api/v1/releases/{release_id}/gate", release_id=release_id))
     except httpx.HTTPStatusError as exc:
-        if exc.response.status_code == 404:
+        if exc.response.status_code == 404 and _never_evaluated(exc.response):
             return (
                 f"## ⚪ Release Gate: **never evaluated**\n\n"
-                f"Release `{release_id}` has no recorded gate decision yet (or does not exist). "
-                f"A QA lead records one with POST /api/v1/releases/{release_id}/gate/evaluate."
+                f"Release `{release_id}` has no recorded gate decision yet. "
+                f"A QA lead records one with `get_release_gate(evaluate=True)`."
             )
+        if exc.response.status_code == 404:
+            return f"Release `{release_id}` was not found (or you cannot read it)."
         raise
 
     verdict = str(gate.get("verdict") or "UNKNOWN")
-    reasons = [_reason_text(r) for r in gate.get("blocking_reasons") or []]
+    # The display strings name the tests; the raw reasons are fingerprints.
+    reasons = [_reason_text(r) for r in gate.get("blocking_reasons_display") or gate.get("blocking_reasons") or []]
     scorecard = gate.get("scorecard") or {}
 
     lines = [
@@ -124,6 +127,15 @@ def register(mcp) -> None:  # noqa: ANN001
         try:
             if evaluate:
                 gate = await api.post(api.path("/api/v1/releases/{release_id}/gate/evaluate", release_id=rid))
+                recorded = (gate or {}).get("recorded")
+                try:
+                    # O-07: the evaluate answer has no decided_at and no display
+                    # reasons. The stored gate it just wrote has both.
+                    stored = await api.get(api.path("/api/v1/releases/{release_id}/gate", release_id=rid))
+                    if isinstance(stored, dict):
+                        gate = {**stored, "recorded": recorded}
+                except Exception:  # noqa: BLE001 - the evaluate answer still stands
+                    pass
             else:
                 gate = await api.get(api.path("/api/v1/releases/{release_id}/gate", release_id=rid))
         except httpx.HTTPStatusError as exc:
@@ -226,7 +238,8 @@ def register(mcp) -> None:  # noqa: ANN001
             "### Key Metrics",
             "| Metric | Value |",
             "|--------|-------|",
-            f"| Avg Pass Rate | **{pass_rate:.1f}%** |",
+            # O-08: with no executions there is no rate; 0.0% beside "Pending" read as a failure.
+            f"| Avg Pass Rate | **{f'{pass_rate:.1f}%' if total_executions else 'n/a (no executions)'}** |",
             f"| Active Defects | {int(kpi_value(data, 'active_defects'))} |",
             f"| Flaky Tests | {int(kpi_value(data, 'flaky_test_count'))} |",
             f"| New Failures (24h) | {int(kpi_value(data, 'new_failures_24h'))} |",

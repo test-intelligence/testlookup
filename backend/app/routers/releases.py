@@ -8,12 +8,12 @@ from __future__ import annotations
 
 import uuid
 from datetime import date, datetime, timezone
-from typing import Any, Literal, Optional
+from typing import Annotated, Any, Literal, Optional
 
 import httpx
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import Response
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -87,10 +87,24 @@ def _comparable(value: Any) -> Any:
     return value
 
 
+def _lower_word(value: Any) -> Any:
+    """A status or type as it is stored and compared: trimmed, lower-case.
+
+    The phases-complete check and the close-time rotation match the exact
+    lower-case words, so "Released" was stored and skipped both.
+    """
+    return value.strip().lower() if isinstance(value, str) else value
+
+
+#: A release or phase status / phase type on write (the columns are ``String(30)`` / ``String(50)``).
+StatusWord = Annotated[str, BeforeValidator(_lower_word), Field(min_length=1, max_length=30)]
+PhaseTypeWord = Annotated[str, BeforeValidator(_lower_word), Field(min_length=1, max_length=50)]
+
+
 class PhaseIn(BaseModel):
     name: str
-    phase_type: str = "qa_testing"
-    status: str = "pending"
+    phase_type: PhaseTypeWord = "qa_testing"
+    status: StatusWord = "pending"
     description: Optional[str] = None
     order_index: int = 0
     planned_start: Optional[datetime] = None
@@ -103,8 +117,8 @@ class PhaseIn(BaseModel):
 
 class PhaseUpdate(BaseModel):
     name: Optional[str] = None
-    phase_type: Optional[str] = None
-    status: Optional[str] = None
+    phase_type: Optional[PhaseTypeWord] = None
+    status: Optional[StatusWord] = None
     #: Completing a phase whose gate does not say GO, on purpose.
     #:
     #: Enforcement without an override is an invariant that gets routed around:
@@ -139,7 +153,7 @@ class ReleaseIn(BaseModel):
     name: str
     version: Optional[str] = None
     description: Optional[str] = None
-    status: str = "planning"
+    status: StatusWord = "planning"
     planned_date: Optional[datetime] = None
     phases: list[PhaseIn] = []
 
@@ -170,7 +184,7 @@ class ReleaseUpdate(BaseModel):
     name: Optional[str] = None
     version: Optional[str] = None
     description: Optional[str] = None
-    status: Optional[str] = None
+    status: Optional[StatusWord] = None
     planned_date: Optional[datetime] = None
     released_at: Optional[datetime] = None
     release_type: Optional[ReleaseType] = None

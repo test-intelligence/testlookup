@@ -1061,7 +1061,9 @@ async def _live_buffer_test_cases(
         if status_filter and ev_status not in status_filter:
             continue
         ev_suite = ev.get("suite_name")
-        if suite_lower and (ev_suite or "").strip().lower() != suite_lower:
+        # Contains, as the stored rows' ILIKE: an exact match here made the
+        # same filter return different tests while a run was still streaming.
+        if suite_lower and suite_lower not in (ev_suite or "").strip().lower():
             continue
         test_name = ev.get("test_name") or ""
         class_name = ev.get("class_name") or ""

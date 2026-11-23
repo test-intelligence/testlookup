@@ -211,7 +211,9 @@ class DecisionReportFeedbackRequest(BaseModel):
 
 
 class PromoteModelRequest(BaseModel):
-    track: str           # "classifier" | "reasoning" | "embedding"
+    # A closed set, as ``/training/finetune`` checks: a typo used to write a
+    # registry row for a track nothing reads, and answer "promoted".
+    track: Literal["classifier", "reasoning", "embedding"]
     model_name: str
     eval_accuracy: Optional[float] = None
     baseline_accuracy: Optional[float] = None

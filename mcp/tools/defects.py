@@ -67,11 +67,9 @@ def register(mcp) -> None:  # noqa: ANN001
             + (f" ({resolution_status})" if resolution_status else ""),
             f"_Showing {len(items)} of {data.get('total', len(items))}_\n",
         ]
-        # Render only fields ``/api/v1/analytics/defects`` actually returns.
-        # This block previously read severity/title/summary/description/
-        # test_case_id/cluster_id -- none of which appear in that endpoint's
-        # SELECT list -- so every row rendered "Untitled · severity ?" and the
-        # model had no signal the field was absent rather than merely unset.
+        # Render only fields ``/api/v1/analytics/defects`` actually returns:
+        # among them the title, severity and priority a person entered (O-12).
+        # A defect filed by hand has no test, so its title is its name.
         for d in items:
             status = d.get("resolution_status") or "OPEN"
             category = d.get("failure_category") or "UNKNOWN"
@@ -83,11 +81,15 @@ def register(mcp) -> None:  # noqa: ANN001
                 jira_note = f" · Jira: `{jira}`"
             else:
                 jira_note = " · Jira: unlinked"
-            lines.append(
-                f"- **{untrusted.inline(d.get('test_name'), missing='Unlinked defect')}** "
-                f"· {category} · status `{status}`{jira_note}"
-            )
+            name = untrusted.inline(d.get("title") or d.get("test_name"), limit=120, missing="Untitled defect")
+            lines.append(f"- **{name}** · {category} · status `{status}`{jira_note}")
             detail = []
+            if d.get("title") and d.get("test_name"):
+                detail.append(f"test {untrusted.inline(d['test_name'], limit=80)}")
+            if d.get("severity"):
+                detail.append(f"severity {untrusted.short(d['severity'])}")
+            if d.get("priority"):
+                detail.append(f"priority {untrusted.short(d['priority'])}")
             if d.get("suite_name"):
                 detail.append(f"suite {untrusted.inline(d['suite_name'])}")
             confidence = d.get("ai_confidence_score")
@@ -120,6 +122,7 @@ def register(mcp) -> None:  # noqa: ANN001
         assignee: Optional[str] = None,
         extra_comment: Optional[str] = None,
         dry_run: bool = False,
+        confirm_not_filed: bool = False,
     ) -> dict:
         """
         SIDE EFFECT (dry_run=False): files a Jira issue (target="jira") or
@@ -153,6 +156,9 @@ def register(mcp) -> None:  # noqa: ANN001
             assignee: Jira accountId to assign the issue to.
             extra_comment: Extra context appended to the issue description.
             dry_run: True = return the server's preview payload only.
+            confirm_not_filed: Set True only after a 409 ``jira_outcome_unknown``
+                and only once the user has checked Jira and the issue is not
+                there: it tells the server to file it. Ignored otherwise.
         """
         try:
             sig = _signature_params(fingerprint, cluster_id)
@@ -186,6 +192,7 @@ def register(mcp) -> None:  # noqa: ANN001
             "jira_project_key": jira_project_key,
             "assignee": assignee,
             "extra_comment": extra_comment,
+            "confirm_not_filed": True if confirm_not_filed else None,
         }
         try:
             result = await api.post(
@@ -194,4 +201,9 @@ def register(mcp) -> None:  # noqa: ANN001
             )
         except Exception as exc:
             return api.error_payload(exc)
-        return {"ok": True, "dry_run": False, **(result or {})}
+        result = result or {}
+        if target == "webhook" and result.get("subscriptions_notified") == 0:
+            # O-12: a 200 with nobody notified is not a delivery.
+            return {**result, "ok": False, "dry_run": False, "delivered": False,
+                    "detail": result.get("message") or "No enabled webhook subscription received the defect."}
+        return {"ok": True, "dry_run": False, **result}

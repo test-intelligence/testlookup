@@ -7,7 +7,7 @@ toggle. Thin wrapper over
 ``/api/v1/notifications/projects/{project_id}/transition-policy``.
 
 RBAC is server-side against the MCP login identity; the PUT requires
-project access.
+QA_LEAD or above on the project.
 """
 from __future__ import annotations
 
@@ -65,8 +65,9 @@ def register(mcp) -> None:  # noqa: ANN001
         receives — read the current policy with `get_transition_policy`
         first and only change the fields the user asked about.
 
-        Requires project access (enforced server-side against the MCP
-        login identity). The PUT is a full replace, not a patch: omitted
+        Requires QA_LEAD or above on the project (enforced server-side
+        against the MCP login identity; reading the policy needs only
+        project access). The PUT is a full replace, not a patch: omitted
         fields fall back to the defaults shown below, not to the current
         values.
 

@@ -14,7 +14,7 @@ VIZ-202: ``release_id`` / ``suite_name`` (repeatable) count the analyses
 of executions in those releases (run's primary release) and suites
 (effective suite).
 
-Source: [backend/app/routers/analytics.py:781](../../../backend/app/routers/analytics.py#L781).
+Source: [backend/app/routers/analytics.py:796](../../../backend/app/routers/analytics.py#L796).
 
 Dependency chain: `OAuth2PasswordBearer`, `analytics_scope.<locals>.dependency`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -172,7 +172,7 @@ so the table view and CSV export need no transformation. Each point carries
 panel of the Explorer's small multiples; ``meta.definitions.facet`` states
 it.
 
-Source: [backend/app/routers/analytics.py:1047](../../../backend/app/routers/analytics.py#L1047).
+Source: [backend/app/routers/analytics.py:1062](../../../backend/app/routers/analytics.py#L1062).
 
 Dependency chain: `OAuth2PasswordBearer`, `_gate_dependency.<locals>.analytics_gate`, `analytics_scope.<locals>.dependency`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -860,7 +860,7 @@ Used by the Failures page "Classify" CTA when the AI classifier left a
 large chunk of failures uncategorized — lets the user tag them all in
 one shot rather than per-test.
 
-Source: [backend/app/routers/analytics.py:895](../../../backend/app/routers/analytics.py#L895).
+Source: [backend/app/routers/analytics.py:910](../../../backend/app/routers/analytics.py#L910).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -947,7 +947,7 @@ Coverage Stats
 
 Return test suite coverage stats aggregated over the period.
 
-Source: [backend/app/routers/analytics.py:572](../../../backend/app/routers/analytics.py#L572).
+Source: [backend/app/routers/analytics.py:573](../../../backend/app/routers/analytics.py#L573).
 
 Dependency chain: `OAuth2PasswordBearer`, `_gate_dependency.<locals>.analytics_gate`, `analytics_scope.<locals>.dependency`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -1629,6 +1629,10 @@ List Defects
 
 Return defects for a project with optional resolution status filter.
 
+``resolution_status`` is OPEN, IN_PROGRESS, RESOLVED, INVALID, the alias
+ACTIVE, or the legacy CLOSED (any case). Another word is a 422: it used
+to answer an empty page, which read as "no such defects".
+
 VIZ-202: ``release_id`` / ``suite_name`` (repeatable) keep the defects
 whose originating execution ran in one of the releases (the run's primary
 release) and suites (effective suite). A defect with no linked execution
@@ -1641,7 +1645,7 @@ the release gate's own rule instead (asserted impact, else where it was
 found), so the page and the gate count the same set; the suite filter
 still places it through its execution.
 
-Source: [backend/app/routers/analytics.py:631](../../../backend/app/routers/analytics.py#L631).
+Source: [backend/app/routers/analytics.py:636](../../../backend/app/routers/analytics.py#L636).
 
 Dependency chain: `OAuth2PasswordBearer`, `analytics_scope.<locals>.dependency`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -1649,6 +1653,12 @@ Declared Python handler arguments (includes exact role/guard options):
 
 ```python
 resolution_status: str | None=None, page: int=Query(1, ge=1), size: int=Query(20, ge=1, le=100), release_match: str=Query(_RELEASE_MATCH_DEFAULT, pattern=_RELEASE_MATCH_PATTERN), scope: AnalyticsScope=Depends(analytics_scope(_DEFECTS)), db: AsyncSession=Depends(get_db)
+```
+
+Direct handler error branches (dependency/service errors can add others):
+
+```python
+HTTPException(status_code=422, detail='resolution_status must be one of ' + ', '.join(_DEFECT_STATUS_FILTERS) + '.')
 ```
 
 ### Declared wire contract
@@ -1830,7 +1840,7 @@ Manual Defect Intake. Creates an OPEN defect for the project,
 best-effort attaching to the most-recent matching TestCase when
 ``test_name`` (and optionally ``suite_name``) are supplied.
 
-Source: [backend/app/routers/analytics.py:720](../../../backend/app/routers/analytics.py#L720).
+Source: [backend/app/routers/analytics.py:735](../../../backend/app/routers/analytics.py#L735).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -1923,7 +1933,7 @@ affect had shipped, among those that affect a shipped release.
 on purpose: marking a release shipped bumps no analytics epoch. The suite
 filter does not apply (declared in ``meta.ignored_filters``).
 
-Source: [backend/app/routers/analytics.py:696](../../../backend/app/routers/analytics.py#L696).
+Source: [backend/app/routers/analytics.py:711](../../../backend/app/routers/analytics.py#L711).
 
 Dependency chain: `OAuth2PasswordBearer`, `analytics_scope.<locals>.dependency`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -2079,7 +2089,7 @@ mean time to resolve; plus totals over EVERY defect in scope (no row cap).
 in no point and counted in ``totals.closed_without_time``. Release, suite
 and ``release_match`` scope it exactly as the defect list.
 
-Source: [backend/app/routers/analytics.py:673](../../../backend/app/routers/analytics.py#L673).
+Source: [backend/app/routers/analytics.py:688](../../../backend/app/routers/analytics.py#L688).
 
 Dependency chain: `OAuth2PasswordBearer`, `_gate_dependency.<locals>.analytics_gate`, `analytics_scope.<locals>.dependency`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -2415,7 +2425,7 @@ Failure Categories
 
 Return distribution of failure categories for AI-analysed test cases.
 
-Source: [backend/app/routers/analytics.py:411](../../../backend/app/routers/analytics.py#L411).
+Source: [backend/app/routers/analytics.py:412](../../../backend/app/routers/analytics.py#L412).
 
 Dependency chain: `OAuth2PasswordBearer`, `_gate_dependency.<locals>.analytics_gate`, `analytics_scope.<locals>.dependency`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -3007,7 +3017,7 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 Handler return expressions (source excerpts, not an inferred wire schema):
 
 ```python
-{'meta': meta, 'items': [{'test_fingerprint': row.test_fingerprint, 'test_name': row.test_name, 'score': row.score, 'components': row.components, 'weights': row.weights, 'observation_count': row.observation_count, 'confidence': row.confidence, 'computed_at': row.computed_at} for row in rows], 'total': len(rows), 'suppression': decision.to_dict(), 'scope': {'membership': _membership_note(scope, 'Scores')['membership'], 'score': 'project_window', 'release_id': list(release_id) if isinstance(release_id, tuple) else release_id, 'note': 'Scores are computed project-wide over the scoring window and are NOT recomputed per release: a single release rarely reaches the evidence floor a score needs. A release filter selects which already-scored tests ran in that release, not how flaky they were during it.' if release_id and (not scope.suite_names) else _membership_note(scope, 'Scores')['note']}}
+{'meta': meta, 'items': [{'test_fingerprint': row.test_fingerprint, 'test_name': row.test_name, 'score': row.score, 'components': row.components, 'weights': row.weights, 'observation_count': row.observation_count, 'confidence': row.confidence, 'computed_at': row.computed_at} for row in rows], 'total': max(matched, len(rows)), 'suppression': decision.to_dict(), 'scope': {'membership': _membership_note(scope, 'Scores')['membership'], 'score': 'project_window', 'release_id': list(release_id) if isinstance(release_id, tuple) else release_id, 'note': 'Scores are computed project-wide over the scoring window and are NOT recomputed per release: a single release rarely reaches the evidence floor a score needs. A release filter selects which already-scored tests ran in that release, not how flaky they were during it.' if release_id and (not scope.suite_names) else _membership_note(scope, 'Scores')['note']}}
 ```
 
 Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.
@@ -3399,7 +3409,7 @@ pipeline persisted one, computing on demand otherwise (no backfill).
 Returns ``{found: false}`` when no analyzed failure matches — the UI
 renders the plain badge then.
 
-Source: [backend/app/routers/analytics.py:479](../../../backend/app/routers/analytics.py#L479).
+Source: [backend/app/routers/analytics.py:480](../../../backend/app/routers/analytics.py#L480).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -3541,7 +3551,7 @@ review feature: explicit ``test_suite_owners`` row → ``Project.manager_user_id
 Returns ``{queued: false, reason}`` when no owner can be resolved instead
 of erroring, so the UI can show a clear actionable message.
 
-Source: [backend/app/routers/analytics.py:807](../../../backend/app/routers/analytics.py#L807).
+Source: [backend/app/routers/analytics.py:822](../../../backend/app/routers/analytics.py#L822).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -3633,7 +3643,7 @@ return their union, and ``suite_name`` in the response is then the list):
   - Last 10 test runs that included this suite
 No ``suite_name`` matches nothing (``suite_name: ""``), as before.
 
-Source: [backend/app/routers/analytics.py:600](../../../backend/app/routers/analytics.py#L600).
+Source: [backend/app/routers/analytics.py:601](../../../backend/app/routers/analytics.py#L601).
 
 Dependency chain: `OAuth2PasswordBearer`, `_gate_dependency.<locals>.analytics_gate`, `analytics_scope.<locals>.dependency`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -3804,7 +3814,7 @@ The cluster's own statistics (size, cohesion, co-failure runs) are
 project-level and are not recomputed; ``scope`` in the response says so.
 Clusters have no time window (``meta.ignored_filters``).
 
-Source: [backend/app/routers/analytics.py:288](../../../backend/app/routers/analytics.py#L288).
+Source: [backend/app/routers/analytics.py:289](../../../backend/app/routers/analytics.py#L289).
 
 Dependency chain: `OAuth2PasswordBearer`, `_gate_dependency.<locals>.analytics_gate`, `analytics_scope.<locals>.dependency`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -4123,7 +4133,7 @@ window; tests flagged flaky (a live quarantine request or a human
 counted. Below 5 fixes ``measured`` is false and ``median_hours`` null,
 with the reason (never 0).
 
-Source: [backend/app/routers/analytics.py:461](../../../backend/app/routers/analytics.py#L461).
+Source: [backend/app/routers/analytics.py:462](../../../backend/app/routers/analytics.py#L462).
 
 Dependency chain: `OAuth2PasswordBearer`, `_gate_dependency.<locals>.analytics_gate`, `analytics_scope.<locals>.dependency`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -4272,7 +4282,7 @@ Top Failing Tests
 
 Return tests with the highest total failure count in the period.
 
-Source: [backend/app/routers/analytics.py:432](../../../backend/app/routers/analytics.py#L432).
+Source: [backend/app/routers/analytics.py:433](../../../backend/app/routers/analytics.py#L433).
 
 Dependency chain: `OAuth2PasswordBearer`, `_gate_dependency.<locals>.analytics_gate`, `analytics_scope.<locals>.dependency`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 

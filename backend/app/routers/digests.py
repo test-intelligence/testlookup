@@ -28,6 +28,10 @@ router = APIRouter(prefix="/api/v1/digests", tags=["Digests"])
 _SCOPE_FIELDS = ("schedule", "scope_type", "scope_value", "saved_view_id")
 
 
+#: ``GET /digests/preview?period=``: the two digests there are.
+DIGEST_PERIODS = ("daily", "weekly")
+
+
 def _refused(exc: DigestScopeError) -> HTTPException:
     """One of ``digest_scope_service``'s fixed texts, as a 422."""
     return HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
@@ -333,6 +337,10 @@ async def preview_digest(
     private view and a layout row all answer the same 422.
     """
     from app.core.deps import resolve_project_scope
+
+    if period not in DIGEST_PERIODS:
+        # Anything but "weekly" used to become a one-day digest titled with the caller's word.
+        raise HTTPException(status_code=422, detail="period must be one of " + ", ".join(DIGEST_PERIODS) + ".")
 
     scoped_project_id, allowed = await resolve_project_scope(
         db, current_user, str(project_id) if project_id else None
