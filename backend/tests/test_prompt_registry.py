@@ -54,11 +54,17 @@ _ORIGINAL_HASHES = {
 # original f-strings — same bytes once rendered (placeholders were plain
 # ``{name}`` interpolations with no format specs).
 _ORIGINAL_MCP_HASHES = {
-    "mcp.investigate_failure": "590cb27ee41f",
     "mcp.weekly_quality_digest": "b96eda2d909a",
     "mcp.flakiness_investigation": "479ef097d997",
-    "mcp.defect_triage_session": "670026c0afac",
     "mcp.suite_health_check": "b6bfbd9fe1cd",
+}
+# The ORIGINAL hashes of the two templates the API/MCP launch QA changed
+# (2026-11-23). ``investigate_failure`` v1 gave ``get_test_case`` an argument it
+# does not have and looked a run up by searching for a test case id (TL-QA-09);
+# ``defect_triage_session`` v1 listed OPEN defects only (TL-QA-16).
+_MCP_LAUNCH_QA_V1_HASHES = {
+    "mcp.investigate_failure": "590cb27ee41f",
+    "mcp.defect_triage_session": "670026c0afac",
 }
 # The ORIGINAL summary layer hashes — v2 deliberately differs (F-3): each layer
 # now returns ``evidence_ids`` so citations resolve against a server-built
@@ -177,12 +183,13 @@ def test_no_summary_prompt_asks_the_model_for_a_release_verdict():
 
 def test_mcp_release_readiness_report_reads_the_gate_verdict():
     """D-120: the template called project readiness "the primary signal" and offered a Conditional Go that the
-    release level never emits. v2 points at the stored gate verdict."""
+    release level never emits. v2 points at the stored gate verdict. v3 (TL-QA-10) reads the NAMED release's
+    stored gate first, without recording one, and lists ACTIVE defects (TL-QA-16)."""
     mcp = pr._load_mcp_templates()
     if not mcp:
         pytest.skip("mcp/prompts/templates.py not present in this checkout")
     entry = mcp["mcp.release_readiness_report"]
-    assert entry["version"] == 2
+    assert entry["version"] == 3
     assert entry["content_hash"] != _MCP_RELEASE_READINESS_V1_HASH
     import ast
 
@@ -197,6 +204,19 @@ def test_mcp_release_readiness_report_reads_the_gate_verdict():
     assert "CONDITIONAL GO" not in text
     assert "🟢 GO / 🔴 NO-GO / ⚪ NOT EVALUATED" in text
     assert "{project_id}" in text and "{release_version}" in text
+    assert '1. Call `get_release_gate` with release="{release_version}", project="{project_id}", evaluate=False.' in text
+    assert "evaluate=True" not in text
+    assert 'resolution_status="ACTIVE"' in text
+
+
+def test_mcp_templates_changed_by_the_launch_qa_are_versioned():
+    """TL-QA-09 / TL-QA-16: the two recipes were corrected, so each moved to v2 with a new hash."""
+    mcp = pr._load_mcp_templates()
+    if not mcp:
+        pytest.skip("mcp/prompts/templates.py not present in this checkout")
+    for pid, v1_hash in _MCP_LAUNCH_QA_V1_HASHES.items():
+        assert mcp[pid]["version"] == 2, pid
+        assert mcp[pid]["content_hash"] != v1_hash, pid
 
 
 def test_chat_system_is_deliberate_v5():

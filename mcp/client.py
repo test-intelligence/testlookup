@@ -252,8 +252,36 @@ async def authenticate() -> Optional[str]:
         data={"username": settings.username, "password": settings.password},
     )
     resp.raise_for_status()
-    _stdio_access_token = resp.json()["access_token"]
+    _stdio_access_token = access_token_from_login(resp.json())
     return _stdio_access_token
+
+
+class LoginNeedsSecondFactor(RuntimeError):
+    """The password was accepted but the account needs a second factor (TL-QA-23)."""
+
+
+def access_token_from_login(body: Any) -> str:
+    """The access token of a login answer, or ``LoginNeedsSecondFactor`` with a plain reason.
+
+    The sign-in route has three 200 shapes; two of them (``mfa_required``,
+    ``mfa_enrollment_required``) carry no access token. Reading the key blind
+    raised ``KeyError: 'access_token'`` out of every tool of such an account.
+    """
+    body = body if isinstance(body, dict) else {}
+    token = body.get("access_token")
+    if isinstance(token, str) and token:
+        return token
+    if body.get("mfa_enrollment_required"):
+        raise LoginNeedsSecondFactor(
+            "this workspace requires multi-factor authentication and the account has not set it up. "
+            "Enrol in the web UI first; a password alone cannot sign this account in here."
+        )
+    if body.get("mfa_required"):
+        raise LoginNeedsSecondFactor(
+            "the account has multi-factor authentication, which this password login cannot complete. "
+            "Connect over the network transport with that account's own TestLookup bearer token instead."
+        )
+    raise LoginNeedsSecondFactor("the sign-in answer carried no access token.")
 
 
 def _request_access_token() -> Optional[str]:
@@ -434,6 +462,20 @@ def error_payload(exc: Exception) -> dict[str, Any]:
     validation errors (422) — instead of a stack trace.
     """
     payload: dict[str, Any] = {"ok": False, "error": str(exc)}
+    if isinstance(exc, httpx.TimeoutException):
+        # TL-QA-22: httpx timeouts have an empty message, so this read
+        # ``error: ""``. A timed-out write may still have been applied.
+        payload.update(
+            code="timeout",
+            error=f"The TestLookup API did not answer in time ({type(exc).__name__}).",
+            detail="No answer was received. If this was a write it may or may not have been applied: "
+            "read the record back before retrying.",
+        )
+    elif isinstance(exc, httpx.TransportError):
+        payload.update(
+            code="unreachable",
+            error=str(exc) or f"The TestLookup API could not be reached ({type(exc).__name__}).",
+        )
     if isinstance(exc, httpx.HTTPStatusError):
         payload["status_code"] = exc.response.status_code
         try:

@@ -16,7 +16,7 @@ from app.core.deps import (
 )
 from app.core.release_filter import UNATTRIBUTED
 from app.db.postgres import get_db
-from app.models.postgres import LaunchStatus, Project, TestCase, TestRun, User, UserRole
+from app.models.postgres import LaunchStatus, Project, TestCase, TestRun, TestStatus, User, UserRole
 from app.models.schemas import (
     DeleteRunAcceptedResponse,
     DeleteRunRequest,
@@ -144,6 +144,7 @@ async def list_runs(
     # The toolbar's values, also before any database access (one 422 text each).
     toolbar = _parse_toolbar(q, branch, recommendation)
     run_order = parse_run_list_order(order)
+    status = runs_service.parse_run_list_status(status)
     # Verify the PROVIDED release(s). This route was the only one accepting
     # ``release_id`` that skipped the check: a malformed value reached
     # ``uuid.UUID()`` in the service and raised ValueError -> 500 rather than
@@ -394,7 +395,17 @@ async def list_test_cases(
     run_id: uuid.UUID,
     page: int = Query(1, ge=1),
     size: int = Query(50, ge=1, le=200),
-    status: str | None = None,
+    status: Annotated[
+        list[str] | None,
+        Query(
+            description=(
+                "Test status to keep (PASSED, FAILED, BROKEN, SKIPPED, UNKNOWN; case-insensitive). "
+                "Repeat it for several: `status=FAILED&status=BROKEN` returns their union, "
+                "ordered, paged and counted as one list."
+            ),
+            max_length=len(TestStatus),
+        ),
+    ] = None,
     suite: str | None = None,
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_run_access()),

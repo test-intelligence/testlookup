@@ -8,6 +8,7 @@ import re
 
 import ai_history_format  # type: ignore[import]
 import client as api  # type: ignore[import]
+import execution_format  # type: ignore[import]
 import review_notice  # type: ignore[import]
 import untrusted  # type: ignore[import]
 
@@ -49,7 +50,7 @@ def register(mcp) -> None:  # noqa: ANN001
 
         lines = [
             f"## Run Intelligence — Build {untrusted.short(run.get('build_number'), missing='?')}",
-            f"**Status:** {run.get('status', '?')}  |  **Pass Rate:** {run.get('pass_rate', 0):.1f}%  |  **Failed:** {run.get('failed_tests', 0)}",
+            f"**Status:** {run.get('status', '?')}  |  **Pass Rate:** {execution_format.pass_rate(run.get('pass_rate'))}  |  **Failed:** {run.get('failed_tests', 0)}",
         ]
 
         if decision:
@@ -90,8 +91,14 @@ def register(mcp) -> None:  # noqa: ANN001
         Modes: executive, developer, manager.
         """
         data = await api.get(api.path("/api/v1/runs/{run_id}/summary", run_id=api.uuid_id(run_id)), params={"mode": mode})
-        summary = data.get("executive_summary") or data.get("markdown_report")
-        if not str(summary or "").strip():
+        # TL-QA-07: the developer and manager views ARE the Markdown body (the
+        # evidence, the mitigation). The headline is the executive view, and
+        # the fallback when a mode's body is missing or blank.
+        headline = data.get("executive_summary")
+        report = data.get("markdown_report")
+        preferred = (headline, report) if str(mode).strip().lower() == "executive" else (report, headline)
+        summary = next((text for text in preferred if str(text or "").strip()), None)
+        if summary is None:
             return "\n".join([f"## {mode.title()} Summary", "", "No summary available.", *review_notice.review_lines(data)])
         # AI text written from test output: it can repeat what a report said.
         lines = untrusted.with_notice([f"## {mode.title()} Summary", "", *untrusted.block(summary)])

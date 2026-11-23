@@ -64,7 +64,10 @@ def register(mcp) -> None:  # noqa: ANN001
             return f"Login failed (HTTP {resp.status_code}): {resp.text}"
 
         data = resp.json()
-        _api._stdio_access_token = data["access_token"]
+        try:
+            _api._stdio_access_token = _api.access_token_from_login(data)
+        except _api.LoginNeedsSecondFactor as exc:
+            return f"Login not completed: {exc}"
         return (
             f"Logged in as **{username}**.\n"
             f"Token expires in: {data.get('expires_in', 'unknown')}s\n"

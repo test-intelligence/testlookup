@@ -82,7 +82,7 @@ def _row() -> dict:
         "package_name": HOSTILE, "failure_category": "PRODUCT_BUG", "severity": HOSTILE, "feature": HOSTILE,
         "story": HOSTILE, "epic": HOSTILE, "owner": HOSTILE, "tags": [HOSTILE, "smoke"], "error_message": HOSTILE,
         "label": HOSTILE, "size": 3, "criticality_level": "HIGH", "representative_error": HOSTILE,
-        "cluster_id": HOSTILE, "root_cause_summary": HOSTILE, "title": HOSTILE, "subtitle": HOSTILE,
+        "cluster_id": HOSTILE, "root_cause": HOSTILE, "root_cause_summary": HOSTILE, "title": HOSTILE, "subtitle": HOSTILE,
         "entity_type": "test_case", "release_name": HOSTILE, "resolution_status": "OPEN",
         "message": HOSTILE, "error": HOSTILE, "task_id": "task-1", "workflow_type": "deep",
         "executive_summary": HOSTILE, "markdown_report": HOSTILE,

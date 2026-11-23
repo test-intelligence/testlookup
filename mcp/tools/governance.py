@@ -143,15 +143,19 @@ def register(mcp) -> None:  # noqa: ANN001
         # The endpoint returns a list of rules sorted by priority.
         lines = [f"## Ownership rules — project `{project_id}`\n"]
         for r in data:
+            # TL-QA-15: the fields of ``OwnershipRuleResponse``. The names read
+            # here before (glob_pattern, owner, component, team) are not sent,
+            # so every rule showed "?" for its pattern and its owner.
             lines.append(
                 f"- priority {r.get('priority', '?')} · "
-                f"pattern `{r.get('glob_pattern', '?')}` → "
-                f"owner **{r.get('owner', '?')}**"
+                f"{r.get('match_type') or 'match'} `{r.get('match_pattern') or '?'}` → "
+                f"team **{r.get('team_name') or '?'}**"
+                + ("" if r.get("is_active", True) else " (inactive)")
             )
-            if r.get("component"):
-                lines.append(f"  - Component: {r['component']}")
-            if r.get("team"):
-                lines.append(f"  - Team: {r['team']}")
+            if r.get("service_name"):
+                lines.append(f"  - Service: {r['service_name']}")
+            if r.get("team_contact"):
+                lines.append(f"  - Contact: {r['team_contact']}")
         return "\n".join(lines)
 
     # ── Feature flags ──────────────────────────────────────────────────────

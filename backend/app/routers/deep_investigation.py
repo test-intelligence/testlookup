@@ -4,7 +4,7 @@ Triggers the deep analysis pipeline and exposes cluster/finding results.
 """
 import logging
 import uuid
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
@@ -69,7 +69,9 @@ router = APIRouter(prefix="/api/v1/deep-investigate", tags=["Deep Investigation"
 
 
 class TriggerDeepRequest(BaseModel):
-    mode: str = "deep"  # "deep" | "offline"
+    # TL-QA-01: the two workflows this route dispatches. Any other value is a
+    # 422 on ``body.mode``; it used to be queued as "deep" without a word.
+    mode: Literal["deep", "offline"] = "deep"
     # W14 AGT-07: a tighten-only run configuration (every field optional; an
     # unconfigured body queues exactly today's payload).
     failure_ids: Optional[list[uuid.UUID]] = Field(None, min_length=1, max_length=RUN_CONFIG_FAILURE_IDS_MAX)
@@ -142,7 +144,7 @@ async def trigger_deep_investigation(
     if not run:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Test run not found")
 
-    workflow_type = body.mode if body.mode in ("deep", "offline") else "deep"
+    workflow_type = body.mode
 
     # W14 AGT-07: the run configuration is judged FIRST (every refusal a 422
     # before anything is queued); the worker freezes it at task start.

@@ -13,6 +13,10 @@ from tools.metrics import DEFAULT_WINDOW_DAYS  # type: ignore[import]
 #: ``get_run_timing``: slowest tests listed by default, and the route's cap.
 RUN_TIMING_DEFAULT_SLOWEST = 10
 RUN_TIMING_MAX_SLOWEST = 100
+#: ``GET /api/v1/runs?order=``: receipt time, newest first (the API's default is build order).
+RUNS_NEWEST_FIRST = "newest"
+#: ``GET /api/v1/runs/{id}/tests?status=``: the statuses a "failure" list holds (TL-QA-06).
+FAILURE_STATUSES = ("FAILED", "BROKEN")
 
 _STATUS_EMOJI = {
     "PASSED": "✅",
@@ -156,6 +160,9 @@ def register(mcp) -> None:  # noqa: ANN001
                 "project_id": project_id,
                 "status": status,
                 "days": days,
+                # TL-QA-03: "newest first" is receipt time. Without this the
+                # API sorts by build label, so `checkout-900` led `billing-12`.
+                "order": RUNS_NEWEST_FIRST,
                 "page": page,
                 "size": size,
             },
@@ -183,7 +190,7 @@ def register(mcp) -> None:  # noqa: ANN001
                 f"| #{untrusted.short(r.get('build_number'), missing='?')} `{r['id'][:8]}` "
                 f"| {untrusted.inline(r.get('branch'))} "
                 f"| {_status(r.get('status'))} "
-                f"| {r.get('pass_rate', 0):.1f}% "
+                f"| {execution_format.pass_rate(r.get('pass_rate'))} "
                 f"| {r.get('total_tests', 0)} "
                 f"| {duration_s:.0f}s "
                 f"| {untrusted.short(r.get('trigger_source'))} "
@@ -229,7 +236,7 @@ def register(mcp) -> None:  # noqa: ANN001
             f"| ❌ Failed | {failed} |",
             f"| 💥 Broken | {broken} |",
             f"| ⏭ Skipped | {skipped} |",
-            f"| Pass Rate | **{r.get('pass_rate', 0):.2f}%** |",
+            f"| Pass Rate | **{execution_format.pass_rate(r.get('pass_rate'), digits=2)}** |",
             f"| Duration | {duration_s:.1f}s |",
             "",
             "### Timeline",
@@ -280,23 +287,24 @@ def register(mcp) -> None:  # noqa: ANN001
 
         lines = [
             f"## Test Cases — Run `{run_id[:8]}` — Page {page}/{pages} ({total} total)\n",
-            f"| Test Name | Suite | Status | Duration | Category | Error |",
-            f"|-----------|-------|--------|----------|----------|-------|",
+            f"| Test Name | Suite | Status | Duration | Category |",
+            f"|-----------|-------|--------|----------|----------|",
         ]
         for t in items:
-            error_snippet = (t.get("error_message") or "")[:60]
-            if error_snippet.strip():
-                error_snippet = untrusted.inline(error_snippet + "...")
+            # TL-QA-14: no Error column. The list route's rows carry no error
+            # message, so the column read "-" for every failure; the message
+            # is on the detail read.
             lines.append(
-                f"| {untrusted.inline(t.get('test_name'), limit=50)} "
+                f"| {untrusted.inline(t.get('test_name'), limit=80)} "
                 f"| {untrusted.inline(t.get('suite_name'), limit=30)} "
                 f"| {_status(t.get('status'))} "
                 f"| {(t.get('duration_ms') or 0) / 1000:.1f}s "
-                f"| {t.get('failure_category') or '-'} "
-                f"| {error_snippet.strip() or '-'} |"
+                f"| {t.get('failure_category') or '-'} |"
             )
             # Append test_id as a subtle row annotation for follow-up tool calls
             lines.append(f"> ID: `{t['id']}`")
+
+        lines.append("\n*Error messages are not part of this list: use `get_test_case` with a test ID.*")
 
         return "\n".join(untrusted.with_notice(lines))
 

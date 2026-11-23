@@ -20,7 +20,7 @@ import asyncio
 import logging
 import time
 import uuid
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from fastapi.responses import Response
@@ -50,6 +50,9 @@ from app.services.report_distribution_policy import (
 )
 
 logger = logging.getLogger("routers.run_intelligence")
+
+#: The narrative views ``get_run_mode_summary`` writes.
+SummaryMode = Literal["executive", "developer", "manager"]
 
 
 async def _with_review(
@@ -312,7 +315,9 @@ async def list_run_decision_reports(
 async def get_run_summary_by_mode(
     run_id: uuid.UUID,
     response: Response,
-    mode: str = Query(
+    # TL-QA-21: a closed set. Any other word used to be answered with the
+    # executive summary under the caller's own heading, and became a metric label.
+    mode: SummaryMode = Query(
         default="executive",
         description="Summary mode: executive | developer | manager",
     ),
@@ -422,7 +427,7 @@ async def refresh_intelligence(
 @router.get("/{run_id}/export")
 async def export_intelligence_report(
     run_id: uuid.UUID,
-    mode: str = Query(default="manager", description="Summary mode: executive | developer | manager"),
+    mode: SummaryMode = Query(default="manager", description="Summary mode: executive | developer | manager"),
     db: Any = Depends(get_db),
     _: Any = Depends(require_run_access()),
 ):

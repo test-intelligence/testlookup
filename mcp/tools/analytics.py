@@ -30,12 +30,33 @@ _CATEGORY_ICON = {
     "UNKNOWN": "❓",
 }
 
+# The backend's defect statuses (``defect_status.DEFECT_STATUSES``). It has no
+# DUPLICATE or WONTFIX: a filter on either always matched nothing (TL-QA-16).
 _RESOLUTION_ICON = {
     "OPEN": "🔴",
+    "IN_PROGRESS": "🟡",
     "RESOLVED": "✅",
-    "DUPLICATE": "🔁",
-    "WONTFIX": "🚫",
+    "INVALID": "🚫",
 }
+
+
+def _number(value: Any) -> Optional[float]:
+    """A measured figure, or ``None`` when the API sent ``null`` (nothing to measure)."""
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
+def _rate_cell(value: Any, digits: int = 1) -> str:
+    """A 10-step bar and the rate; ``not measured`` for ``null``, never an empty bar at 0%."""
+    rate = _number(value)
+    if rate is None:
+        return "not measured"
+    filled = max(0, min(10, int(rate / 10)))
+    return f"`{'█' * filled}{'░' * (10 - filled)}` {rate:.{digits}f}%"
+
+
+def _pass_rate_text(value: Any) -> str:
+    rate = _number(value)
+    return "not measured" if rate is None else f"{rate:.1f}%"
 
 #: The ``metric`` values chart-data accepts (``chart_data_service.METRICS``).
 #: This job cannot import the backend, so the backend's wire-contract test
@@ -115,7 +136,9 @@ def register(mcp) -> None:  # noqa: ANN001
     ) -> str:
         """
         Return the flakiness leaderboard — tests that alternate between passing and
-        failing (5–95% failure rate) sorted by failure rate descending.
+        failing (5–95% failure rate) sorted by failure rate descending, then the
+        tests a person flagged as flaky (no measured rate). Each row carries the
+        test's fingerprint, the id the quarantine and feedback tools take.
         High values indicate tests that need stabilisation, not necessarily real bugs.
 
         Args:
@@ -139,22 +162,36 @@ def register(mcp) -> None:  # noqa: ANN001
         if not items:
             return f"No flaky tests detected in the last {days} days. 🎉"
 
+        # TL-QA-13: the API's ``total`` is the count; the page is cut at ``limit``.
+        total = data.get("total")
+        total = total if isinstance(total, int) and total >= len(items) else len(items)
+        found = f"{total} found" if total == len(items) else f"showing {len(items)} of {total}"
         lines = [
-            f"## 🎲 Flaky Tests — Last {days} Days ({len(items)} found)\n",
-            f"| # | Test Name | Suite | Failure Rate | Runs | Fails | Last Seen |",
-            f"|---|-----------|-------|-------------|------|-------|-----------|",
+            f"## 🎲 Flaky Tests — Last {days} Days ({found})\n",
+            f"| # | Test Name | Suite | Fingerprint | Failure Rate | Runs | Fails | Last Seen |",
+            f"|---|-----------|-------|-------------|-------------|------|-------|-----------|",
         ]
+        manual = False
         for i, t in enumerate(items, 1):
-            rate = t.get("failure_rate_pct", 0)
-            bar = "█" * int(rate / 10) + "░" * (10 - int(rate / 10))
+            if t.get("source") == "manual":
+                # A person's flag, not a measurement: the API's 100 is a placeholder.
+                manual = True
+                rate_cell = "flagged by a person†"
+            else:
+                rate_cell = _rate_cell(t.get("failure_rate_pct"), digits=0)
             lines.append(
-                f"| {i} | {t.get('test_name', 'N/A')[:45]} "
+                f"| {i} | {(t.get('test_name') or 'N/A')[:45]} "
                 f"| {(t.get('suite_name') or 'N/A')[:25]} "
-                f"| `{bar}` {rate:.0f}% "
+                f"| `{t.get('test_fingerprint') or 'N/A'}` "
+                f"| {rate_cell} "
                 f"| {t.get('total_runs', 0)} "
                 f"| {t.get('fail_count', 0)} "
                 f"| {(t.get('last_seen') or 'N/A')[:10]} |"
             )
+        if manual:
+            lines.append("\n*† Marked flaky in triage; no failure rate was measured for it in this window.*")
+        if total > len(items):
+            lines.append(f"\n*{total - len(items)} more not shown; raise `limit` (max 100).*")
 
         return "\n".join(lines)
 
@@ -185,12 +222,15 @@ def register(mcp) -> None:  # noqa: ANN001
         if not items:
             return "No failure data available for this period."
 
-        total = sum(i.get("count", 0) for i in items)
+        # TL-QA-19: the API sends one row per (category, kind); a category is one line here.
+        by_category: dict[str, int] = {}
+        for item in items:
+            cat = str(item.get("category") or "UNKNOWN")
+            by_category[cat] = by_category.get(cat, 0) + int(_number(item.get("count")) or 0)
+        total = sum(by_category.values())
         lines = [f"## Failure Category Distribution — Last {days} Days\n"]
 
-        for item in sorted(items, key=lambda x: x.get("count", 0), reverse=True):
-            cat = item.get("category", "UNKNOWN")
-            count = item.get("count", 0)
+        for cat, count in sorted(by_category.items(), key=lambda pair: (-pair[1], pair[0])):
             pct = (count / total * 100) if total else 0
             bar = "█" * int(pct / 5) + "░" * (20 - int(pct / 5))
             icon = _CATEGORY_ICON.get(cat, "❓")
@@ -223,7 +263,7 @@ def register(mcp) -> None:  # noqa: ANN001
         Args:
             project_id: Project UUID.
             days: Analysis window in days (1-365, default 30).
-            limit: Maximum tests to return (1-100, default 15).
+            limit: Maximum tests to return (1-50, default 15).
         
         Scope: this answers for the WHOLE PROJECT over the time window. The web
         UI can narrow the same data to a single release; this tool cannot, so
@@ -291,7 +331,7 @@ def register(mcp) -> None:  # noqa: ANN001
             f"- **Unique Tests:** {summary.get('unique_tests', 0)}",
             f"- **Suite Count:** {summary.get('suite_count', 0)}",
             f"- **Total Executions:** {summary.get('total_executions', 0)}",
-            f"- **Avg Pass Rate:** {summary.get('avg_pass_rate', 0):.1f}%",
+            f"- **Avg Pass Rate:** {_pass_rate_text(summary.get('avg_pass_rate'))}",
             f"- **Days with Runs:** {summary.get('days_with_runs', 0)} / {days}",
             "",
             "### Per-Suite Breakdown",
@@ -299,17 +339,24 @@ def register(mcp) -> None:  # noqa: ANN001
             f"|-------|-------|--------|--------|--------|-----------|",
         ]
 
-        for s in sorted(suites, key=lambda x: x.get("pass_rate", 0)):
-            rate = s.get("pass_rate", 0)
-            bar = "█" * int(rate / 10) + "░" * (10 - int(rate / 10))
+        # TL-QA-12: a suite of skipped tests has a null rate. Worst first, unmeasured last.
+        def worst_first(suite: dict) -> tuple:
+            rate = _number(suite.get("pass_rate"))
+            return (rate is None, rate or 0.0, str(suite.get("suite_name") or ""))
+
+        for s in sorted(suites, key=worst_first):
             lines.append(
                 f"| {(s.get('suite_name') or 'N/A')[:40]} "
                 f"| {s.get('unique_tests', 0)} "
                 f"| {s.get('passed', 0)} "
                 f"| {s.get('failed', 0)} "
                 f"| {s.get('skipped', 0)} "
-                f"| `{bar}` {rate:.1f}% |"
+                f"| {_rate_cell(s.get('pass_rate'))} |"
             )
+
+        suite_count = _number(summary.get("suite_count"))
+        if suite_count is not None and suite_count > len(suites):
+            lines.append(f"\n*{len(suites)} of {int(suite_count)} suites shown; the list is capped.*")
 
         return "\n".join(lines)
 
@@ -326,7 +373,9 @@ def register(mcp) -> None:  # noqa: ANN001
 
         Args:
             project_id: Project UUID.
-            resolution_status: Filter by OPEN, RESOLVED, DUPLICATE, or WONTFIX.
+            resolution_status: Filter by OPEN, IN_PROGRESS, RESOLVED or INVALID, or
+                ACTIVE for every live defect (OPEN and IN_PROGRESS, the ones
+                that block a release gate).
             page: Page number.
             size: Results per page.
         """
@@ -390,7 +439,9 @@ def register(mcp) -> None:  # noqa: ANN001
         total = data.get("total_analysed", 0)
         high = data.get("high_confidence", 0)
         needs_review = data.get("needs_review", 0)
-        avg_conf = data.get("avg_confidence", 0)
+        # TL-QA-11: the average over no analyses is null, not 0.
+        avg_conf = _number(data.get("avg_confidence"))
+        avg_text = "n/a" if avg_conf is None else f"{avg_conf:.0f}%"
 
         auto_rate = (high / total * 100) if total else 0
         review_rate = (needs_review / total * 100) if total else 0
@@ -403,7 +454,7 @@ def register(mcp) -> None:  # noqa: ANN001
             f"| Total Failures Analysed | **{total}** |",
             f"| High-Confidence Results (≥threshold) | {high} ({auto_rate:.0f}%) |",
             f"| Requires Human Review | {needs_review} ({review_rate:.0f}%) |",
-            f"| Avg Confidence Score | **{avg_conf:.0f}%** |",
+            f"| Avg Confidence Score | **{avg_text}** |",
             f"| 🎲 Flaky Tests Detected | {data.get('flaky_detected', 0)} |",
             f"| 🔥 Backend Errors Found | {data.get('backend_errors', 0)} |",
             f"| 🔧 Pod Issues Found | {data.get('pod_issues', 0)} |",
