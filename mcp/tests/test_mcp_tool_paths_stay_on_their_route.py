@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import json
 import re
 import sys
 from pathlib import Path
@@ -67,6 +68,12 @@ def _template_of(node: ast.AST) -> str | None:
     return None
 
 
+def _path_pattern(template: str) -> re.Pattern[str]:
+    return re.compile(
+        "/".join("[^/]+" if part.startswith("{") else re.escape(part) for part in template.split("/"))
+    )
+
+
 def _routes() -> set[tuple[str, re.Pattern[str]]]:
     """Every (method, path pattern) the MCP source is written to call."""
     routes = set()
@@ -80,10 +87,7 @@ def _routes() -> set[tuple[str, re.Pattern[str]]]:
             ):
                 template = _template_of(node.args[0])
                 if template and template.startswith("/"):
-                    pattern = "/".join(
-                        "[^/]+" if part.startswith("{") else re.escape(part) for part in template.split("/")
-                    )
-                    routes.add((node.func.attr.upper(), re.compile(pattern)))
+                    routes.add((node.func.attr.upper(), _path_pattern(template)))
     return routes
 
 
@@ -182,6 +186,21 @@ def _off_route(seen: list[httpx.Request], hostile: str) -> list[str]:
 def test_the_catalogue_has_tools_with_string_arguments():
     assert len(_cases()) > 100, "the parametrised cases below did not find the tool catalogue"
     assert len(ROUTES) > 60, "the path templates were not found in the MCP source"
+
+
+def test_mcp_methods_and_paths_match_the_backend_api_contract():
+    """The backend documentation check regenerates this contract from its mounted app."""
+    schema_path = MCP_DIR.parent / "docs" / "reference" / "openapi.json"
+    api_paths = json.loads(schema_path.read_text(encoding="utf-8"))["paths"]
+    backend_routes = {
+        (verb.upper(), _path_pattern(path))
+        for path, operations in api_paths.items()
+        for verb in operations
+        if verb in VERBS
+    }
+    assert len(ROUTES) >= 80
+    unmatched = sorted(f"{method} {pattern.pattern}" for method, pattern in ROUTES - backend_routes)
+    assert not unmatched, f"MCP requests without corresponding backend operations: {unmatched}"
 
 
 @pytest.mark.parametrize("flag", [False, True], ids=["flags-off", "flags-on"])

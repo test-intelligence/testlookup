@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import ARRAY, Integer, Numeric, case, cast, false, func, literal_column, or_, select, text
@@ -851,17 +851,34 @@ def _synthesize_run_from_live_session(live) -> "TestRun":
     return run
 
 
+def test_case_status_filter(status: str | Sequence[str] | None) -> tuple[str, ...]:
+    """The statuses a test-case list is narrowed to: upper-cased, deduplicated, in the order given.
+
+    ``status`` is one value (the route's original contract) or several
+    (TL-QA-06: ``?status=FAILED&status=BROKEN``). Empty means no filter.
+    """
+    if not status:
+        return ()
+    values = [status] if isinstance(status, str) else list(status)
+    return tuple(dict.fromkeys(str(v).strip().upper() for v in values if str(v).strip()))
+
+
 async def list_run_test_cases(
     db: AsyncSession,
     run_id: uuid.UUID,
     page: int,
     size: int,
-    status: str | None = None,
+    status: str | Sequence[str] | None = None,
     suite: str | None = None,
 ):
     query = select(TestCase).where(TestCase.test_run_id == run_id)
-    if status:
-        query = query.where(TestCase.status == status.upper())
+    statuses = test_case_status_filter(status)
+    if len(statuses) == 1:
+        query = query.where(TestCase.status == statuses[0])
+    elif statuses:
+        # The union is taken here, before the ordering and the page, so
+        # ``total`` counts every matching row.
+        query = query.where(TestCase.status.in_(statuses))
     if suite:
         from app.services.sql_utils import like_contains
         query = query.where(TestCase.suite_name.ilike(like_contains(suite), escape="\\"))
@@ -892,7 +909,7 @@ async def _live_buffer_test_cases(
     run_id: uuid.UUID,
     page: int,
     size: int,
-    status: str | None = None,
+    status: str | Sequence[str] | None = None,
     suite: str | None = None,
 ) -> tuple[list[dict], int, int] | None:
     """Return per-test rows synthesised from the Redis live buffer for an
@@ -1011,7 +1028,7 @@ async def _live_buffer_test_cases(
     if not events:
         return None
 
-    status_filter = status.upper() if status else None
+    status_filter = set(test_case_status_filter(status))
     suite_lower = suite.strip().lower() if suite else None
 
     rows: list[dict] = []
@@ -1021,7 +1038,7 @@ async def _live_buffer_test_cases(
             # belong in the per-test table.
             continue
         ev_status = (ev.get("status") or "UNKNOWN").upper()
-        if status_filter and ev_status != status_filter:
+        if status_filter and ev_status not in status_filter:
             continue
         ev_suite = ev.get("suite_name")
         if suite_lower and (ev_suite or "").strip().lower() != suite_lower:

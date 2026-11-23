@@ -20,6 +20,7 @@ from unittest.mock import AsyncMock
 
 import httpx
 import jwt
+import pytest
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -337,23 +338,34 @@ def test_two_real_sse_clients_remain_bound_to_their_presenting_tokens(monkeypatc
     asyncio.run(exercise())
 
 
-def test_real_stdio_process_keeps_configured_login_compatibility():
-    """Transport auth must not gate the local single-client stdio workflow."""
+@pytest.mark.parametrize("stale_first_token", [False, True], ids=["fresh", "reauth-after-401"])
+def test_real_stdio_process_keeps_configured_login_compatibility(stale_first_token, tmp_path):
+    """Use the configured login and refresh once when a cached credential expires."""
     import uvicorn
     from mcp import ClientSession, StdioServerParameters
     from mcp.client.stdio import stdio_client
 
     forwarded: list[str] = []
+    issued: list[str] = []
 
     async def login(request: Request) -> JSONResponse:
         form = parse_qs((await request.body()).decode("utf-8"))
         if form.get("username") != ["stdio-user"] or form.get("password") != ["stdio-pass"]:
             return JSONResponse({"detail": "invalid"}, status_code=401)
-        return JSONResponse({"access_token": "stdio-access-token"})
+        token = f"stdio-access-{len(issued) + 1}"
+        issued.append(token)
+        return JSONResponse({"access_token": token})
 
     async def projects(request: Request) -> JSONResponse:
-        forwarded.append(request.headers.get("authorization", ""))
-        return JSONResponse([])
+        authorization = request.headers.get("authorization", "")
+        forwarded.append(authorization)
+        accepted = "stdio-access-2" if stale_first_token else "stdio-access-1"
+        if authorization != f"Bearer {accepted}":
+            return JSONResponse({"detail": "expired"}, status_code=401)
+        return JSONResponse([{
+            "id": "11111111-1111-4111-8111-111111111111",
+            "name": "QA Checkout", "slug": "qa-checkout",
+        }])
 
     backend = Starlette(
         routes=[
@@ -383,6 +395,7 @@ def test_real_stdio_process_keeps_configured_login_compatibility():
                     "TESTLOOKUP_API_URL": f"http://127.0.0.1:{port}",
                     "TESTLOOKUP_USERNAME": "stdio-user",
                     "TESTLOOKUP_PASSWORD": "stdio-pass",
+                    "TESTLOOKUP_ENV_FILE": str(tmp_path / "absent.env"),
                 }
             )
             parameters = StdioServerParameters(
@@ -394,14 +407,18 @@ def test_real_stdio_process_keeps_configured_login_compatibility():
             async with stdio_client(parameters) as streams:
                 async with ClientSession(*streams) as session:
                     await session.initialize()
-                    result = await session.call_tool("list_projects")
-                    assert result.is_error is not True
-            assert forwarded == ["Bearer stdio-access-token"]
+                    for _ in range(2):
+                        result = await session.call_tool("list_projects")
+                        assert not result.is_error
+                        assert any("QA Checkout" in block.text for block in result.content if block.type == "text")
+            expected = ["stdio-access-1", "stdio-access-2"] if stale_first_token else ["stdio-access-1"]
+            assert issued == expected
+            assert forwarded == [f"Bearer {token}" for token in [*expected, expected[-1]]]
         finally:
             runtime.should_exit = True
             await serve
 
-    asyncio.run(exercise())
+    asyncio.run(asyncio.wait_for(exercise(), timeout=30))
 
 
 def test_network_deployments_do_not_inject_shared_backend_credentials():

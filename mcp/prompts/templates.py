@@ -21,8 +21,8 @@ from __future__ import annotations
 # Bump the matching version on ANY template text change, then regenerate the
 # manifest + attestation (see backend/app/services/prompt_registry.py docstring).
 PROMPT_TEMPLATE_VERSIONS: dict[str, int] = {
-    "mcp.investigate_failure": 1,
-    "mcp.release_readiness_report": 2,
+    "mcp.investigate_failure": 2,
+    "mcp.release_readiness_report": 3,
     "mcp.weekly_quality_digest": 1,
     "mcp.flakiness_investigation": 1,
     "mcp.defect_triage_session": 1,
@@ -35,9 +35,9 @@ PROMPT_TEMPLATES: dict[str, str] = {
 You are a QA engineer investigating a test failure. Follow these steps exactly:
 
 1. Call `get_dashboard_metrics` with project_id="{project_id}" to understand current quality context.
-2. Call `search_tests` with the test_case_id="{test_case_id}" as the query to find the run context (get the run_id).
-3. Call `get_test_case` with the run_id and test_case_id="{test_case_id}" to read the full error message and labels.
-4. Call `trigger_ai_analysis` with test_case_id="{test_case_id}" to run the ReAct agent. Wait for the result.
+2. Confirm the run the test case belongs to. The run given for this investigation: run_id={run_id}. A test case ID does not identify its run, and no tool looks one up from the other (`search_tests` matches names, suites and error text, never an ID). If no run was given, stop here and ask the user for the run ID, or for the build so you can find the run with `list_test_runs` and the test with `list_test_cases`. Never guess a run.
+3. Call `get_test_case` with test_id="{test_case_id}" and the run_id from step 2 to read the full error message and labels. If the tool reports that the test case was not found, it is not in that run: stop and say so instead of trying other runs.
+4. Call `trigger_ai_analysis` with test_case_id="{test_case_id}" and the same run_id to run the ReAct agent. Wait for the result.
 5. If the analysis shows is_flaky=true, call `get_flaky_tests` with project_id="{project_id}" for flakiness context.
 6. If the analysis shows backend_error_found=true, note that Splunk log correlation was attempted.
 7. If the analysis shows pod_issue_found=true, note the infrastructure context.
@@ -57,19 +57,24 @@ Be concise and actionable. A developer should be able to read this in under 2 mi
 You are a QA lead preparing a release readiness report for version **{release_version}**.
 Run these steps in order, then compile the final report:
 
-1. Call `check_release_readiness` with project_id="{project_id}". It leads with any active release's stored gate verdict, which is the decision; the project readiness below it is a signal, not a release verdict.
-2. Call `get_dashboard_metrics` with project_id="{project_id}", days=7.
-3. Call `get_test_trends` with project_id="{project_id}", days=14 — look for trend direction.
-4. Call `get_failure_categories` with project_id="{project_id}", days=7 — categorise risk.
-5. Call `get_defects` with project_id="{project_id}", resolution_status="OPEN" — list blocking issues.
-6. Call `get_flaky_tests` with project_id="{project_id}", days=7 — identify risk from flakiness.
-7. Call `get_ai_analysis_summary` with project_id="{project_id}", days=7 — check triage coverage.
+1. Call `get_release_gate` with release="{release_version}", project="{project_id}", evaluate=False. This reads the stored gate of the release named {release_version} and records nothing. Its answer is the decision for this report:
+   - `evaluated: true`: use its `verdict`, `blockers`, `blocking_total`, `decided_at` and `release_id` as they are.
+   - `evaluated: false`: the decision is NOT EVALUATED. Do not put another release's verdict, or the project signal, in its place.
+   - `ok: false` (no release has that name, several share it, or "{release_version}" is the placeholder "next", which names no release): stop, show the names or candidates the tool returned, and ask the user which release they mean. Do not pick one.
+2. Call `check_release_readiness` with project_id="{project_id}" for context only: the project's readiness signal and its other in-progress releases. Their verdicts belong to those releases, not to {release_version}.
+3. Call `get_dashboard_metrics` with project_id="{project_id}", days=7.
+4. Call `get_test_trends` with project_id="{project_id}", days=14 — look for trend direction.
+5. Call `get_failure_categories` with project_id="{project_id}", days=7 — categorise risk.
+6. Call `get_defects` with project_id="{project_id}", resolution_status="OPEN" — list blocking issues.
+7. Call `get_flaky_tests` with project_id="{project_id}", days=7 — identify risk from flakiness.
+8. Call `get_ai_analysis_summary` with project_id="{project_id}", days=7 — check triage coverage.
 
 Produce a release readiness report with this structure:
 
 ---
 # Release Readiness Report — {release_version}
-**Decision: 🟢 GO / 🔴 NO-GO / ⚪ NOT EVALUATED** (the release gate's stored verdict; never your own)
+**Release:** [the name and `release_id` from step 1]
+**Decision: 🟢 GO / 🔴 NO-GO / ⚪ NOT EVALUATED** (the stored gate verdict of {release_version} from step 1, with when it was decided; never your own, never another release's, never the project signal)
 
 ## Quality Signal
 [Pass rate, trend, execution volume]
@@ -78,7 +83,7 @@ Produce a release readiness report with this structure:
 [Breakdown by failure category — what % are product bugs vs infra noise?]
 
 ## Blockers
-[List any explicit blockers with Jira ticket IDs if available]
+[The gate's blockers from step 1 first, then any other explicit blockers with Jira ticket IDs if available]
 
 ## Warnings
 [Items to monitor post-release]
@@ -305,10 +310,14 @@ outcome was recorded.""",
 }
 
 
+#: ``investigate_failure`` step 2 when the caller gave no run (TL-QA-09).
+RUN_NOT_GIVEN = "(none given)"
+
+
 def register(mcp) -> None:  # noqa: ANN001
 
     @mcp.prompt()
-    def investigate_failure(test_case_id: str, project_id: str) -> str:
+    def investigate_failure(test_case_id: str, project_id: str, run_id: str = "") -> str:
         """
         Full investigation workflow for a failing test case.
         Retrieves the error, triggers AI root-cause analysis, and summarises findings.
@@ -316,9 +325,13 @@ def register(mcp) -> None:  # noqa: ANN001
         Args:
             test_case_id: UUID of the failing test case.
             project_id: Project UUID the test belongs to.
+            run_id: UUID of the run the test case is in (from list_test_runs /
+                list_test_cases). Without it the workflow stops and asks for
+                the run: a test case ID alone does not identify one.
         """
         return PROMPT_TEMPLATES["mcp.investigate_failure"].format(
             test_case_id=test_case_id, project_id=project_id,
+            run_id=f'"{run_id.strip()}"' if run_id.strip() else RUN_NOT_GIVEN,
         )
 
     @mcp.prompt()
@@ -328,7 +341,10 @@ def register(mcp) -> None:  # noqa: ANN001
 
         Args:
             project_id: Project UUID.
-            release_version: Release label for the report header (e.g., "v2.4.0").
+            release_version: The release's exact name or version (e.g., "v2.4.0"),
+                or its id. The report's decision is that release's stored
+                gate verdict. The default "next" names no release, so the
+                workflow asks which one is meant.
         """
         return PROMPT_TEMPLATES["mcp.release_readiness_report"].format(
             project_id=project_id, release_version=release_version,

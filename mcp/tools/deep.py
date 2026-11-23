@@ -7,6 +7,9 @@ import json
 import client as api  # type: ignore[import]
 import untrusted  # type: ignore[import]
 
+#: ``get_deep_findings``: characters of a finding's root cause shown (the web UI has the rest).
+DEEP_ROOT_CAUSE_LIMIT = 300
+
 
 def register(mcp) -> None:  # noqa: ANN001
 
@@ -14,9 +17,20 @@ def register(mcp) -> None:  # noqa: ANN001
     async def trigger_deep_analysis(run_id: str) -> str:
         """
         Trigger the deep investigation pipeline for a test run.
-        Returns the queued task info. Poll pipeline_status for progress.
+        Returns the queued task, or the pipeline that is already running for
+        the run (nothing new is queued then). Poll get_pipeline_status for progress.
         """
         data = await api.post(api.path("/api/v1/deep-investigate/{run_id}", run_id=api.uuid_id(run_id)), json_body={"mode": "deep"})
+        data = data if isinstance(data, dict) else {}
+        if data.get("already_in_progress"):
+            # TL-QA-05: the API answered with the run's active pipeline and
+            # dispatched nothing. There is no task id, so none is shown.
+            return "\n".join(untrusted.with_notice([
+                f"Deep analysis is already in progress for run {run_id}; no new pipeline was started.",
+                f"Pipeline ID: {untrusted.short(data.get('pipeline_run_id'), limit=64, missing='not reported')}",
+                f"Message: {untrusted.inline(data.get('message'), missing='OK')}",
+                "Poll `get_pipeline_status` for its progress.",
+            ]))
         return "\n".join(untrusted.with_notice([
             f"Deep analysis queued for run {run_id}.",
             f"Task ID: {untrusted.short(data.get('task_id'), limit=64, missing='?')}",
@@ -78,11 +92,20 @@ def register(mcp) -> None:  # noqa: ANN001
         lines = [f"## Deep Findings ({len(findings)})"]
         for f in findings:
             lines.append(f"\n### Cluster: {untrusted.short(f.get('cluster_id'), limit=64, missing='?')}")
-            lines.append(
-                f"**Category:** {untrusted.short(f.get('failure_category'), missing='?')} "
-                f"| **Severity:** {untrusted.short(f.get('severity'), missing='?')}"
-            )
-            if f.get('root_cause_summary'):
+            # TL-QA-04: only what ``DeepFindingResponse`` carries. It has no
+            # severity, and its explanation is ``root_cause``.
+            facts = [f"**Category:** {untrusted.short(f.get('failure_category'), missing='not categorised')}"]
+            confidence = f.get("confidence_score")
+            if isinstance(confidence, (int, float)) and not isinstance(confidence, bool):
+                basis = untrusted.short(f.get("confidence_basis"), missing="")
+                facts.append(f"**Confidence:** {confidence:g}%" + (f" ({basis})" if basis else ""))
+            origin = untrusted.short(f.get("origin"), missing="")
+            if origin and origin != "unknown":
+                facts.append(f"**Origin:** {origin}")
+            lines.append(" | ".join(facts))
+            if str(f.get("root_cause") or "").strip():
                 # AI text written from test output: it can repeat what a report said.
-                lines.append(f"**Root Cause:** {untrusted.inline(f['root_cause_summary'], limit=300)}")
+                lines.append(f"**Root Cause:** {untrusted.inline(f['root_cause'], limit=DEEP_ROOT_CAUSE_LIMIT)}")
+            else:
+                lines.append("**Root Cause:** none recorded for this cluster.")
         return "\n".join(untrusted.with_notice(lines))
