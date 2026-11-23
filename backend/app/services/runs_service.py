@@ -398,9 +398,6 @@ def parse_run_list_order(order: str | None) -> str:
     return order
 
 
-RUN_STATUS_INVALID_DETAIL = "status must be one of " + ", ".join(s.value for s in LaunchStatus) + "."
-
-
 def parse_run_list_status(status: str | None) -> str | None:
     """``status`` before any database access: blank = no filter, else a ``LaunchStatus`` in any case.
 
@@ -413,8 +410,10 @@ def parse_run_list_status(status: str | None) -> str | None:
     wanted = (status or "").strip().upper()
     if not wanted:
         return None
-    if wanted not in {s.value for s in LaunchStatus}:
-        raise HTTPException(status_code=422, detail=RUN_STATUS_INVALID_DETAIL)
+    # Read here, not at import: tests load this module over a stubbed models module.
+    statuses = [s.value for s in LaunchStatus]
+    if wanted not in statuses:
+        raise HTTPException(status_code=422, detail="status must be one of " + ", ".join(statuses) + ".")
     return wanted
 
 
