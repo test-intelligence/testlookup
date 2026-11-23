@@ -1,4 +1,3 @@
-import { useEffect } from 'react'
 import { clsx } from 'clsx'
 import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
 
@@ -13,21 +12,33 @@ export function windowLabel(days: number): string {
  * The one time-window control (UX redesign P0), bound to the global
  * time-window store so a window chosen on one page follows the reader to the
  * next. A page with its own option set passes `options`; the stored window is
- * snapped to the nearest one, and written back so the page and the store agree.
+ * shown snapped to the nearest one.
+ *
+ * D-18: the snapped value is NOT written back. It was, on mount, so merely
+ * opening a page whose options lack the stored window (Trends, Live, Value
+ * metrics…) rewrote the setting for every other page. Each page already reads
+ * `snapToAllowed(storedDays, OPTIONS)` for its own requests; the store now
+ * changes only on a click.
+ *
+ * `value` shows a page-held window instead of the store's (Trends opens on its
+ * own 14 days without touching the setting); a click still calls `onChange`,
+ * which defaults to writing the store.
  */
 export default function WindowPicker({
   options = DEFAULT_WINDOW_OPTIONS,
   className,
+  value,
+  onChange,
 }: {
   options?: readonly number[]
   className?: string
+  value?: number
+  onChange?: (days: number) => void
 }) {
   const stored = useTimeWindowStore((s) => s.days)
   const setDays = useTimeWindowStore((s) => s.setDays)
-  const days = snapToAllowed(stored, options)
-  useEffect(() => {
-    if (days !== stored) setDays(days)
-  }, [days, stored, setDays])
+  const days = value ?? snapToAllowed(stored, options)
+  const choose = onChange ?? setDays
   return (
     <div role="radiogroup" aria-label="Time window" data-window-picker="" className={clsx('inline-flex items-center gap-1.5', className)}>
       {options.map((option) => {
@@ -39,7 +50,7 @@ export default function WindowPicker({
             role="radio"
             aria-checked={active}
             data-window={option}
-            onClick={() => setDays(option)}
+            onClick={() => choose(option)}
             className="inline-flex items-center rounded-full border px-2.5 py-1 text-sm transition-colors"
             style={{
               background: active ? 'color-mix(in srgb, var(--color-accent) 14%, transparent)' : 'transparent',

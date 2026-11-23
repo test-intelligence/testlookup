@@ -58,7 +58,14 @@ testlookup analytics chart --metric pass_rate --group-by day --group-by release 
 
 Output is a table, CSV or JSON. Chart reads are limited to 120 a minute per user; on a 429 the command says so and asks you to retry later.
 
-The CLI is installed from the repository (`pip install ./cli`); it is not published to a package index. Its full command reference, including `upload`, `runs`, `reviews` and the quarantine-aware CI gate `ci-verdict`, is in the repository's CLI README and operator guide (`cli/README.md`, `user-guide/cli-sdk-mcp.md`).
+The CLI is not published to a package index; this server serves it as a wheel, no login needed. `GET /api/v1/sdk/cli/info` names the file, then install it with pip:
+
+```bash
+curl -s https://testlookup.example.com/api/v1/sdk/cli/info
+pip install https://testlookup.example.com/api/v1/sdk/cli/testlookup_cli-0.4.0-py3-none-any.whl
+```
+
+Use the `filename` the first call returns; the version in it changes. If it answers `"available": false`, the server was built without the wheel: install from a clone of the repository instead (`pip install ./cli`). Its full command reference, including `upload`, `runs`, `reviews` and the quarantine-aware CI gate `ci-verdict`, is in the repository's CLI README and operator guide (`cli/README.md`, `user-guide/cli-sdk-mcp.md`).
 
 ## SDKs
 

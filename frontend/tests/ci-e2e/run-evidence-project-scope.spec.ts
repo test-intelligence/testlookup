@@ -63,7 +63,7 @@ function open(page: Page, projectId: string, pipelines: ApiHandler) {
 }
 
 async function expectTheRunsPipelines(page: Page) {
-  await expect(page.getByRole('heading', { level: 1, name: `Run #${RUN.build_number}` })).toBeVisible()
+  await expect(page.getByRole('heading', { level: 1, name: `Build ${RUN.build_number}` })).toBeVisible()
   await expect(pipelinePicker(page).locator('option')).toHaveCount(2)
   await expect(page.getByText(NEVER)).toHaveCount(0)
 }

@@ -25,10 +25,14 @@ get *more* accurate without knowing anything happened.
 Why the value needs bounding
 ----------------------------
 It arrives from a client, and a bad one is not a validation error — it is a
-run that vanishes. ``start_time`` drives the 30-day window every dashboard
-defaults to, so a timestamp far in the past silently removes the run from every
-default view, and one in the future pins it to the top of every ordering
-forever. Neither raises anything.
+run that vanishes. The run time ``coalesce(start_time, created_at)``
+(``services/run_time.py``, D-19) places a run in every chart bucket, in the
+window every dashboard defaults to (30 days) and in the runs-list window, so a
+timestamp far in the past silently removes the run from every default view, and
+one in the future would sit past the last day of every chart and on top of
+every ordering by execution time. Neither raises anything. (The runs list's
+``newest`` order and the "earlier run" comparisons still read ``created_at``:
+they mean "received", not "executed".)
 
 So the value is bounded rather than trusted, and the boundary is deliberately
 asymmetric:

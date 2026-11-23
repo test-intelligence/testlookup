@@ -2,7 +2,7 @@
 import asyncio
 import json
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import List, Optional
@@ -177,6 +177,76 @@ def _validate_format(value: str) -> str:
     return value
 
 
+#: How far back the server accepts an execution time (``MAX_BACKDATE`` in
+#: ``backend/app/services/execution_time.py``); older is replaced by the upload time.
+EXECUTED_AT_MAX_AGE_DAYS = 365
+
+_EXECUTED_AT_HELP = (
+    "When the tests ran, ISO 8601 (2026-11-20T14:05:00Z, 2026-11-20T14:05:00+01:00 or 2026-11-20); "
+    "places the run on that day in charts and windows instead of the upload day. A time without a zone is UTC"
+)
+
+
+def _validate_executed_at(value: str | None) -> str | None:
+    """Parse ``--executed-at`` locally and send it normalised, or refuse it before any upload (D-19).
+
+    A value the server cannot parse is a 422 after the file went over the wire;
+    one it can parse but considers implausible (in the future, or more than a
+    year back) is silently replaced by the upload time. Both are said here.
+    """
+    if value is None:
+        return None
+    try:
+        when = datetime.fromisoformat(value.strip())
+    except ValueError:
+        raise typer.BadParameter(
+            f"{value!r} is not an ISO 8601 date-time. Use for example 2026-11-20T14:05:00Z, "
+            "2026-11-20T14:05:00+01:00 or 2026-11-20."
+        ) from None
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=UTC)
+    now = datetime.now(UTC)
+    if when > now + timedelta(minutes=5):
+        raise typer.BadParameter(f"{value!r} is in the future; the server would replace it with the upload time.")
+    if now - when > timedelta(days=EXECUTED_AT_MAX_AGE_DAYS):
+        raise typer.BadParameter(
+            f"{value!r} is more than {EXECUTED_AT_MAX_AGE_DAYS} days ago; "
+            "the server would replace it with the upload time."
+        )
+    return when.isoformat()
+
+
+#: What became of the supplied commit range (S-C-5), from the upload status.
+_COMMIT_RANGE_OUTCOME = {
+    "stored": "stored",
+    "truncated": "stored, but cut to the first commits the server keeps",
+    "ignored_malformed": "ignored: the server could not read it",
+    "store_failed": "not stored: the server failed to save it (the results were ingested)",
+}
+
+
+def _print_commit_range_outcome(data: dict, *, name: str | None = None, quiet_when_stored: bool = False) -> None:
+    """Say what became of the commit range, when the upload status reports it (S-C-5).
+
+    The server reports it only after ingestion (``--wait``) and only when the
+    upload carried a range. ``upload dir`` passes ``quiet_when_stored`` so N
+    files do not print N identical "stored" lines.
+    """
+    result = data.get("result")
+    outcome = result.get("commit_range") if isinstance(result, dict) else None
+    if not isinstance(outcome, str) or not outcome:
+        return
+    where = f" ({name})" if name else ""
+    text = f"Commit range{where}: {_COMMIT_RANGE_OUTCOME.get(outcome, outcome)}"
+    if outcome == "stored":
+        if not quiet_when_stored:
+            output.print_success(text)
+    elif outcome in ("ignored_malformed", "store_failed"):
+        output.print_warning(f"{text}. Suspects and bisect cannot use it for this run.")
+    else:
+        output.print_warning(text)
+
+
 @upload_app.command("file")
 def upload_file(
     path: Path = typer.Argument(..., exists=True, readable=True, help="Path to test result file"),
@@ -200,6 +270,9 @@ def upload_file(
     ),
     environment: Optional[str] = typer.Option(
         None, "--environment", help="Environment the run executed against (e.g. staging)",
+    ),
+    executed_at: str | None = typer.Option(
+        None, "--executed-at", help=_EXECUTED_AT_HELP, callback=_validate_executed_at,
     ),
     run_context_root: Optional[str] = typer.Option(None, "--run-context-root", help=_RUN_CONTEXT_ROOT_HELP),
     no_run_context: bool = typer.Option(
@@ -252,12 +325,15 @@ def upload_file(
     configuration drift; nothing is fetched over the network, and this CLI's
     own Python is never recorded as the tests' runtime. --no-run-context (or
     TESTLOOKUP_RUN_CONTEXT=0) sends none. --environment labels the run;
-    --no-ai skips its AI analysis.
+    --no-ai skips its AI analysis. --executed-at says when the tests ran, so a
+    report uploaded later (a backfill, last night's job) lands on that day in
+    charts and windows; it is checked here before anything is sent.
 
     The file is parsed and ingested asynchronously on the server.
     AI analysis is triggered automatically after ingestion completes.
     ``--wait`` waits for that outcome and exits non-zero when the server
-    refuses the report (over the result cap, unparseable, empty). While it
+    refuses the report (over the result cap, unparseable, empty), and says
+    what became of the commit range (stored, ignored, not stored). While it
     waits, a 429, a 5xx or a dropped connection only means "not yet", until
     --wait-timeout. An upload that meets a 429 or 503 is retried, honouring
     Retry-After, for up to five minutes.
@@ -268,6 +344,7 @@ def upload_file(
         testlookup upload file results.xml -p <project-id> -b build-42 --pr-number 421
         testlookup upload file results.xml -p <project-id> -b build-42 --commit-range-base origin/main
         testlookup upload file results.xml -p <project-id> -b build-42 --runtime java=21.0.2 --environment staging --no-ai
+        testlookup upload file results.xml -p <project-id> -b build-41 --executed-at 2026-11-20T23:10:00Z
     """
     try:
         commit_range = resolve_commit_range(
@@ -285,6 +362,7 @@ def upload_file(
             commit_range=commit_range,
             format=format, profile_name=profile_name,
             run_context=run_context, environment=environment, run_ai=not no_ai,
+            executed_at=executed_at,
         ))
         if wait:
             data = _outcome(data, asyncio.run(_wait_for_upload(
@@ -299,6 +377,7 @@ def upload_file(
             run_id = data.get("run_id", "?")
             verb = "Ingested" if data.get("state") == "succeeded" else "Ingestion queued"
             output.print_success(f"{verb} — run_id={run_id}")
+            _print_commit_range_outcome(data)
     except Exception as e:
         output.print_error(str(e))
         raise typer.Exit(exit_code_for(e))
@@ -327,6 +406,9 @@ def upload_dir(
     ),
     environment: Optional[str] = typer.Option(
         None, "--environment", help="Environment the run executed against (e.g. staging)",
+    ),
+    executed_at: str | None = typer.Option(
+        None, "--executed-at", help=_EXECUTED_AT_HELP, callback=_validate_executed_at,
     ),
     run_context_root: Optional[str] = typer.Option(None, "--run-context-root", help=_RUN_CONTEXT_ROOT_HELP),
     no_run_context: bool = typer.Option(
@@ -401,6 +483,7 @@ def upload_dir(
                 commit_range=commit_range,
                 format=format, profile_name=profile_name,
                 run_context=run_context, environment=environment, run_ai=not no_ai,
+                executed_at=executed_at,
             ))
             results.append(data)
             names.append(f.name)
@@ -425,6 +508,8 @@ def upload_dir(
                     deadline=deadline,
                 )))
                 _raise_if_refused(data)
+                if output_format not in ("json", "yaml"):
+                    _print_commit_range_outcome(data, name=name, quiet_when_stored=True)
             except UploadNotFinished as e:
                 output.print_error(f"Not finished: {name} — {e}")
                 data = {**data, "state": e.state}
@@ -473,6 +558,7 @@ def _build_form_data(
     run_context: Optional[dict] = None,
     environment: Optional[str] = None,
     run_ai: bool = True,
+    executed_at: str | None = None,
 ) -> dict:
     """Assemble the multipart form fields for POST /api/v1/ingest/file.
 
@@ -515,6 +601,10 @@ def _build_form_data(
         form_data["environment"] = environment
     if not run_ai:
         form_data["run_ai"] = "false"
+    if executed_at:
+        # The form's existing field (D-19): the run's execution time, so charts
+        # and windows place it on the day it ran, not the day it was uploaded.
+        form_data["executed_at"] = executed_at
 
     return form_data
 
@@ -537,6 +627,7 @@ async def _upload_file(
     run_context: Optional[dict] = None,
     environment: Optional[str] = None,
     run_ai: bool = True,
+    executed_at: str | None = None,
 ) -> dict:
     """Upload a single file via multipart POST to /api/v1/ingest/file.
 
@@ -556,6 +647,7 @@ async def _upload_file(
         pr_number=pr_number, ci_actor=ci_actor, ci_run_url=ci_run_url,
         commit_range=commit_range, format=format,
         run_context=run_context, environment=environment, run_ai=run_ai,
+        executed_at=executed_at,
     )
 
     started = _clock()
@@ -605,7 +697,7 @@ async def _upload_file(
                     )
                     raise map_http_error(resp.status_code, f"{detail}{gave_up}")
 
-                return resp.json()
+                return client._json_body(resp)
     except httpx.RequestError as exc:
         # Server unreachable / DNS failure / timeout on the primary ingest path
         # (the first thing a new self-hoster runs) — give an actionable hint
@@ -689,7 +781,7 @@ async def _wait_for_upload(
                         code, f"while waiting for upload {task_id}: {detail}"
                     )
                 else:
-                    status = resp.json()
+                    status = client._json_body(resp)
                     if status.get("state") in TERMINAL_UPLOAD_STATES:
                         return status
                     state, problem = status.get("state", "pending"), None

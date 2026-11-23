@@ -29,7 +29,7 @@ export type AnchorClass = (typeof ANCHOR_CLASSES)[number]
 export const TEST_OUTCOMES = ['pass', 'fail', 'untested'] as const
 export type TestOutcome = (typeof TEST_OUTCOMES)[number]
 
-export const COMPARE_STATES = ['fetched', 'unavailable', 'timed_out', 'not_attempted'] as const
+export const COMPARE_STATES = ['fetched', 'supplied', 'unavailable', 'timed_out', 'not_attempted'] as const
 export type CompareState = (typeof COMPARE_STATES)[number]
 
 /** `compare.reason` when not fetched: the six git-host reasons (`COMMIT_RANGE_REASON_TEXT`), then bisect's own. */
@@ -51,6 +51,7 @@ export const BISECT_SENTENCES = {
   cache_unavailable: 'The commit list is not fetched right now (the cache is unavailable). The two builds above are exact.',
   timed_out: 'The commit list did not arrive within 8 seconds.',
   fetch_failed: 'The git host refused or failed the compare; the two builds above are exact.',
+  supplied: 'Offline: these are the commits the CI supplied with the builds after the last pass, up to the first failure.',
   merge_caveat: "Compared as the git host's {good_sha}...{bad_sha} (commits reachable from the failure and not from the pass): with merges or a rebase this is not a straight line.",
 } as const
 export type BisectSentenceKey = keyof typeof BISECT_SENTENCES
@@ -203,7 +204,7 @@ function parseCompare(raw: unknown): BisectCompare {
     cached: raw.cached === true,
     commit_count: isNum(raw.commit_count) ? raw.commit_count : commits.length,
     truncated: raw.truncated === true,
-    commits: raw.state === 'fetched' ? commits : [],
+    commits: raw.state === 'fetched' || raw.state === 'supplied' ? commits : [],
     has_location_signal: raw.has_location_signal === true,
     caveat: strOrNull(raw.caveat),
     run_level_commit_count: runLevel,

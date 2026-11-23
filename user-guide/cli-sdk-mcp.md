@@ -8,7 +8,7 @@ Three programmatic surfaces wrap the same REST API the dashboard uses. Pick by c
 | [Reporter SDKs](#the-sdks) | Test frameworks streaming results live (Python, Java, JS/TS, Go) | [client/README.md](../client/README.md) and the per-SDK READMEs below |
 | [MCP server](#the-mcp-server) | AI assistants and agents (Claude Desktop, Claude Code, Cursor, agent frameworks) | [mcp/README.md](../mcp/README.md) |
 
-None of them is published to a package registry: install each from a clone of the repository (`https://github.com/test-intelligence/testlookup`).
+None of them is published to a package registry. A TestLookup deployment serves the CLI as a wheel (see [The CLI](#the-cli)); everything else installs from a clone of the repository (`https://github.com/test-intelligence/testlookup`).
 
 They do not authenticate the same way:
 
@@ -20,7 +20,15 @@ They do not authenticate the same way:
 
 ## The CLI
 
-Install from the repository root with `pip install ./cli` (Python 3.11 or newer). The console script is `testlookup`. Every group has `--help`:
+The CLI needs Python 3.11 or newer. Install the wheel your deployment serves (no login needed; the file name carries the version):
+
+```bash
+curl -s https://testlookup.example.com/api/v1/sdk/cli/info
+# {"available": true, "version": "0.4.0", "filename": "testlookup_cli-0.4.0-py3-none-any.whl", "download_url": "/api/v1/sdk/cli/testlookup_cli-0.4.0-py3-none-any.whl"}
+pip install https://testlookup.example.com/api/v1/sdk/cli/testlookup_cli-0.4.0-py3-none-any.whl
+```
+
+`"available": false` means the deployment was built without the wheel (images built by CI and `k3ssetup/deploy-k3s.sh` include it). Then install from a clone of the repository instead: `pip install ./cli` from the repository root. The console script is `testlookup`. Every group has `--help`:
 
 | Group | Subcommands | What it does |
 |---|---|---|
@@ -28,7 +36,7 @@ Install from the repository root with `pip install ./cli` (Python 3.11 or newer)
 | `doctor` | (run as `testlookup doctor`) | One verdict on profile, server reachability and build, and credentials; usable as a CI preflight |
 | `health` | (run as `testlookup health`) | Server readiness (`GET /health/ready`) with per-dependency detail |
 | `projects` | `list`, `get`, `export`, `import` | List and inspect projects; export a project's settings and test catalog as a signed ZIP, import one as a new project |
-| `runs` | `list`, `get`, `timing` | List runs (filter by project and status) and inspect one; how long a run took and where the time went |
+| `runs` | `list`, `get`, `timing` | List runs (filter by project and status; the last 30 days unless `--days` says otherwise, `--days 0` for all time) and inspect one; how long a run took and where the time went |
 | `tests` | `list <run-id>`, `get <run-id> <test-id>` | A run's test cases; one test case, with `--show-steps` for its step tree |
 | `cases` | `list`, `get <id>`, `history <id>`, `export -o <file.xlsx>` | A project's authored test cases from Test Management, read-only: the list with its filters (`--project` required), one case with its steps (a `TC-` short id works with `--project`), its saved versions, the Excel export. See [Test management](test-management.md) |
 | `search` | (run as `testlookup search "<query>"`) | Global search across tests, runs, suites, defects and more |
@@ -49,15 +57,15 @@ Install from the repository root with `pip install ./cli` (Python 3.11 or newer)
 | `investigations` | `start <run-id>`, `list`, `show <id>` | Deep investigations: start one for a run, a project's list, one investigation's cause and confidence |
 | `activity` | `list`, `show`, `types`, `export` | A project's activity ledger, newest first; one event's before/after diff; the event vocabulary; CSV / NDJSON export (QA lead) |
 
-Upload syntax: `testlookup upload file results.xml --project <project-uuid> --build <build-id>`. `--project` is the project's UUID; `--format` defaults to `auto` (detected from the content) and accepts `junit`, `testng`, `allure`, `cypress`, `playwright`, `pytest`, `robot`, `cucumber`, `nunit`, `trx` and `xunit`. Add `--wait` to wait for ingestion and fail the step when the server refuses the report.
+Upload syntax: `testlookup upload file results.xml --project <project-uuid> --build <build-id>`. `--project` is the project's UUID; `--format` defaults to `auto` (detected from the content) and accepts `junit`, `testng`, `allure`, `cypress`, `playwright`, `pytest`, `robot`, `cucumber`, `nunit`, `trx` and `xunit`. Add `--wait` to wait for ingestion and fail the step when the server refuses the report; it also says whether the commit range was stored. Add `--executed-at 2026-11-20T23:10:00Z` (ISO 8601; no zone means UTC) when the report is uploaded later than it ran, so charts and windows place the run on the day it ran.
 
-`ci-verdict` does not read the release-gate verdict. `testlookup ci-verdict --run <run-id>` compares the run's `FAILED` and `BROKEN` tests with the project's quarantine manifest and exits **0** when every failure is quarantined (or there are none), **1** on any real (non-quarantined) failure, or on any failure with `--strict`, and **2** on an API or network error, when the run reports no tests, or when the run is still in progress after `--timeout-seconds`. It fails closed; `--fail-open` turns infrastructure errors into exit 0 with a warning. Details: [Flaky tests](flaky-tests.md#gating-ci-on-real-failures-only-testlookup-ci-verdict).
+`ci-verdict` does not read the release-gate verdict. `testlookup ci-verdict <run-id>` (or `--run <run-id>`; both work) compares the run's `FAILED` and `BROKEN` tests with the project's quarantine manifest and exits **0** when every failure is quarantined (or there are none), **1** on any real (non-quarantined) failure, or on any failure with `--strict`, and **2** on an API or network error, when the run reports no tests, or when the run is still in progress after `--timeout-seconds`. It fails closed; `--fail-open` turns infrastructure errors into exit 0 with a warning. Details: [Flaky tests](flaky-tests.md#gating-ci-on-real-failures-only-testlookup-ci-verdict).
 
 AI history: `testlookup ai-history <run-id>` lists one row per stored version of the run's AI analysis (`v3  2026-10-14 10:00  llm llama3.1  NO_GO risk 72  failing 7`), newest first; `--kind summary` lists the run-summary versions; `--diff A..B` (A a version number; B a number, `latest` or `live` for the current data) prints what changed, the analysis engine first, because a category change between a rules version and an LLM version may reflect the engine rather than the product. `testlookup compare-ai <run-id>` compares the run with the newest completed run of the same suite on the same branch (`--baseline <run-id>` picks another) and prints, for example, `vs #1233 (checkout · main): verdict GO → NO_GO · new root causes 1 · resolved 1 · 3 tests changed category`, then the summary, labelled `deterministic summary` when no LLM wrote it. `--fail-on-verdict-regression` exits **8** when the AI verdict got worse; when there is no previous run, or a side has no AI analysis, it warns and exits 0, because it cannot judge. Both take `--json` for the REST body.
 
 Compliance packs: `testlookup compliance-pack verify pack.zip --public-key testlookup-compliance-k-1a2b3c4d5e6f7a8b.pem --manifest-sha256 <digest>` checks a pack you downloaded without contacting any server: each file against `manifest.json`, the manifest against the digest the server recorded (`--manifest-sha256`, the pack row's `manifest_sha256`; skipped when not given), and `signature.json` against the public key (the PEM from **Public key** on the pack, or `GET /api/v1/compliance-packs/signing-keys/{key id}/pem`). It prints `OK: signature valid (key k-1a2b3c4d5e6f7a8b), 12/12 files match`, `OK: 12/12 files match; the pack is unsigned (tamper-evident only)`, `OK: 12/12 files match; signature not checked (no --public-key)`, or one `TAMPERED: …` line per problem (`TAMPERED: decision.json does not match the manifest`, `TAMPERED: the pack is signed by key k-…, but --public-key is k-…`). Exit **0** verified, **1** tampered, an invalid signature or the wrong key, **2** a file it cannot read. Offline it cannot know a pack was meant to be signed, so `--require-signature` turns an unsigned pack into exit 1; `--json` prints the whole verification. What the signature does and does not prove: [Compliance & governance](compliance.md#how-a-pack-proves-it-hasnt-been-altered).
 
-The CLI has its own configuration and does not read `testlookup.properties` or `testlookup.yaml`. It keeps saved profiles in `profiles.json` in the per-user config directory. When the selected profile (`--profile`, else `TESTLOOKUP_PROFILE`, else the profile `auth login` made active, else `default`) is not saved there, it falls back to `TESTLOOKUP_URL` (default `http://localhost:8000`) and `TESTLOOKUP_API_KEY`. A saved profile wins over those variables. The full reference, including exit codes, CI-context detection and the analytics flags, is [cli/README.md](../cli/README.md).
+The CLI has its own configuration and does not read `testlookup.properties` or `testlookup.yaml`. It keeps saved profiles in `profiles.json` in the per-user config directory. When the selected profile (`--profile`, else `TESTLOOKUP_PROFILE`, else the profile `auth login` made active, else `default`) is not saved there, it falls back to `TESTLOOKUP_URL` (default `http://localhost:8000`) and `TESTLOOKUP_API_KEY`. A saved profile wins over those variables; when they are set and a saved profile is used anyway, the CLI prints one warning on stderr naming them (`Using saved profile 'default'; TESTLOOKUP_API_KEY is set and ignored.`). On a reused CI runner, set `TESTLOOKUP_PROFILE` to a name that is not saved (for example `env`) so the variables are used. The full reference, including exit codes, CI-context detection and the analytics flags, is [cli/README.md](../cli/README.md).
 
 The bread-and-butter CI pattern is in [Getting results in](getting-results-in.md#3-cli). For blocking a deploy on the release-gate decision (GO / NO_GO), see [Release gates](release-gates.md#gating-a-ci-pipeline); for letting known-flaky failures through, [`ci-verdict`](flaky-tests.md#gating-ci-on-real-failures-only-testlookup-ci-verdict).
 

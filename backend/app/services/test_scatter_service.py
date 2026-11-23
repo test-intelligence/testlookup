@@ -7,7 +7,8 @@ rate and executions would come back for three different sets of tests); it is
 its own per-test aggregate, answered as contract C3 kind ``points``.
 
 **One pass, one population.** A single ``GROUP BY tc.test_fingerprint`` over
-the chart's population (window on the run's ``created_at``, the tenant,
+the chart's population (window on the run's run time, start_time else
+``created_at``, the tenant,
 release and suite fragments of ``analytics_scope``) yields every number: the
 executions, the evaluated executions, the failures, the timed executions and
 the p95. The points, the exclusion counts and the qualifying total come out of
@@ -59,6 +60,7 @@ from app.services.analytics_scope import (
     suite_filter_sql,
 )
 from app.services.analytics_service import _tenant_filter as tenant_filter_sql
+from app.services.run_time import RUN_TIME_SQL
 
 logger = structlog.get_logger(__name__)
 
@@ -157,7 +159,7 @@ def build_statement(
                 PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY tc.duration_ms)
                     FILTER (WHERE tc.duration_ms IS NOT NULL) AS p95
             FROM test_cases tc JOIN test_runs tr ON tr.id = tc.test_run_id
-            WHERE tr.created_at >= :period_start
+            WHERE {RUN_TIME_SQL} >= :period_start
               {tenant}
               {release_filter_sql(params, scope.release_arg)}
               {suite_filter_sql(params, scope.suite_arg)}
@@ -293,7 +295,10 @@ def definitions(spec: ScatterSpec) -> dict:
                else "executed (executions, then failures)")
             + ", ties by fingerprint; meta.truncated_total is how many qualified."
         ),
-        "window": "The run's created_at on or after the window start (UTC midnight), as on every chart.",
+        "window": (
+            "The run's run time (start_time, else created_at) on or after the "
+            "window start (UTC midnight), as on every chart."
+        ),
         "in_progress": "In-progress runs are included, as everywhere else in the product.",
     }
 

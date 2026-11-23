@@ -1332,12 +1332,32 @@ def ingest_uploaded_results(
     """
     Process a JSON batch of test results from POST /api/v1/ingest.
     Creates a TestRun, upserts test cases, runs post-ingestion pipeline.
+
+    D-69: writes the upload status the router seeded (ingesting, then
+    succeeded with the summary, or failed). D-05 / S-C-6: a refusal that a
+    retry cannot change (a deleted run, a missing project, an unreadable
+    batch) is terminal: no retry, a failed status, a ``run.ingest_failed``
+    activity, and the queued batch object is deleted. A transient failure is
+    retried, and reported the same way once the retries are spent.
     """
+    from app.services import upload_status
     from app.services.ingestion_pipeline import (
         create_run_from_payload,
         finalize_run,
         ingest_test_results,
     )
+    from app.services.report_timings import to_utc
+
+    task_id = self.request.id
+
+    def _project_id() -> str | None:
+        return str(payload["project_id"]) if isinstance(payload, dict) and payload.get("project_id") else None
+
+    async def _set_status(state: str, **fields) -> None:
+        if task_id:  # a direct call (no Celery request) has no status record
+            await upload_status.set_status(
+                task_id, run_id=run_id, project_id=_project_id(), state=state, **fields,
+            )
 
     async def _run():
         from app.db.postgres import AsyncSessionLocal
@@ -1349,10 +1369,15 @@ def ingest_uploaded_results(
             payload = json.loads(raw_payload)
         if not payload:
             raise ValueError("Uploaded batch payload is missing")
+        if not isinstance(payload, dict):
+            raise ValueError("Uploaded batch payload is not a JSON object")
         # A NUL in a run-level field (build number, branch) failed the run
         # INSERT and lost the whole batch; PostgreSQL text cannot hold U+0000.
         from app.services.ingestion_sanitization import strip_nul_bytes
         payload = strip_nul_bytes(payload)
+        await _set_status(
+            upload_status.STATE_INGESTING, progress={"total": len(payload.get("results") or [])},
+        )
 
         async with AsyncSessionLocal() as db:
             try:
@@ -1374,6 +1399,9 @@ def ingest_uploaded_results(
                     ci_run_url=payload.get("ci_run_url"),
                     jenkins_job=payload.get("jenkins_job"),
                     environment=payload.get("environment"),
+                    # D-19: the batch's execution time (ISO text in the stored
+                    # batch), bounded into start_time like the file route's.
+                    executed_at=to_utc(payload.get("executed_at")),
                     commit_range=payload.get("commit_range"),
                     # FAIL-13: the REDACTED form the router's schema stored;
                     # re-validated (fill-if-null) by create_run_from_payload.
@@ -1410,12 +1438,46 @@ def ingest_uploaded_results(
             # W23d (0.8): ``run_ai: false`` stages no AI pipeline (the upload's rule).
             run_ai=payload.get("run_ai", True),
         )
-        if payload_storage_key:
-            try:
-                from app.db.storage import get_storage_provider
-                await get_storage_provider().delete_object(payload_storage_key)
-            except Exception as exc:  # noqa: BLE001 — cleanup is best effort
-                logger.warning("queued_batch_cleanup_failed key=%s error=%s", payload_storage_key, exc)
+        if count == 0:
+            # Every row was refused: "succeeded, 0 tests" would read as a pass.
+            await _fail_batch("ingest_error", "The batch arrived but no test results could be stored.")
+            return
+        await _delete_queued_batch(payload_storage_key)
+        await _set_status(
+            upload_status.STATE_SUCCEEDED,
+            result=_summarize_upload(
+                ingested=count,
+                attempted=getattr(run, "ingestion_attempted_tests", None) or count,
+                rejected=getattr(run, "ingestion_rejected_tests", None) or 0,
+                status_counts=getattr(run, "_ingestion_accepted_status_counts", None) or {},
+                commit_range=_commit_range_status(run),
+            ),
+        )
+
+    async def _fail_batch(code: str, message: str) -> None:
+        """The batch's terminal failure, where its sender and the project can see it."""
+        if task_id:
+            project_id = _project_id()
+            if project_id is None:
+                # The batch itself could not be read: the router's seed has the project.
+                seeded = await upload_status.get_status(task_id) or {}
+                project_id = seeded.get("project_id")
+            await upload_status.set_status(
+                task_id, run_id=run_id, project_id=project_id,
+                state=upload_status.STATE_FAILED, error={"code": code, "message": message},
+            )
+        else:
+            project_id = _project_id()
+        if project_id:
+            await _record_worker_activity(
+                "run.ingest_failed",
+                project_id=project_id,
+                run_id=run_id,
+                build_number=payload.get("build_number") if isinstance(payload, dict) else None,
+                actor_ref="batch_ingestion",
+                context={"error": code, "source": "json_batch"},
+            )
+        await _delete_queued_batch(payload_storage_key)
 
     logger.info("[Task %s] Processing uploaded batch: run=%s", self.request.id, run_id)
     try:
@@ -1424,9 +1486,54 @@ def ingest_uploaded_results(
             reindex_search.apply_async(kwargs={"full": False}, countdown=5)
         except Exception:
             pass
+    except _BATCH_TERMINAL_ERRORS as exc:
+        # A retry meets the same refusal: report it once and stop (D-05, S-C-6).
+        code, message = _batch_refusal(exc)
+        logger.warning("[Task %s] Batch ingest refused (%s): %s", self.request.id, code, exc)
+        try:
+            _run_async(_fail_batch(code, message))
+        except Exception as report_exc:  # noqa: BLE001 — reporting never re-queues the batch
+            logger.warning("[Task %s] Batch refusal report failed: %s", self.request.id, report_exc)
     except Exception as exc:
         logger.error("[Task %s] Batch ingest failed: %s", self.request.id, exc, exc_info=True)
+        if self.request.retries >= self.max_retries:
+            # Retries spent: this raise is the last one, so say so now.
+            try:
+                _run_async(_fail_batch(
+                    "infra_error", "Ingestion failed after retries. Please send the results again.",
+                ))
+            except Exception as report_exc:  # noqa: BLE001
+                logger.warning("[Task %s] Batch failure report failed: %s", self.request.id, report_exc)
         raise self.retry(exc=exc, countdown=_exponential_backoff(self.request.retries))
+
+
+#: JSON-batch failures a retry cannot change (S-C-6). ``RunTombstoned`` is a
+#: ``ValueError``; so are a missing project, an unreadable batch and a bad id.
+_BATCH_TERMINAL_ERRORS = (ValueError, KeyError, TypeError)
+
+
+def _batch_refusal(exc: BaseException) -> tuple[str, str]:
+    """The failed-status ``(code, message)`` for a terminal batch refusal."""
+    from app.services.ingestion_pipeline import RunTombstoned
+
+    if isinstance(exc, RunTombstoned):
+        return (
+            RunTombstoned.code,
+            "This build was deleted from the project and is not accepted again. "
+            "Send the results under a new build number.",
+        )
+    return "invalid_batch", f"The batch could not be ingested: {str(exc)[:300]}"
+
+
+async def _delete_queued_batch(storage_key: str | None) -> None:
+    """Remove a JSON batch's queued object once nothing will read it. Never raises."""
+    if not storage_key:
+        return
+    try:
+        from app.db.storage import get_storage_provider
+        await get_storage_provider().delete_object(storage_key)
+    except Exception as exc:  # noqa: BLE001 — cleanup is best effort
+        logger.warning("queued_batch_cleanup_failed key=%s error=%s", storage_key, exc)
 
 
 @celery_app.task(
@@ -1464,6 +1571,9 @@ def ingest_uploaded_file(
     # FAIL-13: the run context, already validated + redacted by the router.
     # Defaulted so a task queued before the deploy still binds.
     run_context: dict | None = None,
+    # S-C-5: the router cut the supplied commit list to its cap. Sent only when
+    # true; the upload status then reports ``commit_range: "truncated"``.
+    commit_range_truncated: bool = False,
 ):
     """
     Parse an uploaded test result file and ingest.
@@ -1668,6 +1778,7 @@ def ingest_uploaded_file(
             attempted=run.ingestion_attempted_tests,
             rejected=run.ingestion_rejected_tests,
             status_counts=getattr(run, "_ingestion_accepted_status_counts", {}),
+            commit_range=_commit_range_status(run, truncated=commit_range_truncated),
         )
         await upload_status.set_status(
             task_id, run_id=run_id, project_id=project_id,
@@ -1876,14 +1987,18 @@ def _summarize_upload(
     attempted: int,
     rejected: int,
     status_counts: dict[str, int],
+    commit_range: str | None = None,
 ) -> dict:
     """Build the SUCCEEDED-status result summary.
 
     Every count describes accepted rows. The former implementation counted
     statuses across parsed rows while reporting an accepted-only total, so one
     rejected result could make the breakdown add up to more than ``total``.
+
+    ``commit_range`` (S-C-5) is present only when the upload supplied one:
+    ``stored``, ``truncated``, ``ignored_malformed`` or ``store_failed``.
     """
-    return {
+    summary: dict[str, Any] = {
         "total": ingested,
         "attempted": attempted,
         "rejected": rejected,
@@ -1894,6 +2009,23 @@ def _summarize_upload(
         "broken": status_counts.get("BROKEN", 0),
         "unknown": status_counts.get("UNKNOWN", 0),
     }
+    if commit_range:
+        summary["commit_range"] = commit_range
+    return summary
+
+
+def _commit_range_status(run: Any, *, truncated: bool = False) -> str | None:
+    """What became of the upload's supplied commit range (S-C-5), or None.
+
+    ``create_run_from_payload`` leaves the outcome on the run; a range that was
+    stored after the router cut it reads ``truncated``.
+    """
+    from app.services.ingestion_pipeline import COMMIT_RANGE_STORED
+
+    outcome = getattr(run, "_commit_range_outcome", None)
+    if outcome == COMMIT_RANGE_STORED and truncated:
+        return "truncated"
+    return outcome
 
 
 def _parse_file_to_results(

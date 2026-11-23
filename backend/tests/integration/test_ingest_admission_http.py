@@ -73,16 +73,16 @@ def downstream():
         async def get_object_content(self, key, bucket=None):
             return self.last[1]
 
-    def _delay(*_args, **_kwargs):
+    def _batch_apply_async(*, kwargs, task_id):
         queued.append("batch")
-        return SimpleNamespace(id="task-batch-1")
+        return SimpleNamespace(id=task_id)
 
     def _apply_async(*, kwargs, task_id):
         queued.append("file")
         return SimpleNamespace(id=task_id)
 
     batch_task = AsyncMock()
-    batch_task.delay = _delay
+    batch_task.apply_async = _batch_apply_async
     file_task = AsyncMock()
     file_task.apply_async = _apply_async
 

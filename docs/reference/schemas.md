@@ -21855,6 +21855,19 @@ These are the full generated JSON Schema definitions, including required fields,
       ],
       "title": "Environment"
     },
+    "executed_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "description": "When the tests ran (ISO-8601). Omit it and the time the results arrive is used.",
+      "title": "Executed At"
+    },
     "framework": {
       "anyOf": [
         {

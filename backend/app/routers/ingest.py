@@ -165,11 +165,40 @@ async def ingest_batch(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Upload storage is temporarily unavailable",
         ) from exc
-    task = ingest_uploaded_results.delay(
-        run_id=run_id,
-        payload_storage_key=batch_storage_key,
-        user_id=str(current_user.id),
+
+    # D-69: the same lifecycle as ingest_file. Allocate the task id and seed
+    # "pending" before publishing, so GET /ingest/uploads/{task_id} finds the
+    # batch from the first poll; the worker advances it to ingesting and then
+    # succeeded or failed. Seeding first means a fast worker cannot finish
+    # before this request writes "pending".
+    from app.services import upload_status
+
+    task_id = str(uuid.uuid4())
+    await upload_status.set_status(
+        task_id, run_id=run_id, project_id=str(target_project_id),
+        state=upload_status.STATE_PENDING,
     )
+    try:
+        ingest_uploaded_results.apply_async(
+            kwargs=dict(
+                run_id=run_id,
+                payload_storage_key=batch_storage_key,
+                user_id=str(current_user.id),
+            ),
+            task_id=task_id,
+        )
+    except Exception as exc:  # noqa: BLE001 — normalize broker errors for clients
+        await upload_status.clear_pending_status(task_id)
+        # Nothing will read the stored batch now (S-C-6): do not leave it behind.
+        try:
+            await get_storage_provider().delete_object(batch_storage_key)
+        except Exception:  # noqa: BLE001 — cleanup is best effort
+            pass
+        logger.error("batch_ingest_dispatch_failed", run_id=run_id, error=str(exc))
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Upload could not be queued",
+        ) from exc
 
     logger.info(
         "batch_ingest_accepted",
@@ -196,7 +225,7 @@ async def ingest_batch(
 
     return IngestResponse(
         run_id=run_id,
-        task_id=task.id,
+        task_id=task_id,
         total_results=len(payload.results),
     )
 
@@ -300,6 +329,45 @@ async def _resolve_run_id(
     # UUID5 makes concurrent first deliveries for one identity submit the
     # same primary key; the worker's unique index still returns the winner.
     return str(uuid.uuid5(uuid.NAMESPACE_URL, f"testlookup:{project_id}:{identity}"))
+
+
+#: Most commits one upload's supplied range keeps (the rest are cut, and said so).
+MAX_SUPPLIED_COMMITS = 100
+
+
+def _parse_form_commit_range(raw: str | None) -> tuple[object, bool]:
+    """Parse the multipart ``commit_range`` field: ``(value, truncated)``.
+
+    422 for text that is not a JSON list or object. Each shape keeps at most
+    ``MAX_SUPPLIED_COMMITS`` commits; ``truncated`` says whether any were cut.
+    """
+    if not raw:
+        return None, False
+    import json
+
+    try:
+        parsed = json.loads(raw)
+    except (ValueError, TypeError):
+        parsed = None
+    if isinstance(parsed, list):
+        return parsed[:MAX_SUPPLIED_COMMITS], len(parsed) > MAX_SUPPLIED_COMMITS
+    if isinstance(parsed, dict):
+        # Boundary-carrying shape ``{base, head, commits}`` — keep the refs;
+        # without them the stored row can't say what the range was measured
+        # from (and is useless as TIA training data).
+        commits = parsed.get("commits")
+        commits = commits if isinstance(commits, list) else []
+        return (
+            {**parsed, "commits": commits[:MAX_SUPPLIED_COMMITS]},
+            len(commits) > MAX_SUPPLIED_COMMITS,
+        )
+    raise HTTPException(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        detail=(
+            "commit_range must be a JSON list of commits, or an object with "
+            "base, head and commits."
+        ),
+    )
 
 
 _SUPPORTED_FORMATS = {
@@ -414,6 +482,12 @@ async def ingest_file(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=exc.detail(),
         ) from None
+    # US-8.1 — the optional supplied commit range (JSON text on the form).
+    # S-C-5: text that is not a JSON list or object used to be dropped after
+    # the 202 with only a log line; it is a 422 now, before anything is stored.
+    # A list longer than the cap is cut, and the upload status says so
+    # (``result.commit_range == "truncated"``).
+    commit_range_arg, commit_range_truncated = _parse_form_commit_range(commit_range)
 
     current_user, bound_project_id = auth
     ensure_ingest_role(current_user)
@@ -518,27 +592,6 @@ async def ingest_file(
             detail="Upload storage is temporarily unavailable",
         ) from exc
 
-    # US-8.1 — parse the optional supplied commit range (JSON string on the
-    # multipart form). Malformed JSON is ignored rather than 400'd: attribution
-    # is a best-effort enrichment, not a gate on ingesting the results.
-    commit_range_arg = None
-    if commit_range:
-        import json
-        try:
-            parsed = json.loads(commit_range)
-            if isinstance(parsed, list):
-                commit_range_arg = parsed[:100]
-            elif isinstance(parsed, dict):
-                # Boundary-carrying shape ``{base, head, commits}`` — keep the
-                # refs; without them the stored row can't say what the range
-                # was measured from (and is useless as TIA training data).
-                commits = parsed.get("commits")
-                commit_range_arg = {
-                    **parsed,
-                    "commits": commits[:100] if isinstance(commits, list) else [],
-                }
-        except (ValueError, TypeError):
-            logger.warning("file_ingest_commit_range_unparseable", run_id=run_id)
 
     # Allocate the Celery task ID and seed its status before publishing. A fast
     # worker can otherwise finish before this request writes "pending", which
@@ -581,6 +634,10 @@ async def ingest_file(
         # carries the redacted form only. Absent when none was sent, so a task
         # this router queues still binds a worker that predates the field.
         task_kwargs["run_context"] = run_context_arg
+    if commit_range_truncated:
+        # Sent only when true, so a task queued here still binds a worker that
+        # predates the field (the run_context rule above).
+        task_kwargs["commit_range_truncated"] = True
     try:
         ingest_uploaded_file.apply_async(kwargs=task_kwargs, task_id=task_id)
     except Exception as exc:  # noqa: BLE001 — normalize broker errors for clients

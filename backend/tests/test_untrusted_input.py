@@ -23,6 +23,7 @@ from app.services.inline_input_vocab import (
     UNTRUSTED_OPEN,
     WRAP_LIMITS,
 )
+from app.services.redaction_service import REDACTED
 from app.services.untrusted_input import (
     WRAP_OVERHEAD,
     excerpt_slices,
@@ -113,6 +114,31 @@ def test_scrub_leaves_no_unbounded_redaction_head() -> None:
 
 def test_scrub_of_empty_text_is_empty() -> None:
     assert scrub("") == ""
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "com/storefront/checkout/coupon/CouponRoundingService",
+        "src/pages/checkout/components/CouponSummaryPanel",
+        "/home/runner/work/payments/backend/app/services/commit_attribution_service",
+    ],
+)
+def test_scrub_keeps_a_long_stack_trace_path(path: str) -> None:
+    """S-C-2: the generic 40+ token rule applied to a whole path removed the frame the model must explain."""
+    assert len(path) >= 40
+    frame = f"at {path}.apply({path.rsplit('/', 1)[-1]}.java:118)"
+    assert scrub(frame) == frame
+
+
+def test_scrub_still_removes_a_40_character_token_and_a_slashed_base64_secret() -> None:
+    token = _alnum(40)
+    slashed = _alnum(13) + "/" + "K7" + _alnum(5, string.ascii_uppercase) + "/" + _alnum(18)
+    assert len(slashed) == 40
+    for secret in (token, slashed):
+        cleaned = scrub(f"failed with {secret} in src/app/main")
+        assert secret not in cleaned and REDACTED in cleaned
+        assert cleaned.endswith(" in src/app/main")
 
 
 def test_neutralise_rewrites_markers_and_drops_invisible_characters() -> None:

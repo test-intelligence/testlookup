@@ -30,12 +30,13 @@ export const JS_SDK_TARBALL = 'testlookup-reporter-1.0.0.tgz'
 export function getInstallSnippet(lang: SDKLang): string {
   switch (lang) {
     case 'python':
-      return `# Download and extract the Python ZIP from SDK Downloads above
+      return `# Download the Python ZIP from "All client SDKs" above and
+# extract it (it unpacks to python/)
 cd python
 pip install ".[yaml]"
 # Then add testlookup.yaml to your project root (see Step 2)`
     case 'java':
-      return `# Option 1: Download the fat JAR from the SDK Downloads button above
+      return `# Option 1: Download the fat JAR from "All client SDKs" above
 # Add to classpath — auto-discovery registers JUnit 5 / TestNG listeners
 
 # Option 2: Install to local Maven repo, then add dependency:
@@ -55,7 +56,7 @@ mvn install:install-file -Dfile=testlookup-reporter-1.0.0-all.jar \\
 # Gradle (after local install)
 testImplementation 'io.testlookup:testlookup-reporter:1.0.0:all'`
     case 'javascript':
-      return `# Download the JavaScript/TS ZIP from SDK Downloads above and
+      return `# Download the JavaScript/TS ZIP from "All client SDKs" above and
 # extract it (it unpacks to js/). The package is not on npm:
 # build it once and pack it,
 cd js
@@ -67,7 +68,7 @@ cd ..
 # then add the packed file to your project:
 npm install --save-dev ./js/${JS_SDK_TARBALL}`
     case 'go':
-      return `# Download the Go ZIP from SDK Downloads above and extract it
+      return `# Download the Go ZIP from "All client SDKs" above and extract it
 # into your module (it unpacks to go/). To use the copy that matches
 # this server, point go.mod at the extracted folder:
 go mod edit \\

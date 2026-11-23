@@ -61,11 +61,22 @@ def quarantine_list(
     if output_format != "table":
         output.render(rows, output_format)
         return
+    # ``FlakyQuarantineRead`` names the end ``quarantine_expires_at`` and the SLA
+    # due date ``stale_at``; ``expires_at`` is the CI manifest's field and is
+    # never on these rows, so reading it left the column "-" (D-54).
     table = [{
         "test": r.get("test_name") or r.get("test_fingerprint"), "status": r.get("status"),
-        "flip_rate": r.get("flip_rate"), "expires": r.get("expires_at") or "-", "id": r.get("id"),
+        "flip_rate": r.get("flip_rate"), "expires": _day(r.get("quarantine_expires_at")),
+        "sla_due": _day(r.get("stale_at")), "id": r.get("id"),
     } for r in rows]
-    output.print_table(table, ["test", "status", "flip_rate", "expires", "id"], title=f"Quarantine requests ({len(table)})")
+    output.print_table(
+        table, ["test", "status", "flip_rate", "expires", "sla_due", "id"], title=f"Quarantine requests ({len(table)})",
+    )
+
+
+def _day(value: Any) -> str:
+    """The date part of an ISO timestamp, or "-" when there is none."""
+    return str(value)[:10] if value else "-"
 
 
 def _quarantine_write(path: str, done: str, notes: Optional[str], profile_name: Optional[str], extra: Optional[dict] = None) -> None:

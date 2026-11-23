@@ -35,7 +35,7 @@ for (const theme of THEMES_WITH_PAPER) {
     })
 
     const header = page.locator('[data-page-header]')
-    await expect(header.getByRole('heading', { level: 1 })).toHaveText('Run #240')
+    await expect(header.getByRole('heading', { level: 1 })).toHaveText('Build 240')
     await visualRegion(page, 'run-header', theme, header)
 
     const chips = page.getByRole('group', { name: 'Filter by status' })

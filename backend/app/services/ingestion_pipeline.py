@@ -41,6 +41,23 @@ _PERSISTED_STATUS_LABELS = frozenset(
 )
 
 
+class RunTombstoned(ValueError):
+    """The delivery names a run an operator deleted (D-05).
+
+    Terminal: a retry meets the same tombstone, so the worker must not retry it.
+    A ``ValueError`` subclass so callers that caught the old refusal still do.
+    """
+
+    code = "run_deleted"
+
+
+#: What happened to a caller-supplied commit range (S-C-5). Kept on the run as
+#: ``_commit_range_outcome`` so the upload status can say so.
+COMMIT_RANGE_STORED = "stored"
+COMMIT_RANGE_NO_USABLE_COMMITS = "ignored_malformed"
+COMMIT_RANGE_STORE_FAILED = "store_failed"
+
+
 def _safe_rejection_reason(
     row_index: int,
     fingerprint: str,
@@ -304,7 +321,7 @@ async def create_run_from_payload(
     # here would resurrect the row without any of its data.
     resolved_run_id = uuid.UUID(run_id) if run_id else uuid.uuid4()
     if run_id and await run_is_tombstoned(db, resolved_run_id):
-        raise ValueError(
+        raise RunTombstoned(
             f"run {resolved_run_id} was deleted and cannot be re-created; "
             "ingest under a new run id"
         )
@@ -365,23 +382,34 @@ async def create_run_from_payload(
 
 async def _store_supplied_commit_range(
     db: AsyncSession, run: TestRun, commit_range: Optional[Any],
-) -> None:
+) -> Optional[str]:
     """Best-effort persist of a caller-supplied commit range (US-8.1).
 
     Accepts either wire shape (bare list, or ``{base, head, commits}`` — only
     the latter lets the base ref be persisted). Never raises — a malformed
     commit range must not fail ingestion. Empty / absent ranges are a no-op
     (finalize's connector path may still resolve one).
+
+    S-C-5: the outcome is returned and kept on the run (``_commit_range_outcome``)
+    so the upload status can tell the uploader the commits were not kept,
+    instead of a warning only an operator reads.
     """
     if not commit_range:
-        return
+        return None
     try:
         from app.services.commit_attribution_service import store_supplied_range
-        await store_supplied_range(db, run, commit_range)
+        row = await store_supplied_range(db, run, commit_range)
+        outcome = COMMIT_RANGE_STORED if row is not None else COMMIT_RANGE_NO_USABLE_COMMITS
     except Exception as exc:
         logger.warning(
             "supplied_commit_range_store_failed", run_id=str(run.id), error=str(exc),
         )
+        outcome = COMMIT_RANGE_STORE_FAILED
+    try:
+        run._commit_range_outcome = outcome  # type: ignore[attr-defined]  # transient, not a column
+    except Exception:  # noqa: BLE001 — a status hint never fails ingestion
+        pass
+    return outcome
 
 
 def _count_ingested_cases(

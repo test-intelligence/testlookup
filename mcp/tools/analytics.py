@@ -17,6 +17,7 @@ from typing import Any, Optional
 import httpx
 
 import client as api  # type: ignore[import]
+from tools.metrics import DEFAULT_WINDOW_DAYS  # type: ignore[import]
 from release_resolver import UnresolvedName, resolve_project, resolve_releases, unresolved_payload  # type: ignore[import]
 import execution_format  # type: ignore[import]
 
@@ -109,7 +110,7 @@ def register(mcp) -> None:  # noqa: ANN001
     @mcp.tool()
     async def get_flaky_tests(
         project_id: str,
-        days: int = 30,
+        days: int = DEFAULT_WINDOW_DAYS,
         limit: int = 20,
     ) -> str:
         """
@@ -158,7 +159,7 @@ def register(mcp) -> None:  # noqa: ANN001
         return "\n".join(lines)
 
     @mcp.tool()
-    async def get_failure_categories(project_id: str, days: int = 30) -> str:
+    async def get_failure_categories(project_id: str, days: int = DEFAULT_WINDOW_DAYS) -> str:
         """
         Get the distribution of test failures by root cause category
         (PRODUCT_BUG, INFRASTRUCTURE, TEST_DATA, AUTOMATION_DEFECT, FLAKY, UNKNOWN).
@@ -212,7 +213,7 @@ def register(mcp) -> None:  # noqa: ANN001
     @mcp.tool()
     async def get_top_failing_tests(
         project_id: str,
-        days: int = 30,
+        days: int = DEFAULT_WINDOW_DAYS,
         limit: int = 15,
     ) -> str:
         """
@@ -259,7 +260,7 @@ def register(mcp) -> None:  # noqa: ANN001
         return "\n".join(lines)
 
     @mcp.tool()
-    async def get_coverage_report(project_id: str, days: int = 30) -> str:
+    async def get_coverage_report(project_id: str, days: int = DEFAULT_WINDOW_DAYS) -> str:
         """
         Get test suite coverage: how many unique tests ran in each suite,
         per-suite pass rates, and overall execution statistics.
@@ -372,7 +373,7 @@ def register(mcp) -> None:  # noqa: ANN001
         return "\n".join(lines)
 
     @mcp.tool()
-    async def get_ai_analysis_summary(project_id: str, days: int = 30) -> str:
+    async def get_ai_analysis_summary(project_id: str, days: int = DEFAULT_WINDOW_DAYS) -> str:
         """
         Get statistics on AI triage coverage: how many failures were auto-analysed,
         confidence distribution, and how many require human review.
@@ -420,7 +421,7 @@ def register(mcp) -> None:  # noqa: ANN001
         project_id: Optional[str] = None,
         release_id: Optional[list[str]] = None,
         suite_name: Optional[list[str]] = None,
-        days: int = 30,
+        days: int = DEFAULT_WINDOW_DAYS,
         top_n: Optional[int] = None,
         facet_dimension: Optional[str] = None,
         facet_value: Optional[str] = None,
@@ -514,7 +515,7 @@ def register(mcp) -> None:  # noqa: ANN001
     @mcp.tool()
     async def get_execution_metrics(
         project_id: str,
-        days: int = 30,
+        days: int = DEFAULT_WINDOW_DAYS,
         suite_name: Optional[list[str]] = None,
         release_id: Optional[list[str]] = None,
         branch: Optional[str] = None,

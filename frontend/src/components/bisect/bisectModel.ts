@@ -175,7 +175,7 @@ const OWN_REASONS: ReadonlySet<string> = new Set([
  */
 export function compareLine(n: BisectNarrowing): string | null {
   const c = n.compare
-  if (c.state === 'fetched') return null
+  if (c.state === 'fetched' || c.state === 'supplied') return null
   const reason = c.reason ?? ''
   if (reason === 'not_narrowed') return null
   if (c.state === 'timed_out') return BISECT_SENTENCES.timed_out
@@ -183,6 +183,15 @@ export function compareLine(n: BisectNarrowing): string | null {
   if (OWN_REASONS.has(reason)) return BISECT_SENTENCES[reason as keyof typeof BISECT_SENTENCES]
   return UNKNOWN_REASON_LINE
 }
+
+/**
+ * D-11: offline, the list is the commits the CI supplied with the builds after
+ * the pass up to the first failure (no git host was asked, so no merge caveat).
+ */
+export function isSuppliedList(n: BisectNarrowing): boolean {
+  return n.compare.state === 'supplied'
+}
+export const SUPPLIED_LINE = BISECT_SENTENCES.supplied
 
 /** True when the compare ran out of time: the block offers Retry. */
 export function canRetry(n: BisectNarrowing): boolean {

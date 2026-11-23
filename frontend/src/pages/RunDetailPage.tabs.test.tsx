@@ -320,8 +320,9 @@ describe('Run page — tabs', () => {
     expect(within(primary).getByText('-12.5%')).toBeInTheDocument()
     expect(within(primary).getByText('Change the gateway timeout')).toBeInTheDocument()
     const compare = screen.getByRole('region', { name: 'Compare' })
+    // D-16: the diff is whole-run, so its baseline compare is too (no suite); "previous run" keeps the suite.
     expect(within(compare).getByRole('link', { name: /Compare with build #40/ }).getAttribute('href'))
-      .toBe('/runs/compare?mode=manual&left=run-0&right=run-1&suite=Checkout')
+      .toBe('/runs/compare?mode=manual&left=run-0&right=run-1')
     expect(within(compare).getByRole('link', { name: 'Open Compare' }).getAttribute('href')).toBe('/runs/compare?left=run-1')
     expect(askedFor(hooks.useTestCases, 'run-1')).toBe(false)
   })
@@ -430,7 +431,8 @@ describe('Run page — one header', () => {
   it('has one PageHeader whose ⋯ menu carries the run\'s actions', () => {
     const { container } = renderAt('/runs/run-1')
     expect(container.querySelectorAll('[data-page-header]')).toHaveLength(1)
-    expect(screen.getByRole('heading', { level: 1, name: 'Run #42' })).toBeInTheDocument()
+    // D-67: the build label, never `Run #<build_number>` (the Runs list's "Run #N" is a different number).
+    expect(screen.getByRole('heading', { level: 1, name: 'Build 42' })).toBeInTheDocument()
     // Job · branch · date, one line.
     expect(screen.getByText(/^checkout-ci · main · \S/)).toBeInTheDocument()
     // The status pill, suite and release chips sit in the header; the counts are the Tests tab's chips.
@@ -467,6 +469,16 @@ describe('Run page — one header', () => {
     expect(screen.queryByRole('region', { name: 'Deep investigation' })).toBeNull()
     expect(screen.queryByRole('button', { name: /Analyze failures/ })).toBeNull()
     expect(askedFor(hooks.useRunIntelligence, 'run-1')).toBe(false)
+  })
+
+  // D-86 (2026-11-21): a link naming the test runner's own id (`/runs/ci-build-42`, which the Live page linked to
+  // while a run streamed) answers 400 "Invalid run ID"; it opened as an empty run page.
+  it('a run id the server refuses (400) shows Run not found and says the link names no saved run (D-86)', () => {
+    hooks.useRun.mockReturnValue({ data: undefined, error: Object.assign(new Error('Bad Request'), { response: { status: 400 } }) })
+    renderAt('/runs/ci-build-42')
+    expect(screen.getByText('Run not found')).toBeInTheDocument()
+    expect(screen.getByText('This link does not name a saved run. Open the run from Runs or Live instead.')).toBeInTheDocument()
+    expect(screen.queryByRole('tablist', { name: 'Run sections' })).toBeNull()
   })
 
   it('while the run is loading, the run\'s actions are disabled (D-0023)', () => {

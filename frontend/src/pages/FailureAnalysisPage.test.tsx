@@ -141,11 +141,18 @@ vi.mock('@/hooks/useCommitAttribution', () => ({
 
 // W23b FAIL-12: the narrowing block inside the Suspects section — no SWR fetch in a unit test
 // (the network guard); a narrowed answer from the shared mocks.
+// D-11: by default the narrowing's first failure IS the requested run (a streak of one), so the suspects
+// stay on the row's last failure; the D-11 test scripts a first failure in an earlier run.
 vi.mock('@/hooks/useBisectNarrowing', async () => {
-  const { narrowing } = await import('@/test/bisectDriftMocks')
+  const { narrowing, runRef } = await import('@/test/bisectDriftMocks')
   return {
     bisectKey: vi.fn(() => null),
-    useBisectNarrowing: vi.fn(() => ({ data: narrowing(), error: undefined, isLoading: false, retry: vi.fn() })),
+    useBisectNarrowing: vi.fn((runId: string) => ({
+      data: narrowing({ run_id: runId, bad: runRef({ run_id: runId }) }),
+      error: undefined,
+      isLoading: false,
+      retry: vi.fn(),
+    })),
   }
 })
 
@@ -993,6 +1000,45 @@ describe('FailureAnalysisPage — US-2.4 wired actions', () => {
     const none = screen.getByRole('button', { name: 'Suspects for no_run_flow' })
     expect(none).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Suspects for checkout_flow' })).toBeEnabled()
+  })
+
+  // D-11: the narrowing names the build that FIRST failed; the suspects used to be ranked against the
+  // test's LATEST failing run, whose commits are another build's.
+  it("D-11: Suspects ranks against the narrowing's first failing run and says \"first failure\"", async () => {
+    await seedFailingScenario()
+    const { useTopFailing } = await import('@/hooks/useMetrics')
+    ;(useTopFailing as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: {
+        items: [{
+          test_name: 'checkout_flow', fail_count: 4, test_fingerprint: 'fp-top',
+          last_failed_run_id: 'run-latest', last_failed_build: 'main-1865',
+        }],
+      },
+      isLoading: false,
+    })
+    const { useBisectNarrowing } = await import('@/hooks/useBisectNarrowing')
+    const { narrowing, runRef } = await import('@/test/bisectDriftMocks')
+    const answer = narrowing({ run_id: 'run-latest', bad: runRef({ run_id: 'run-first', build_number: 'nightly-1858' }) })
+    ;(useBisectNarrowing as ReturnType<typeof vi.fn>).mockImplementation(() => ({
+      data: answer, error: undefined, isLoading: false, retry: vi.fn(),
+    }))
+    const { useSuspects } = await import('@/hooks/useCommitAttribution')
+    try {
+      renderPage()
+      fireEvent.click(await screen.findByRole('button', { name: 'Suspects for checkout_flow' }))
+      const panel = await screen.findByRole('complementary', { name: 'Suspects: checkout_flow' })
+      expect(useSuspects).toHaveBeenLastCalledWith('run-first', { fingerprint: 'fp-top' })
+      expect(useSuspects).not.toHaveBeenCalledWith('run-latest', expect.anything())
+      // The narrowing itself is still read for the row's own run.
+      expect(useBisectNarrowing).toHaveBeenLastCalledWith('run-latest', 'fp-top')
+      const runLine = within(panel).getByTestId('suspects-run')
+      expect(runLine).toHaveTextContent("Commits leading up to this test's first failure, in run nightly-1858.")
+      expect(within(runLine).getByRole('link', { name: 'nightly-1858' })).toHaveAttribute('href', '/runs/run-first')
+    } finally {
+      ;(useBisectNarrowing as ReturnType<typeof vi.fn>).mockImplementation((runId: string) => ({
+        data: narrowing({ run_id: runId, bad: runRef({ run_id: runId }) }), error: undefined, isLoading: false, retry: vi.fn(),
+      }))
+    }
   })
 
   // Browser E2E pass (2026-10-08): every quarantine endpoint answers 503 while

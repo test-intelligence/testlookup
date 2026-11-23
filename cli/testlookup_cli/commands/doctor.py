@@ -86,9 +86,16 @@ async def _gather_checks(profile_name: str | None) -> list[dict]:
         version = await client.request(
             "GET", "/health/version", profile_name=profile_name
         )
+        if not isinstance(version, dict):
+            # JSON, but not a TestLookup version answer (D-117): some other
+            # service answers at this address.
+            raise CLIError(
+                "the server answered /health/version with JSON that is not a "
+                "TestLookup version; check the URL."
+            )
         reachable = True
-        ver = (version or {}).get("version", "unknown")
-        revision = ((version or {}).get("build") or {}).get("revision", "unknown")
+        ver = version.get("version", "unknown")
+        revision = (version.get("build") or {}).get("revision", "unknown")
         results.append(
             {
                 "name": "server",

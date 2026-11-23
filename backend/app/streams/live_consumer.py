@@ -274,9 +274,15 @@ class LiveEventStreamConsumer:
             raise ValueError("run_start event missing project_id")
 
         await RedisLiveRunState.start(run_id, project_id, build_number)
+        # D-86: the canonical TestRun id travels with the start frame, so the
+        # Live page links the new row to /runs/<uuid>, not to the SDK's own id
+        # (a slug such as ``ci-build-42`` that /runs/{id} refuses).
+        from app.services.stream_service import canonical_test_run_uuid
+
         await _broadcast(project_id, {
             "type": "live_run_started",
             "run_id": run_id,
+            "test_run_id": str(canonical_test_run_uuid(run_id)),
             "build_number": build_number,
         })
         logger.info("Live run started: %s build=%s", run_id, build_number)

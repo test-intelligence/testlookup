@@ -70,6 +70,18 @@ describe('mergeBridgedSessions — /live window filtering (regression)', () => {
     expect(merged.filter(s => s.run_id === 'dup')).toHaveLength(1)
   })
 
+  it('D-87: does not bridge a held slug row the API now lists under its UUID', () => {
+    // The page holds the run under the SDK's id; the TestRun fallback lists it under its UUID.
+    const U = 'eeeeeeee-0000-5000-8000-000000000042'
+    const prev = [session({ run_id: 'ci-42', test_run_id: U, completed_at: new Date(NOW - 5_000).toISOString() })]
+    const api = [session({ run_id: U, test_run_id: U, completed_at: new Date(NOW - 1_000).toISOString() })]
+
+    const merged = mergeBridgedSessions(prev, api, NOW)
+
+    expect(merged).toHaveLength(1)
+    expect(merged[0].run_id).toBe(U)
+  })
+
   it('drops a completed session with no completed_at (cannot be time-boxed)', () => {
     const prev = [session({ run_id: 'nodate', completed_at: undefined })]
     const merged = mergeBridgedSessions(prev, [], NOW)

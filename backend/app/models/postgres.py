@@ -397,6 +397,11 @@ class TestRun(Base):
         # Migration 0245 (W23b FAIL-12): one series of a project's runs (a branch, or the runs with
         # no branch), newest first -- the bisect narrowing's walk. Built CONCURRENTLY.
         Index("ix_test_runs_project_branch_created", "project_id", text("coalesce(lower(branch), '')"), "created_at"),
+        # Migration 0259 (D-19): a project's runs by RUN TIME -- when the run
+        # executed, else when it was received (``services/run_time.py``). Every
+        # chart window and the runs-list window filter on this expression.
+        # Built CONCURRENTLY.
+        Index("ix_test_runs_project_run_time", "project_id", text("coalesce(start_time, created_at)")),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)

@@ -70,6 +70,7 @@ BASELINE_SQL: dict[tuple[str, str], str] = {
     ),
     ('plain', 'test_case'): (
         '\n'
+        'FROM test_cases JOIN test_runs ON test_cases.test_run_id = test_runs.id JOIN (SELECT DISTINCT ON (test_runs.project_id, test_cases.test_fingerprint) test_cases.id AS id \n'
         'FROM test_cases JOIN test_runs ON test_cases.test_run_id = test_runs.id JOIN (SELECT own_text.id AS id, own_text.created_at AS created_at \n'
         'FROM (SELECT test_cases.id AS id, test_cases.created_at AS created_at \n'
         'FROM test_cases JOIN test_runs ON test_cases.test_run_id = test_runs.id JOIN projects ON projects.id = test_runs.project_id \n'
@@ -78,7 +79,7 @@ BASELINE_SQL: dict[tuple[str, str], str] = {
         'FROM (SELECT test_cases.id AS id, test_cases.created_at AS created_at \n'
         'FROM test_cases JOIN test_runs ON test_cases.test_run_id = test_runs.id JOIN projects ON projects.id = test_runs.project_id \n'
         "WHERE test_runs.primary_suite_name ILIKE %(primary_suite_name_1)s ESCAPE '\\\\' AND projects.is_active IS true ORDER BY test_cases.created_at DESC \n"
-        ' LIMIT %(param_3)s) AS run_suite) AS hits ON hits.id = test_cases.id ORDER BY test_cases.created_at DESC \n'
+        ' LIMIT %(param_3)s) AS run_suite) AS hits ON hits.id = test_cases.id ORDER BY test_runs.project_id, test_cases.test_fingerprint, test_cases.created_at DESC) AS newest ON newest.id = test_cases.id ORDER BY test_cases.created_at DESC \n'
         ' LIMIT %(param_4)s'
     ),
     ('plain', 'test_run'): (
@@ -114,6 +115,7 @@ BASELINE_SQL: dict[tuple[str, str], str] = {
     ),
     ('pinned_days', 'test_case'): (
         '\n'
+        'FROM test_cases JOIN test_runs ON test_cases.test_run_id = test_runs.id JOIN (SELECT DISTINCT ON (test_runs.project_id, test_cases.test_fingerprint) test_cases.id AS id \n'
         'FROM test_cases JOIN test_runs ON test_cases.test_run_id = test_runs.id JOIN (SELECT own_text.id AS id, own_text.created_at AS created_at \n'
         'FROM (SELECT test_cases.id AS id, test_cases.created_at AS created_at \n'
         'FROM test_cases JOIN test_runs ON test_cases.test_run_id = test_runs.id JOIN projects ON projects.id = test_runs.project_id \n'
@@ -122,7 +124,7 @@ BASELINE_SQL: dict[tuple[str, str], str] = {
         'FROM (SELECT test_cases.id AS id, test_cases.created_at AS created_at \n'
         'FROM test_cases JOIN test_runs ON test_cases.test_run_id = test_runs.id JOIN projects ON projects.id = test_runs.project_id \n'
         "WHERE test_runs.primary_suite_name ILIKE %(primary_suite_name_1)s ESCAPE '\\\\' AND projects.is_active IS true AND test_runs.project_id = %(project_id_2)s::UUID AND test_cases.created_at >= %(created_at_2)s ORDER BY test_cases.created_at DESC \n"
-        ' LIMIT %(param_3)s) AS run_suite) AS hits ON hits.id = test_cases.id ORDER BY test_cases.created_at DESC \n'
+        ' LIMIT %(param_3)s) AS run_suite) AS hits ON hits.id = test_cases.id ORDER BY test_runs.project_id, test_cases.test_fingerprint, test_cases.created_at DESC) AS newest ON newest.id = test_cases.id ORDER BY test_cases.created_at DESC \n'
         ' LIMIT %(param_4)s'
     ),
     ('pinned_days', 'test_run'): (
@@ -158,6 +160,7 @@ BASELINE_SQL: dict[tuple[str, str], str] = {
     ),
     ('allowed', 'test_case'): (
         '\n'
+        'FROM test_cases JOIN test_runs ON test_cases.test_run_id = test_runs.id JOIN (SELECT DISTINCT ON (test_runs.project_id, test_cases.test_fingerprint) test_cases.id AS id \n'
         'FROM test_cases JOIN test_runs ON test_cases.test_run_id = test_runs.id JOIN (SELECT own_text.id AS id, own_text.created_at AS created_at \n'
         'FROM (SELECT test_cases.id AS id, test_cases.created_at AS created_at \n'
         'FROM test_cases JOIN test_runs ON test_cases.test_run_id = test_runs.id JOIN projects ON projects.id = test_runs.project_id \n'
@@ -166,7 +169,7 @@ BASELINE_SQL: dict[tuple[str, str], str] = {
         'FROM (SELECT test_cases.id AS id, test_cases.created_at AS created_at \n'
         'FROM test_cases JOIN test_runs ON test_cases.test_run_id = test_runs.id JOIN projects ON projects.id = test_runs.project_id \n'
         "WHERE test_runs.primary_suite_name ILIKE %(primary_suite_name_1)s ESCAPE '\\\\' AND projects.is_active IS true AND test_runs.project_id IN (__[POSTCOMPILE_project_id_2]) ORDER BY test_cases.created_at DESC \n"
-        ' LIMIT %(param_3)s) AS run_suite) AS hits ON hits.id = test_cases.id ORDER BY test_cases.created_at DESC \n'
+        ' LIMIT %(param_3)s) AS run_suite) AS hits ON hits.id = test_cases.id ORDER BY test_runs.project_id, test_cases.test_fingerprint, test_cases.created_at DESC) AS newest ON newest.id = test_cases.id ORDER BY test_cases.created_at DESC \n'
         ' LIMIT %(param_4)s'
     ),
     ('allowed', 'test_run'): (
@@ -177,6 +180,7 @@ BASELINE_SQL: dict[tuple[str, str], str] = {
     ),
     ('one_type', 'test_case'): (
         '\n'
+        'FROM test_cases JOIN test_runs ON test_cases.test_run_id = test_runs.id JOIN (SELECT DISTINCT ON (test_runs.project_id, test_cases.test_fingerprint) test_cases.id AS id \n'
         'FROM test_cases JOIN test_runs ON test_cases.test_run_id = test_runs.id JOIN (SELECT own_text.id AS id, own_text.created_at AS created_at \n'
         'FROM (SELECT test_cases.id AS id, test_cases.created_at AS created_at \n'
         'FROM test_cases JOIN test_runs ON test_cases.test_run_id = test_runs.id JOIN projects ON projects.id = test_runs.project_id \n'
@@ -185,7 +189,7 @@ BASELINE_SQL: dict[tuple[str, str], str] = {
         'FROM (SELECT test_cases.id AS id, test_cases.created_at AS created_at \n'
         'FROM test_cases JOIN test_runs ON test_cases.test_run_id = test_runs.id JOIN projects ON projects.id = test_runs.project_id \n'
         "WHERE test_runs.primary_suite_name ILIKE %(primary_suite_name_1)s ESCAPE '\\\\' AND projects.is_active IS true ORDER BY test_cases.created_at DESC \n"
-        ' LIMIT %(param_3)s) AS run_suite) AS hits ON hits.id = test_cases.id ORDER BY test_cases.created_at DESC \n'
+        ' LIMIT %(param_3)s) AS run_suite) AS hits ON hits.id = test_cases.id ORDER BY test_runs.project_id, test_cases.test_fingerprint, test_cases.created_at DESC) AS newest ON newest.id = test_cases.id ORDER BY test_cases.created_at DESC \n'
         ' LIMIT %(param_4)s'
     ),
 }

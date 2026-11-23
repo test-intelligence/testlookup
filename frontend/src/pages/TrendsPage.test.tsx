@@ -773,9 +773,18 @@ describe('TrendsPage rollout (Wave 2.6)', () => {
     const runCalls = (useRuns as ReturnType<typeof vi.fn>).mock.calls
     expect(runCalls.length).toBeGreaterThan(0)
     expect(new Set(runCalls.map((call) => (call[0] as { days: number }).days))).toEqual(new Set([14]))
-    // The shared preference is still reset, so other pages follow.
-    expect(useTimeWindowStore.getState().days).toBe(14)
+    // D-18: the 14 days are the page's own; the shared setting (30) is not rewritten by opening Trends.
+    expect(useTimeWindowStore.getState().days).toBe(30)
     expect(windowOption('14d')).toHaveAttribute('aria-checked', 'true')
+  })
+
+  it('a window picked on Trends is written to the shared setting (D-18: only a click writes it)', async () => {
+    await renderTrends(await activeDays(3))
+    const { useTimeWindowStore } = await import('@/store/timeWindowStore')
+    expect(useTimeWindowStore.getState().days).toBe(30)
+    fireEvent.click(windowOption('7d'))
+    expect(useTimeWindowStore.getState().days).toBe(7)
+    expect(windowOption('7d')).toHaveAttribute('aria-checked', 'true')
   })
 
   it('still follows the window picker after the reset', async () => {

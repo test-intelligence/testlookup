@@ -68,6 +68,7 @@ from app.services.analytics_scope import (
 # and the ``is_active`` guard in every branch).
 from app.services.analytics_service import _tenant_filter as tenant_filter_sql
 from app.services.chart_data_service import window_start
+from app.services.run_time import RUN_TIME_SQL
 from app.services.failure_signature import (
     FAILURE_SIGNATURE_PARAMS,
     FAILURE_SIGNATURE_SQL,
@@ -191,10 +192,10 @@ def build_statement(
                 tc.test_fingerprint AS fp,
                 tc.test_name AS test_name,
                 tc.test_run_id AS run_id,
-                tr.created_at AS at,
+                {RUN_TIME_SQL} AS at,
                 LOWER(COALESCE(tc.failure_category, 'UNKNOWN')) AS category
             FROM test_cases tc JOIN test_runs tr ON tr.id = tc.test_run_id
-            WHERE tr.created_at >= :period_start
+            WHERE {RUN_TIME_SQL} >= :period_start
               {tenant}
               {release}
               {suite}
@@ -494,7 +495,10 @@ def definitions(days: int, *, include_edges: bool) -> dict:
     return {
         "grain": "execution_row",
         "population": "FAILED and BROKEN executions in scope; passed, skipped and unknown are not counted",
-        "window_clock": "test_runs.created_at, UTC; in-progress runs included",
+        "window_clock": (
+            "the run time: test_runs.start_time, else test_runs.created_at, UTC; "
+            "in-progress runs included"
+        ),
         "group": (
             "executions whose error message has the same signature: the first line, with hex "
             "addresses, long hex ids, timestamps and numbers replaced by '#', lower-cased, 80 characters"
@@ -505,11 +509,11 @@ def definitions(days: int, *, include_edges: bool) -> dict:
             "test in two projects is two tests; each top_tests entry names its project_id"
         ),
         "first_seen": (
-            "the first failing execution of the group in the window (test_runs.created_at, UTC), "
+            "the first failing execution of the group in the window (run time: start_time, else created_at, UTC), "
             "not the first ever: a group failing since before the window starts shows the window"
         ),
         "last_seen": (
-            "the last failing execution of the group in the window (test_runs.created_at, UTC), "
+            "the last failing execution of the group in the window (run time: start_time, else created_at, UTC), "
             "not necessarily the latest run"
         ),
         "label": f"the most frequent raw first line of the group, <= {LABEL_LENGTH} characters, untrusted text",

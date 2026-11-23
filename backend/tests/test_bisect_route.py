@@ -73,6 +73,9 @@ class _Result:
     def first(self):
         return self._first
 
+    def all(self):
+        return list(self._rows)
+
     def scalars(self):
         return SimpleNamespace(all=lambda: list(self._rows))
 
@@ -99,6 +102,10 @@ class _Session:
             return _Result(mappings=w.narrow_rows.get((params["run_id"], params["fingerprint"]), []))
         compiled = stmt.compile(dialect=postgresql.dialect())
         sql, values = str(compiled), compiled.params
+        if "FROM run_commit_ranges" in sql:
+            # D-11: offline, the supplied ranges of the builds in between (none in this world;
+            # test_bisect_supplied_offline.py runs that statement for real).
+            return _Result(rows=[(commits,) for commits in getattr(w, "supplied_between", [])])
         if "FROM project_members" in sql:
             return _Result(uuid.uuid4() if w.member else None)
         if sql.startswith("SELECT test_runs.project_id"):

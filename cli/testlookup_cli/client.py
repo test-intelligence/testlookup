@@ -79,6 +79,26 @@ def _raise_for_status(resp: httpx.Response) -> None:
     raise APIError(sentence or str(mapped), mapped.exit_code, resp.status_code, detail=raw_detail)
 
 
+def _json_body(resp: httpx.Response) -> Any:
+    """The JSON body of a successful answer, or a ``CLIError`` saying it is not JSON.
+
+    A wrong URL often reaches a web server that answers 200 with an HTML page:
+    the web app's ``index.html``, which its nginx serves for any unknown path,
+    or a proxy's login page. ``resp.json()`` then raised ``JSONDecodeError``,
+    which no command catches, so ``testlookup doctor`` (the command meant for a
+    slightly wrong URL) printed a traceback (D-117).
+    """
+    try:
+        return resp.json()
+    except ValueError:
+        content_type = (resp.headers.get("content-type") or "").split(";")[0].strip() or "unknown"
+        raise CLIError(
+            f"The server answered {resp.status_code} with a {content_type} page that is not JSON. The URL may "
+            "point at the web app or a proxy rather than the TestLookup API; check the "
+            "profile URL (testlookup auth login --url <url>) or TESTLOOKUP_URL."
+        ) from None
+
+
 class APIError(CLIError):
     """A ``CLIError`` from an HTTP answer that keeps the server's raw ``detail``.
 
@@ -199,7 +219,7 @@ async def request(
 
             if resp.status_code == 204:
                 return None
-            return resp.json()
+            return _json_body(resp)
     except httpx.RequestError as exc:
         # Server unreachable / DNS failure / client-side timeout — no HTTP
         # response ever arrived, so map_http_error can't classify it. Surface an
@@ -306,7 +326,7 @@ async def upload_file(
                     continue
                 break
             _raise_for_status(resp)
-            return resp.json()
+            return _json_body(resp)
     except httpx.RequestError as exc:
         raise map_connection_error(exc, base_url) from exc
 
@@ -354,7 +374,7 @@ async def upload_part(
                     continue
                 break
             _raise_for_status(resp)
-            return resp.json()
+            return _json_body(resp)
     except httpx.RequestError as exc:
         raise map_connection_error(exc, base_url) from exc
 
@@ -438,4 +458,4 @@ async def login(base_url: str, username: str, password: str) -> dict:
         )
         if resp.status_code != 200:
             raise CLIError("Login failed — check username and password", EXIT_AUTH)
-        return resp.json()
+        return _json_body(resp)

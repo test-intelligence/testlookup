@@ -49,6 +49,7 @@ import agentService from '@/services/agentService'
 import WorkflowPicker from '@/components/agents/WorkflowPicker'
 import { buildCompareWithPreviousHref } from '@/utils/runComparisons'
 import { formatDateTime } from '@/utils/formatters'
+import { runBuildLabel } from '@/utils/runOption'
 import { RunDeepClusters } from './DeepInvestigationPage'
 import { RunIntelligenceBody } from './RunIntelligencePage'
 import RunTestsTab from './run/RunTestsTab'
@@ -193,7 +194,10 @@ export default function RunDetailPage() {
   const { data: run, error: runError } = useRun(runId)
   // D-0023: the server answers a run that does not exist and a run in a project the user is not a member of with
   // the same 404 (no existence oracle). Such a run opens as Run not found: no tabs, no actions.
-  const runNotFound = !run && (runError as { response?: { status?: number } } | undefined)?.response?.status === 404
+  // D-86 (2026-11-21): a 400 is a link that names the test runner's own id (`ci-build-42`), which the
+  // older Live page linked to while a run streamed; it opened as an empty run page, not as "Run not found".
+  const runErrorStatus = (runError as { response?: { status?: number } } | undefined)?.response?.status
+  const runNotFound = !run && (runErrorStatus === 404 || runErrorStatus === 400)
 
   // "Compare to previous run" opens the SERVER's previous run (W03, D42: same
   // suite and branch, the newest that finished before this one) — the same
@@ -377,7 +381,11 @@ export default function RunDetailPage() {
         <PageHeader compact title="Run" helpTopic={HELP_TOPIC} />
         <EmptyState
           title="Run not found"
-          description="It may have been deleted, or it belongs to a project you are not a member of."
+          description={
+            runErrorStatus === 400
+              ? 'This link does not name a saved run. Open the run from Runs or Live instead.'
+              : 'It may have been deleted, or it belongs to a project you are not a member of.'
+          }
         />
       </div>
     )
@@ -387,7 +395,9 @@ export default function RunDetailPage() {
     <div className="space-y-4">
       <PageHeader
         compact
-        title={run ? `Run #${run.build_number}` : 'Run'}
+        // D-67: the build label (`main-1865`, `Build 240`). It printed `Run #${build_number}`, the
+        // same words the Runs list used for a different number (the per-suite rank).
+        title={run ? runBuildLabel(run) : 'Run'}
         subtitle={subtitle}
         helpTopic={HELP_TOPIC}
         actions={

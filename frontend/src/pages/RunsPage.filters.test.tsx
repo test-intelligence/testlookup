@@ -225,3 +225,32 @@ describe('RunsPage — the toolbar filters (FAIL-05)', () => {
     })
   })
 })
+
+// D-30: the status filter was page state only; a reload or a shared link lost it.
+describe('RunsPage — the status filter is kept in the address (D-30)', () => {
+  const statusSelect = () => screen.getByRole('combobox', { name: 'Run status' }) as HTMLSelectElement
+
+  it('opening /runs?status=failed selects Failed and asks for failed runs', () => {
+    renderPage('/runs?status=failed')
+    expect(statusSelect().value).toBe('FAILED')
+    expect(lastParams()).toMatchObject({ status: 'FAILED' })
+  })
+
+  it('choosing a status writes it to the address; All statuses removes it', async () => {
+    renderPage()
+    fireEvent.change(statusSelect(), { target: { value: 'PASSED' } })
+    await waitFor(() => {
+      expect(url().get('status')).toBe('passed')
+      expect(lastParams()).toMatchObject({ status: 'PASSED' })
+    })
+    fireEvent.change(statusSelect(), { target: { value: '' } })
+    await waitFor(() => expect(url().has('status')).toBe(false))
+    expect(lastParams().status).toBeUndefined()
+  })
+
+  it('an unknown status in the address reads as All statuses', () => {
+    renderPage('/runs?status=maybe')
+    expect(statusSelect().value).toBe('')
+    expect(lastParams().status).toBeUndefined()
+  })
+})

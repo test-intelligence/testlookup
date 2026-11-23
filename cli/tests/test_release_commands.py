@@ -48,7 +48,9 @@ def api(monkeypatch):
         if path == f"/api/v1/releases/{R1}/gate/evaluate":
             return {**_gate("NO_GO"), "recorded": True}
         if path == "/api/v1/quarantine":
-            return [{"id": "q1", "test_name": "test_flaky", "status": "QUARANTINED", "flip_rate": 0.4, "expires_at": "2026-11-01"}]
+            # The FlakyQuarantineRead field names (D-54), not the CI manifest's ``expires_at``.
+            return [{"id": "q1", "test_name": "test_flaky", "status": "QUARANTINED", "flip_rate": 0.4,
+                     "quarantine_expires_at": "2026-11-01T09:30:00Z", "stale_at": "2026-12-04T09:30:00Z"}]
         if path.startswith("/api/v1/quarantine/"):
             return {"id": "q1", "status": "RELEASED"}
         if path == f"/api/v1/releases/{R1}/compliance-packs":
@@ -132,6 +134,47 @@ def test_quarantine_list_and_release_need_a_reason(api):
     result = _run("quarantine", "release", "q1", "--reason", "fix merged in #123")
     assert result.exit_code == 0
     assert ("POST", "/api/v1/quarantine/q1/release", None, {"notes": "fix merged in #123"}) in api["calls"]
+
+
+def test_quarantine_list_shows_the_expiry_and_sla_dates(api):
+    """D-54: the Expires column read ``expires_at``, which these rows never carry, so it was always "-"."""
+    result = CliRunner().invoke(app, ["quarantine", "list"], env={"COLUMNS": "200"})
+    assert result.exit_code == 0, result.output
+    assert "2026-11-01" in result.output
+    assert "2026-12-04" in result.output  # the SLA due date (stale_at)
+
+
+def test_every_quarantine_row_key_the_cli_reads_is_a_field_of_the_response_model():
+    """D-54's guard: the wire-contract test checks route literals, not field names.
+
+    Reads ``FlakyQuarantineRead`` from the backend source (as
+    ``test_ci_verdict_command`` reads ``LaunchStatus``) and every
+    ``r.get("<key>")`` in ``quarantine_list``.
+    """
+    import ast
+    import inspect
+    from pathlib import Path
+
+    from testlookup_cli.commands import parity
+
+    schemas = Path(__file__).resolve().parents[2] / "backend" / "app" / "models" / "schemas.py"
+    if not schemas.exists():
+        pytest.skip("backend source not present (CLI-only checkout)")
+    model = next(
+        node for node in ast.parse(schemas.read_text(encoding="utf-8")).body
+        if isinstance(node, ast.ClassDef) and node.name == "FlakyQuarantineRead"
+    )
+    fields = {stmt.target.id for stmt in model.body if isinstance(stmt, ast.AnnAssign)}
+
+    source = inspect.getsource(parity.quarantine_list)
+    read = {
+        node.args[0].value for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "get"
+        and isinstance(node.func.value, ast.Name) and node.func.value.id == "r"
+        and node.args and isinstance(node.args[0], ast.Constant)
+    }
+    assert {"quarantine_expires_at", "stale_at"} <= read
+    assert read <= fields, f"keys not on FlakyQuarantineRead: {sorted(read - fields)}"
 
 
 def test_defects_need_exactly_one_signature(api):

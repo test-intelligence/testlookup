@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest'
 
 import type { RunSignatureBatch, RunSignatureEntry, RunSignatureItem, TestRun } from '@/types/runs'
 import {
-  buildSignatureModel, chipLabelOf, MAX_SIGNATURE_RUNS, NO_FAILING_TESTS, NO_MESSAGE, signatureCellOf, signatureRunIds,
+  buildSignatureModel, CHIP_LABEL_MAX, chipLabelOf, MAX_SIGNATURE_RUNS, NO_FAILING_TESTS, NO_MESSAGE, signatureCellOf, signatureRunIds,
 } from './runSignatures'
 
 function run(i: number, over: Partial<TestRun> = {}): TestRun {
@@ -146,14 +146,28 @@ describe('buildSignatureModel — groups by the dominant error', () => {
   })
 })
 
-describe('chipLabelOf — the table chip keeps its width', () => {
-  it('is at most 11 characters and stable per key', () => {
+describe('chipLabelOf — the table chip names the error, in a bounded width', () => {
+  it('is at most CHIP_LABEL_MAX characters and stable per key', () => {
     for (const key of [ASSERT.signature, NPE.signature, 'x', NO_MESSAGE, NO_FAILING_TESTS]) {
-      expect(chipLabelOf(key).length).toBeLessThanOrEqual(11)
+      expect(chipLabelOf(key).length).toBeLessThanOrEqual(CHIP_LABEL_MAX)
       expect(chipLabelOf(key)).toBe(chipLabelOf(key))
     }
-    expect(chipLabelOf(ASSERT.signature)).toMatch(/^[0-9a-f]{3}-cluster$/)
-    expect(chipLabelOf(ASSERT.signature)).not.toBe(chipLabelOf(NPE.signature))
+    expect(chipLabelOf(ASSERT.signature, ASSERT.label)).not.toBe(chipLabelOf(NPE.signature, NPE.label))
+  })
+
+  // D-46: the chip read "946-cluster", which meant nothing without hovering.
+  it('reads words from the error message, not a hash', () => {
+    expect(chipLabelOf(ASSERT.signature, ASSERT.label)).toBe('AssertionError: expected 3 but…')
+    expect(chipLabelOf(NPE.signature, NPE.label)).toBe('NullPointerException at Foo')
+    expect(chipLabelOf(NPE.signature, NPE.label)).not.toMatch(/cluster/)
+    expect(chipLabelOf('k', 'java.lang.IllegalStateException: closed')).toBe('IllegalStateException: closed')
+    expect(chipLabelOf(TIMEOUT.signature)).toBe('timeout after #s')
+  })
+
+  it('a built group carries the error words on its chip', () => {
+    const runs = [run(1), run(2)]
+    const model = buildSignatureModel(runs, batchOf([item(runs[0].id, [ASSERT]), item(runs[1].id, [ASSERT])]))
+    expect(model.groups[0].chipLabel).toBe('AssertionError: expected 3 but…')
   })
 })
 

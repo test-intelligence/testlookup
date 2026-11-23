@@ -103,7 +103,7 @@ test('the latest-suite section states its runs as text and opens the baseline pi
   await expect(page.locator('[data-runs-in-suite-text]')).toHaveText('Select a suite to view runs')
   await page.locator('select').filter({ has: page.locator('option', { hasText: 'Select suite' }) }).selectOption('Auth')
   const auth = longHistoryRuns().filter((run) => run.primary_suite_name === 'Auth')
-  await expect(page.locator('[data-runs-in-suite-text]')).toHaveText(`${auth.length} runs in suite · latest Run #${auth[0].run_seq} · main`)
+  await expect(page.locator('[data-runs-in-suite-text]')).toHaveText(`${auth.length} runs in suite · latest Build ${auth[0].build_number} · Run #${auth[0].run_seq} · main`)
   await expect(page.locator('#main-content select[disabled]')).toHaveCount(0)
 
   await page.getByRole('button', { name: 'Pick a different baseline' }).click()

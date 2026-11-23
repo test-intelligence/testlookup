@@ -1,7 +1,7 @@
 /**
  * LiveExecutionPage
  *
- * Real-time dashboard for monitoring 10 000+ concurrent test executions.
+ * Real-time dashboard for test runs streaming from the client SDKs.
  *
  * Layout
  * ------
@@ -56,7 +56,17 @@ import { clsx } from 'clsx'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 import { usePageSuiteFilter } from '@/hooks/usePageSuiteFilter'
 import { useLiveExecution, computeLiveStats } from '@/hooks/useLiveExecution'
-import { LIVE_RESULTS_OMITTED } from '@/hooks/liveFrameModel'
+import { LIVE_RESULTS_OMITTED, sessionKey } from '@/hooks/liveFrameModel'
+import {
+  eventTypeWords,
+  sessionLabel,
+  sessionOrdinal,
+  sessionRunPageId,
+  statusWords,
+  testsStillToRun,
+  windowPhrase,
+} from '@/components/live/liveSessionView'
+import { runBuildLabel } from '@/utils/runOption'
 import { LIVE_FRAME_INTERVAL_MS } from '@/types/liveFrames'
 import { useSuiteOptions } from '@/hooks/useSuiteOptions'
 import type { LiveSessionState } from '@/types/live-stream'
@@ -141,6 +151,7 @@ function relativeTime(ts: number): string {
   return `${Math.floor(diff / 86400)}d ago`
 }
 
+
 // ── WS Status badge ────────────────────────────────────────────────────────
 
 function WsStatusBadge({ status }: { status: string }) {
@@ -189,19 +200,12 @@ function sortSessions(sessions: LiveSessionState[], field: SortField, dir: SortD
   const mult = dir === 'asc' ? 1 : -1
 
   if (field === 'build') {
-    return [...sessions].sort((a, b) => {
-      // Prefer the human-readable run_seq when available — same value
-      // the Build column renders. Fall back to ``build_number`` so
-      // legacy rows without run_seq still sort sensibly. Both branches
-      // sort by run_seq ASC first when populated; build_number is
-      // alpha-compared as a tie-breaker.
-      const aSeq = a.run_seq ?? null
-      const bSeq = b.run_seq ?? null
-      if (aSeq != null && bSeq != null) return (aSeq - bSeq) * mult
-      if (aSeq != null) return -1 * mult  // populated < missing
-      if (bSeq != null) return 1 * mult
-      return (a.build_number || '').localeCompare(b.build_number || '') * mult
-    })
+    // D-88: by the label the Build column renders (the build label, numbers
+    // compared as numbers: main-9 before main-10). It sorted by `Run #N`,
+    // which the column no longer leads with.
+    return [...sessions].sort((a, b) =>
+      sessionLabel(a).localeCompare(sessionLabel(b), undefined, { numeric: true }) * mult,
+    )
   }
 
   if (field === 'suite') {
@@ -386,7 +390,6 @@ function ClientSDKGuide({ projectId }: { projectId?: string }) {
             <li>Events batched every 100 ms client-side</li>
             <li>Results visible on dashboard within ~1 s</li>
             <li>Final test cases persisted to DB after run completes</li>
-            <li>Supports 10 000+ concurrent executions</li>
           </ul>
         </div>
       </div>
@@ -518,12 +521,16 @@ export default function LiveExecutionPage() {
   //
   // Keeping the dedup function (rather than dropping it entirely) so a
   // future double-emit bug would still collapse identical run_ids
-  // instead of rendering ghost rows. ``run_id`` is the LiveSession PK,
-  // so this is effectively a no-op for normal traffic.
+  // instead of rendering ghost rows.
+  //
+  // D-87 (2026-11-21): keyed by the canonical TestRun id (`sessionKey`:
+  // `test_run_id`, else `run_id`). The server lists one run under the SDK's
+  // id from Redis / LiveSession rows and under its UUID from the TestRun
+  // fallback; keyed by `run_id` alone, a finished LiveStream run showed twice.
   const dedupedSessions = useMemo(() => {
     const byRunId = new Map<string, LiveSessionState>()
     for (const s of visibleSessions) {
-      const key = s.run_id
+      const key = sessionKey(s)
       const existing = byRunId.get(key)
       const ts = s.last_event_at || s.started_at || ''
       const existingTs = existing ? (existing.last_event_at || existing.started_at || '') : ''
@@ -567,6 +574,8 @@ export default function LiveExecutionPage() {
     time: string
     ago: string
     kind: string
+    /** D-90: the second line in words (a result's status and build, or what the event is); never the raw frame type. */
+    sub: string
     tone: 'success' | 'info' | 'warning' | 'error'
     detail?: string
     runId?: string
@@ -585,13 +594,23 @@ export default function LiveExecutionPage() {
         'info'
       // What the event IS. These used to be the names of the four invented
       // "workflow" stages (Stream Connection, Run Monitoring, …).
+      // D-90 (2026-11-21): a test result is titled by the test it reports
+      // (every card read "Test result"), and any other frame type is named in
+      // words rather than falling to "Stream event" with its raw type.
+      const isResult = e.type === 'live_test_result'
       const label =
         omitted ? 'More results' :
         e.type === 'live_run_complete' ? 'Run completed' :
         e.type === 'live_run_started' ? 'Run started' :
-        e.type === 'live_test_result' ? 'Test result' :
+        isResult ? (e.last_test || 'Test result') :
         e.type === 'live_warning' ? 'Warning' :
-        'Stream event'
+        eventTypeWords(e.type)
+      // The second line: the result's status, then the build it belongs to.
+      const build = e.build_number ? runBuildLabel({ build_number: e.build_number }) : undefined
+      const sub = [
+        isResult ? (statusWords(e.last_status) ?? 'Result') : undefined,
+        build,
+      ].filter(Boolean).join(' · ')
       // A warning the server folded N times inside one frame says so once.
       const repeated = e.type === 'live_warning' && (e.coalesced ?? 0) > 1 && e.message
       return {
@@ -599,6 +618,7 @@ export default function LiveExecutionPage() {
         time: formatClock(e.timestamp),
         ago: relativeTime(e.timestamp),
         kind: e.type,
+        sub,
         tone,
         detail: repeated ? `${e.message} (${e.coalesced} times)` : e.message,
         runId: e.run_id,
@@ -627,10 +647,13 @@ export default function LiveExecutionPage() {
       ? ` · ${idleCount} idle waiting on reaper`
       : ''
     if (suiteScopedRunningSessions.length > 0) {
-      const totalActive = suiteScopedRunningSessions.reduce((a, s) => a + (s.total || 0), 0)
+      // D-89 (2026-11-21): "tests in flight" was the sum of the totals the
+      // running sessions declared, finished tests included. It now counts
+      // the tests those sessions have declared and not reported yet.
+      const stillToRun = testsStillToRun(suiteScopedRunningSessions)
       return {
         hero: `${suiteScopedRunningSessions.length} active run${suiteScopedRunningSessions.length > 1 ? 's' : ''}`,
-        sub: `${formatNumber(totalActive)} tests in flight${idleSuffix}`,
+        sub: `${formatNumber(stillToRun)} test${stillToRun === 1 ? '' : 's'} still to run${idleSuffix}`,
         isLive: true,
       }
     }
@@ -722,8 +745,11 @@ export default function LiveExecutionPage() {
           {/* Inline KPIs */}
           <div className="flex items-baseline gap-1">
             <p className="text-2xl font-semibold tabular-nums text-[var(--color-text)]">{formatNumber(visibleStats.totalTests)}</p>
-            <p className="text-2xs text-[var(--color-text-muted)] ml-1.5 leading-tight">
-              tests across<br />{dedupedSessions.length} session{dedupedSessions.length === 1 ? '' : 's'}
+            {/* D-89: these figures cover every session listed, finished ones
+                included, so the strip names the window they come from. */}
+            <p data-live-strip-scope="" className="text-2xs text-[var(--color-text-muted)] ml-1.5 leading-tight">
+              tests across {dedupedSessions.length} session{dedupedSessions.length === 1 ? '' : 's'}<br />
+              in {windowPhrase(days)}
             </p>
           </div>
           <div>
@@ -832,7 +858,8 @@ export default function LiveExecutionPage() {
                 <tr>
                   <td colSpan={9} className="px-5 py-10 text-center text-[var(--color-text-muted)]">
                     {suiteScopedSessions.length === 0
-                      ? 'No active execution sessions. Start a test run with the client SDK.'
+                      // D-94: the table lists finished sessions too, so "no active" was wrong.
+                      ? `No sessions in ${windowPhrase(days)}. Start a test run with the client SDK.`
                       : 'No sessions match the current filter.'}
                   </td>
                 </tr>
@@ -841,38 +868,42 @@ export default function LiveExecutionPage() {
                 const passW = s.total > 0 ? (s.passed / s.total) * 100 : 0
                 const failW = s.total > 0 ? (s.failed / s.total) * 100 : 0
                 return (
-                  <tr key={s.run_id} className="border-b border-[var(--color-border)] hover:bg-[color-mix(in srgb, var(--color-accent) 4%, transparent)] last:border-b-0">
+                  <tr key={sessionKey(s)} className="border-b border-[var(--color-border)] hover:bg-[color-mix(in srgb, var(--color-accent) 4%, transparent)] last:border-b-0">
                     <td className="px-5 py-3">
                       <div className="flex items-center gap-2">
                         <span className={clsx('h-2 w-2 rounded-full flex-shrink-0', statusDot(s.status))} />
                         <div>
-                          {/* Use the canonical TestRun.id for navigation — SDK
-                              run_ids are often slugs (e.g. `local-abc12345`)
-                              that 422 against the UUID-typed /runs/{id} path.
-                              Fall back to the slug only if the backend hasn't
-                              populated test_run_id (older response shape). */}
-                          <Link
-                            to={`/runs/${s.test_run_id || s.run_id}`}
-                            className="font-mono text-[var(--color-text)] hover:text-[var(--color-accent-ink)]"
-                          >
-                            {/* Prefer the per-suite incremental Run #N
-                                identifier (1-based) — backed by a
-                                server-side ROW_NUMBER() over the
-                                (project, suite) partition. Falls back
-                                to the raw SDK build_number, then to a
-                                short run_id slice. */}
-                            {s.run_seq != null
-                              ? `Run #${s.run_seq}`
-                              : s.build_number || s.run_id.slice(0, 8)}
-                          </Link>
-                          {/* "Run #N" repeats per (project, suite); show when the
-                              run started so same-numbered rows are distinguishable. */}
+                          {/* D-86: link by the canonical TestRun id. SDK run ids
+                              are often slugs (`ci-build-42`) that /runs/{id}
+                              refuses, so a row that does not know its TestRun
+                              id yet shows its label as text, not a dead link.
+                              D-88: the label is the build label (shared
+                              helper), not `Run #N`, which read "Run #1" while
+                              a run streamed. */}
+                          {(() => {
+                            const pageId = sessionRunPageId(s)
+                            const label = sessionLabel(s)
+                            return pageId ? (
+                              <Link
+                                to={`/runs/${pageId}`}
+                                className="font-mono text-[var(--color-text)] hover:text-[var(--color-accent-ink)]"
+                              >
+                                {label}
+                              </Link>
+                            ) : (
+                              <span
+                                className="font-mono text-[var(--color-text)]"
+                                title="The run page opens once the server has saved this run"
+                              >
+                                {label}
+                              </span>
+                            )
+                          })()}
+                          {/* The muted line: the per-suite ordinal for a finished
+                              run, then when the run started, so two rows with the
+                              same build label are told apart. */}
                           <div className="font-mono text-2xs text-[var(--color-text-faint)]">
-                            {s.build_number || s.run_id.slice(0, 8)}
-                            {(() => {
-                              const when = formatRunWhen(s.started_at)
-                              return when ? <> · {when}</> : null
-                            })()}
+                            {[sessionOrdinal(s), formatRunWhen(s.started_at)].filter(Boolean).join(' · ') || '—'}
                           </div>
                         </div>
                       </div>
@@ -1048,7 +1079,7 @@ export default function LiveExecutionPage() {
                         </span>
                       </div>
                       <div className="flex items-center gap-2 mt-0.5">
-                        <span className="text-2xs font-mono text-[var(--color-text-muted)]">{e.kind}</span>
+                        {e.sub && <span data-feed-sub="" className="text-2xs text-[var(--color-text-muted)]">{e.sub}</span>}
                         {e.detail && <span className="text-2xs text-[var(--color-text-muted)] truncate">· {e.detail}</span>}
                       </div>
                     </div>

@@ -6075,6 +6075,18 @@ class IngestPayload(_NulFreeInput):
     # environment. Free text so a team's own vocabulary (staging, ci-linux,
     # pixel-7) survives; normalized on the way in.
     environment: Optional[str] = Field(None, max_length=100)
+    # D-19: when the run actually EXECUTED, as on POST /ingest/file. Stored as the
+    # run's start_time and bounded the same way (services/execution_time: a time
+    # in the future or implausibly old degrades to the time it arrived). Left out
+    # of model_dump() when absent, so a batch without it is stored as before.
+    executed_at: Optional[datetime] = Field(
+        None,
+        description=(
+            "When the tests ran (ISO-8601). Omit it and the time the results "
+            "arrive is used."
+        ),
+        exclude_if=lambda value: value is None,
+    )
     # Commit attribution (US-8.1, air-gapped path) — optional pushed commit
     # list ([{sha, author, message, files}]) so callers can supply the range
     # since the last green run and get suspect ranking with no VCS call.

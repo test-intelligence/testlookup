@@ -187,7 +187,14 @@ def _render_table(real: list[dict], quarantined: list[dict], strict: bool) -> No
 
 
 def ci_verdict(
-    run_id: str = typer.Option(..., "--run", help="Run ID to compute the verdict for"),
+    # Positional like every other run command (``runs get <id>``, ``tests list
+    # <id>``); ``--run`` stays for the pipelines already written with it (D-124).
+    run_arg: str | None = typer.Argument(
+        None, metavar="[RUN_ID]", help="Run ID to compute the verdict for (or --run)",
+    ),
+    run_option: str | None = typer.Option(
+        None, "--run", help="Run ID to compute the verdict for (same as the RUN_ID argument)",
+    ),
     project: Optional[str] = typer.Option(
         None, "--project", "-p",
         help="Project ID (inferred from the run when omitted)",
@@ -232,6 +239,15 @@ def ci_verdict(
     (fail-closed; see --fail-open), and 2 = the run is still in progress or
     holds zero tests (see --allow-partial).
     """
+    if run_arg and run_option and run_arg != run_option:
+        # A CI gate must not guess which of two runs it was asked about.
+        raise typer.BadParameter(
+            f"two different runs given: RUN_ID {run_arg!r} and --run {run_option!r}; pass one.",
+            param_hint="RUN_ID / --run",
+        )
+    run_id = run_option or run_arg
+    if not run_id:
+        raise typer.BadParameter("give the run as RUN_ID or --run <run-id>.", param_hint="RUN_ID / --run")
     try:
         failures, manifest = asyncio.run(
             _gather(run_id, project, timeout_seconds, profile_name, allow_partial)

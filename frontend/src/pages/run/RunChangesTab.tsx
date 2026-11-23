@@ -82,7 +82,11 @@ export default function RunChangesTab({
   const [searchParams, setSearchParams] = useSearchParams()
   const bisectParam = searchParams.get('bisect')
   const openFingerprint = bisectParam && bisectParam !== 'top' ? bisectParam : null
-  const topFingerprint = data?.new_failing_tests?.[0]?.test_fingerprint ?? null
+  // D-10: with no new failure, `top` is the run's first failing test (the narrowing walks any failing test
+  // back to its own last pass), so the Runs CTA never lands on an empty view while the run has failures.
+  const topFingerprint = data?.new_failing_tests?.[0]?.test_fingerprint
+    ?? data?.first_failing_test?.test_fingerprint
+    ?? null
   useEffect(() => {
     if (bisectParam !== 'top' || !data) return
     setSearchParams((current) => {
@@ -101,18 +105,32 @@ export default function RunChangesTab({
     }, { replace: true })
   }
 
-  // The baseline the diff measured against, on the left of Compare.
+  // The baseline the diff measured against, on the left of Compare. D-16: the diff is whole-run, so the
+  // compare is too -- no suite on either side (the "previous run" button beside it is the suite-scoped one).
   const baselineHref = data?.baseline_available && data.baseline_run_id
     ? buildCompareWithPreviousHref(
-        { id: runId, primary_suite_name: run?.primary_suite_name ?? null },
-        { id: data.baseline_run_id, primary_suite_name: run?.primary_suite_name ?? null },
+        { id: runId, primary_suite_name: null },
+        { id: data.baseline_run_id, primary_suite_name: null },
       )
+    : null
+
+  // D-10: say which rule chose the baseline. An older server sends no kind: the wording from before.
+  const words = baselineWords(data?.baseline_available ? data.baseline_kind : null, data?.baseline_threshold)
+
+  // A narrowing opened on a test that has no row of its own under "New failures" (`top` resolved to the
+  // run's first failing test, or a shared `?bisect=<fp>` link) renders on its own under the card's body.
+  const listedFingerprints = new Set(
+    (data?.baseline_available ? data.new_failing_tests ?? [] : []).slice(0, 10).map((t) => t.test_fingerprint),
+  )
+  const standaloneFingerprint = openFingerprint && !listedFingerprints.has(openFingerprint) ? openFingerprint : null
+  const standaloneName = standaloneFingerprint && data?.first_failing_test?.test_fingerprint === standaloneFingerprint
+    ? data.first_failing_test.test_name
     : null
 
   return (
     <div className="space-y-4">
-      <section data-primary="" aria-label="What changed since the last good run" className="card">
-        <h2 className="m-0 text-sm font-semibold text-[var(--color-text)]">What changed since the last good run</h2>
+      <section data-primary="" aria-label={words.title} className="card" data-baseline-kind={words.kind}>
+        <h2 className="m-0 text-sm font-semibold text-[var(--color-text)]">{words.title}</h2>
         {isLoading && <div className="flex justify-center py-8"><LoadingSpinner /></div>}
         {!isLoading && error && (
           <p className="mt-3 text-sm text-[var(--status-failed)]">Could not load the regression diff for this run.</p>
@@ -144,6 +162,9 @@ export default function RunChangesTab({
 
             <div>
               <p className="text-xs text-[var(--color-text-muted)]">Baseline: Build #{data.baseline_build_number}</p>
+              {words.note && (
+                <p data-baseline-kind-note="" className="text-xs text-[var(--color-text-muted)] mt-0.5">{words.note}</p>
+              )}
               {data.baseline_purged && <BaselinePurgedLine purged={data.baseline_purged} className="mt-0.5" />}
             </div>
 
@@ -212,6 +233,21 @@ export default function RunChangesTab({
             )}
           </div>
         )}
+        {!isLoading && !error && data && standaloneFingerprint && (
+          <div
+            id={`narrow-${standaloneFingerprint}`}
+            data-narrow-box=""
+            data-narrow-standalone=""
+            className="mt-3 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-3"
+          >
+            <BisectNarrowing
+              runId={runId}
+              fingerprint={standaloneFingerprint}
+              heading={standaloneName ? inlineHeading(standaloneName) : undefined}
+              runBuild={run?.build_number != null ? String(run.build_number) : null}
+            />
+          </div>
+        )}
       </section>
 
       {/* W36 STRAT-08: this run's tests ranked against the changed files above. Advisory: never selects or skips. */}
@@ -227,7 +263,7 @@ export default function RunChangesTab({
         {baselineHref && (
           <Link to={baselineHref} className={LINK}>
             <GitCompare className="h-3.5 w-3.5" />
-            Compare with build #{data?.baseline_build_number} (last good)
+            Compare with build #{data?.baseline_build_number} ({words.short})
           </Link>
         )}
         <button
@@ -250,6 +286,35 @@ export default function RunChangesTab({
       </section>
     </div>
   )
+}
+
+/** The default fallback threshold (RELEASE_PASS_RATE_THRESHOLD 90 * 0.85) when the server sends none. */
+const DEFAULT_BASELINE_THRESHOLD = 76.5
+
+/**
+ * D-10: the card title, the note under "Baseline: Build #N" and the compare link's label, by how the baseline
+ * was chosen. `passing` (or an older server that sends no kind): the last good run. `threshold`: no run of the
+ * branch passed every test, so the baseline is the nearest earlier run at or above the threshold.
+ */
+function baselineWords(
+  kind: 'passing' | 'threshold' | null | undefined,
+  threshold: number | null | undefined,
+): { title: string; short: string; note: string | null; kind: string } {
+  if (kind === 'threshold') {
+    const pct = `${Number((typeof threshold === 'number' ? threshold : DEFAULT_BASELINE_THRESHOLD).toFixed(1))}%`
+    return {
+      title: `What changed since the nearest run above ${pct}`,
+      short: `nearest run above ${pct}`,
+      note: `No earlier run of this branch passed every test: compared with the nearest run at or above ${pct} pass rate.`,
+      kind: 'threshold',
+    }
+  }
+  return {
+    title: 'What changed since the last good run',
+    short: 'last good',
+    note: null,
+    kind: kind === 'passing' ? 'passing' : '',
+  }
 }
 
 /**

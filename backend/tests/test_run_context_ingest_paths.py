@@ -163,7 +163,9 @@ def harness(monkeypatch):
     file_task = MagicMock()
     file_task.apply_async = lambda *, kwargs, task_id: state["file_kwargs"].append(kwargs) or SimpleNamespace(id=task_id)
     batch_task = MagicMock()
-    batch_task.delay = lambda **kw: state["batch_kwargs"].append(kw) or SimpleNamespace(id="task-batch")
+    batch_task.apply_async = (
+        lambda *, kwargs, task_id: state["batch_kwargs"].append(kwargs) or SimpleNamespace(id=task_id)
+    )
     monkeypatch.setattr("app.services.ingestion_backpressure.enforce_redis_memory_backpressure", _open)
     monkeypatch.setattr("app.services.ingestion_rate_limit.enforce_ingest_rate_limit", _open)
     monkeypatch.setattr("app.routers.stream.enforce_redis_memory_backpressure", _open, raising=False)

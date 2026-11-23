@@ -80,11 +80,25 @@ function shortHash(key: string): string {
   return (Math.abs(hash) >>> 0).toString(16).padStart(6, '0').slice(0, 3)
 }
 
-/** The table chip's words for a group: never wider than today's `abc-cluster`. */
-export function chipLabelOf(key: string): string {
+/** The chip's words are cut here (the cell also truncates them with CSS; the full error is the title). */
+export const CHIP_LABEL_MAX = 32
+
+/**
+ * The table chip's words for a group. D-46: it read `946-cluster`, a hash that
+ * meant nothing without hovering; it now reads the start of the shared error
+ * (`AssertionError: expected 3…`), with a dotted package prefix dropped
+ * (`java.lang.NullPointerException` → `NullPointerException`). The hash form
+ * stays only for a group with no words at all.
+ */
+export function chipLabelOf(key: string, title?: string | null): string {
   if (key === NO_MESSAGE) return 'no message'
   if (key === NO_FAILING_TESTS) return 'no tests'
-  return `${shortHash(key)}-cluster`
+  const words = (title || key)
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/^(?:[a-z_$][\w$]*\.)+(?=[A-Z])/, '')
+  if (!words) return `${shortHash(key)}-cluster`
+  return words.length > CHIP_LABEL_MAX ? `${words.slice(0, CHIP_LABEL_MAX - 1).trimEnd()}…` : words
 }
 
 function dominantEntry(item: RunSignatureItem): RunSignatureEntry | undefined {
@@ -140,7 +154,7 @@ export function buildSignatureModel(windowRuns: readonly TestRun[], batch: RunSi
       sharedTests: g.members.length < 2
         ? []
         : g.tests.reduce((shared, names) => shared.filter((n) => names.includes(n))),
-      chipLabel: chipLabelOf(key),
+      chipLabel: chipLabelOf(key, g.title),
     }))
     .sort((a, b) => b.members.length - a.members.length || byteOrder(a.key, b.key))
 

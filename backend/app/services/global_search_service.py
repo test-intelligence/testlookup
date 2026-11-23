@@ -28,7 +28,7 @@ from typing import Any, Optional, Sequence
 from urllib.parse import urlencode
 
 import structlog
-from sqlalchemy import any_, bindparam, case, cast, func, select, or_, String, Text, union
+from sqlalchemy import any_, bindparam, case, cast, func, select, or_, String, Text, tuple_, union
 from sqlalchemy.dialects.postgresql import ARRAY, UUID as PG_UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -476,29 +476,73 @@ async def _search_test_cases(
         select(run_suite.c.id, run_suite.c.created_at),
     ).subquery("hits")
 
+    # D-17: one hit per logical test, not one per execution. The hits are
+    # executions; ``DISTINCT ON (project, fingerprint)`` keeps each test's
+    # newest one (the keyword path's rule, ``search_service`` "Dedupe: one row
+    # per logical test case"), and the outer query orders those by recency.
+    # The two halves stay bounded as above; only their union is de-duplicated.
+    newest = (
+        select(TestCase.id.label("id"))
+        .join(TestRun, TestCase.test_run_id == TestRun.id)
+        .join(hits, hits.c.id == TestCase.id)
+        .distinct(TestRun.project_id, TestCase.test_fingerprint)
+        .order_by(TestRun.project_id, TestCase.test_fingerprint, TestCase.created_at.desc())
+    ).subquery("newest")
+
     stmt = (
         select(TestCase, TestRun.project_id)
         .join(TestRun, TestCase.test_run_id == TestRun.id)
-        .join(hits, hits.c.id == TestCase.id)
+        .join(newest, newest.c.id == TestCase.id)
         .order_by(TestCase.created_at.desc())
         .limit(limit)
     )
 
     rows = (await db.execute(stmt)).all()
-    return [
-        {
+    runs_of = await _test_execution_counts(db, rows, period_start, terms)
+    results = []
+    for tc, pid in rows:
+        executions = runs_of.get((pid, tc.test_fingerprint), 1)
+        results.append({
             "entity_type": "test_case",
             "entity_id": str(tc.id),
             "title": tc.test_name,
-            "subtitle": f"{tc.suite_name or 'No suite'} · {tc.status}",
+            "subtitle": (
+                f"{tc.suite_name or 'No suite'} · {tc.status}"
+                + (f" · {executions} runs" if executions > 1 else "")
+            ),
             "project_id": str(pid) if pid else None,
             "navigation_url": f"/runs/{tc.test_run_id}/tests/{tc.id}",
             "relevance_score": 0.8,
             "match_reasons": ["Matched test name, suite, or error message"],
-            "metadata": {"status": tc.status, "suite_name": tc.suite_name},
-        }
-        for tc, pid in rows
-    ]
+            # ``executions``: how many runs of the window ran this test (the
+            # hit is its newest one).
+            "metadata": {"status": tc.status, "suite_name": tc.suite_name, "executions": executions},
+        })
+    return results
+
+
+async def _test_execution_counts(
+    db: AsyncSession, rows: Sequence, period_start: Optional[datetime], terms: list,
+) -> dict[tuple[Any, str], int]:
+    """D-17: executions per (project, fingerprint) of the tests on the page.
+
+    Scoped to the page's own (project, fingerprint) pairs, which came from the
+    tenant-filtered search above, with the same window and filter terms; no
+    rows -> no statement.
+    """
+    pairs = {(pid, tc.test_fingerprint) for tc, pid in rows if pid is not None and tc.test_fingerprint}
+    if not pairs:
+        return {}
+    stmt = (
+        select(TestRun.project_id, TestCase.test_fingerprint, func.count().label("n"))
+        .join(TestRun, TestCase.test_run_id == TestRun.id)
+        .where(tuple_(TestRun.project_id, TestCase.test_fingerprint).in_(sorted(pairs, key=str)))
+    )
+    if period_start:
+        stmt = stmt.where(TestCase.created_at >= period_start)
+    stmt = _with_terms(stmt, terms)
+    stmt = stmt.group_by(TestRun.project_id, TestCase.test_fingerprint)
+    return {(pid, fp): int(n) for pid, fp, n in (await db.execute(stmt)).all()}
 
 
 async def _search_test_runs(

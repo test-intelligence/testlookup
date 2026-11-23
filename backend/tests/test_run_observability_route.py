@@ -60,6 +60,9 @@ class _GuardedSession(_Session):
             self.statements.append((sql, {}))
             run = self.w.runs.get(next(iter(stmt.compile().params.values())))
             return _Result(value=run.project_id if run else None)
+        if sql.startswith("SELECT live_sessions.project_id"):  # the guard's streaming-run fallback (D-86)
+            self.statements.append((sql, {}))
+            return _Result(value=None)
         if sql.startswith("SELECT project_members.id"):
             self.statements.append((sql, {}))
             return _Result(value=uuid.uuid4() if self.w.member else None)

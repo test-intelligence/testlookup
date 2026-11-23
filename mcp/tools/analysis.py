@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Optional
 
 import client as api  # type: ignore[import]
+from tools.metrics import DEFAULT_WINDOW_DAYS  # type: ignore[import]
 
 _CATEGORY_ICON = {
     "PRODUCT_BUG": "🐛",
@@ -157,7 +158,7 @@ def register(mcp) -> None:  # noqa: ANN001
         query: str,
         project_id: Optional[str] = None,
         status: Optional[str] = None,
-        days: int = 30,
+        days: int = DEFAULT_WINDOW_DAYS,
         page: int = 1,
         size: int = 20,
     ) -> str:
@@ -191,10 +192,10 @@ def register(mcp) -> None:  # noqa: ANN001
         search_type = data.get("search_type", "keyword")
 
         if not items:
-            return f'No tests found matching "{query}".'
+            return f'No tests found matching "{query}" in the last {days} days.'
 
         lines = [
-            f'## Search Results for "{query}" ({search_type}) — {total} matches\n',
+            f'## Search Results for "{query}" ({search_type}) — {total} matches in the last {days} days\n',
             f"| Test Name | Suite | Status | Failures | Last Run |",
             f"|-----------|-------|--------|----------|----------|",
         ]

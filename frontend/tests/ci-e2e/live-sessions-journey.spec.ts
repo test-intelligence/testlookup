@@ -2,9 +2,11 @@
  * GAP-D06 (test-coverage round 2026-11-18, card TEST-D), hermetic: `/live` (Runs › Live, every role) had nine vitest
  * files and no browser journey. As a VIEWER and as a TESTER (one browser context each):
  *
- *  - with no session in the window, the table says exactly "No active execution sessions. Start a test run with the
- *    client SDK." and the header "No active runs" / "Stream is connected — waiting for the first run";
- *  - with one running and one completed session, both rows are listed (Run #N, linked to the run), the header counts
+ *  - with no session in the window, the table says exactly "No sessions in the last 30 days. Start a test run with
+ *    the client SDK." (D-94: it said "No active execution sessions") and the header "No active runs" / "Stream is
+ *    connected — waiting for the first run";
+ *  - with one running and one completed session, both rows are listed (by build label, linked to the run; D-88: the
+ *    running one has no "Run #N" yet, the finished one keeps it as a muted ordinal), the header counts
  *    one active run, no empty line shows; a search that matches nothing says "No sessions match the current filter.";
  *  - no toast and no write, and the page's socket (`/ws/live/{project}`) authenticates with the stored token.
  *
@@ -135,7 +137,7 @@ for (const user of [VIEWER, TESTER]) {
   test(`/live as ${user.role} with no session: the empty line tells how to start a run`, async ({ page }) => {
     const opened = await openLive(page, [], user)
     await expect(bodyRows(page)).toHaveCount(1)
-    await expect(bodyRows(page)).toHaveText('No active execution sessions. Start a test run with the client SDK.')
+    await expect(bodyRows(page)).toHaveText('No sessions in the last 30 days. Start a test run with the client SDK.')
     await expect(page.getByText('No active runs', { exact: true })).toBeVisible()
     await expect(page.getByText('Stream is connected — waiting for the first run', { exact: true })).toBeVisible()
     await expectCleanEnd(page, opened, user.role)
@@ -144,10 +146,12 @@ for (const user of [VIEWER, TESTER]) {
   test(`/live as ${user.role} with sessions: both rows listed, one active run; a search with no match says so`, async ({ page }) => {
     const opened = await openLive(page, [RUNNING, COMPLETED], user)
     await expect(bodyRows(page)).toHaveCount(2)
-    await expect(page.getByText('No active execution sessions. Start a test run with the client SDK.')).toHaveCount(0)
+    await expect(page.getByText('No sessions in the last 30 days. Start a test run with the client SDK.')).toHaveCount(0)
     // Newest first (sorted by start): the running run, then the finished one, each linked to its run.
-    await expect(bodyRows(page).nth(0).getByRole('link', { name: 'Run #12', exact: true })).toHaveAttribute('href', `/runs/${RUNNING.test_run_id}`)
-    await expect(bodyRows(page).nth(1).getByRole('link', { name: 'Run #11', exact: true })).toHaveAttribute('href', `/runs/${COMPLETED.test_run_id}`)
+    await expect(bodyRows(page).nth(0).getByRole('link', { name: 'build-1042', exact: true })).toHaveAttribute('href', `/runs/${RUNNING.test_run_id}`)
+    await expect(bodyRows(page).nth(1).getByRole('link', { name: 'build-1041', exact: true })).toHaveAttribute('href', `/runs/${COMPLETED.test_run_id}`)
+    await expect(bodyRows(page).nth(0)).not.toContainText('Run #12')
+    await expect(bodyRows(page).nth(1)).toContainText('Run #11')
     await expect(bodyRows(page).nth(0)).toContainText('running')
     await expect(bodyRows(page).nth(0)).toContainText('93.8%')
     await expect(bodyRows(page).nth(1)).toContainText('completed')

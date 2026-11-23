@@ -19,6 +19,13 @@ from typing import Any
 
 import client as api  # type: ignore[import]
 
+#: The window every MCP tool with a ``days`` parameter uses by default: the
+#: REST API's and the app's (``GET /api/v1/runs`` defaults ``days=30``). Some
+#: tools defaulted to 7 and others to 30 without saying so, so an assistant
+#: compared a 7-day figure with a 30-day one (D-121, S-C-7). Each tool's output
+#: names the window it used.
+DEFAULT_WINDOW_DAYS = 30
+
 _READINESS_ICON = {"GREEN": "🟢", "AMBER": "🟡", "RED": "🔴"}
 
 #: The KPI cards this module reads from the summary payload.
@@ -94,7 +101,7 @@ def readiness_heading(data: dict) -> str:
 def register(mcp) -> None:  # noqa: ANN001
 
     @mcp.tool()
-    async def get_dashboard_metrics(project_id: str, days: int = 7) -> str:
+    async def get_dashboard_metrics(project_id: str, days: int = DEFAULT_WINDOW_DAYS) -> str:
         """
         Get executive-level quality KPIs for a project: executions, pass rate,
         open defects, flaky tests, new failures (always the last 24 h) and the
@@ -108,7 +115,7 @@ def register(mcp) -> None:  # noqa: ANN001
 
         Args:
             project_id: Project UUID.
-            days: Analysis window in days (1-90, default 7).
+            days: Analysis window in days (1-90, default 30).
         """
         data: dict[str, Any] = await api.get(
             api.path("/api/v1/metrics/summary"),
@@ -153,14 +160,14 @@ def register(mcp) -> None:  # noqa: ANN001
         return "\n".join(lines)
 
     @mcp.tool()
-    async def get_test_trends(project_id: str, days: int = 7) -> str:
+    async def get_test_trends(project_id: str, days: int = DEFAULT_WINDOW_DAYS) -> str:
         """
         Get daily pass/fail/skip trend data for a project. Useful for identifying
         when regressions were introduced and whether quality is improving.
 
         Args:
             project_id: Project UUID.
-            days: Number of days of history (7, 14, 30, 60, or 90).
+            days: Number of days of history (7, 14, 30, 60, or 90; default 30).
         """
         data = await api.get(
             api.path("/api/v1/metrics/trends"),

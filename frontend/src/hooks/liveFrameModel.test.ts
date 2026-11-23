@@ -23,7 +23,9 @@ import {
   LIVE_RESULTS_OMITTED,
   applyLiveUpdates,
   expandLiveFrame,
+  mergeBootstrapSessions,
   omittedResultsSentence,
+  sessionKey,
 } from './liveFrameModel'
 import type { LiveEvent } from './useLiveExecution'
 
@@ -287,5 +289,44 @@ describe('applyLiveUpdates', () => {
     expect(applyLiveUpdates(INITIAL, []).sessions).toBe(INITIAL)
     const again = { type: 'live_run_started', run_id: RUN_C, timestamp: NOW }
     expect(applyLiveUpdates(INITIAL, [again]).sessions).toBe(INITIAL)
+  })
+})
+
+describe('D-86 / D-87 / D-94 (2026-11-21): the canonical run id', () => {
+  const U = 'ffffffff-0000-5000-8000-000000000042'
+  const row = (p: Partial<LiveSessionState>): LiveSessionState => ({
+    run_id: 'ci-42', project_id: 'zz-project', build_number: 'ci-42', status: 'running',
+    total: 0, passed: 0, failed: 0, skipped: 0, broken: 0, pass_rate: null, ...p,
+  })
+
+  it('sessionKey is the canonical TestRun id, else the SDK id', () => {
+    expect(sessionKey(row({ test_run_id: U }))).toBe(U)
+    expect(sessionKey(row({ test_run_id: null }))).toBe('ci-42')
+  })
+
+  it('a started frame carrying test_run_id keeps it on the new row', () => {
+    const started = { type: 'live_run_started', run_id: 'ci-42', test_run_id: U, build_number: 'ci-42', timestamp: NOW }
+    const { sessions } = applyLiveUpdates([], [started])
+    expect(sessions[0]).toMatchObject({ run_id: 'ci-42', test_run_id: U })
+  })
+
+  it('a start for a run already held under its UUID adds no second row', () => {
+    const held = [row({ run_id: U, test_run_id: U })]
+    const started = { type: 'live_run_started', run_id: 'ci-42', test_run_id: U, timestamp: NOW }
+    expect(applyLiveUpdates(held, [started]).sessions).toBe(held)
+  })
+
+  it('mergeBootstrapSessions keeps completed rows and replaces the running ones', () => {
+    const prev = [
+      row({ run_id: 'done-1', test_run_id: null, status: 'completed' }),
+      row({ run_id: 'done-2', test_run_id: null, status: 'completed' }),
+      row({ run_id: 'gone', test_run_id: null, status: 'running' }),
+      row({ test_run_id: U, run_seq: 4, passed: 1 }),
+    ]
+    const merged = mergeBootstrapSessions(prev, [row({ test_run_id: U, passed: 5 })])
+
+    expect(merged.map(s => s.run_id)).toEqual(['ci-42', 'done-1', 'done-2'])
+    expect(merged[0]).toMatchObject({ run_seq: 4, passed: 5 })
+    expect(mergeBootstrapSessions(prev.slice(0, 2), [])).toEqual(prev.slice(0, 2))
   })
 })

@@ -20,6 +20,7 @@ from app.models.postgres import (
     TestStepRun,
 )
 from app.services.flaky_step_flip import StepFlipReport, compute_step_flips
+from app.services.run_time import run_time_column
 
 # Step status vocab (strict TestStatus values, see ingestion._map_step_status).
 # A step "failed" if it ended FAILED or BROKEN; a step "passed" if PASSED.
@@ -518,7 +519,9 @@ def run_list_filters(
     )
     if days and days > 0:
         cutoff = datetime.now(timezone.utc) - timedelta(days=days)
-        filters.append(TestRun.created_at >= cutoff)
+        # D-19: the window reads when the run EXECUTED (start_time, else
+        # created_at), so a back-dated upload is listed by its execution day.
+        filters.append(run_time_column() >= cutoff)
     if project_id:
         filters.append(TestRun.project_id == project_id)
     if accessible_project_ids is not None:
@@ -631,7 +634,9 @@ async def list_project_runs(
     )
     if days and days > 0:
         cutoff = datetime.now(timezone.utc) - timedelta(days=days)
-        filters.append(TestRun.created_at >= cutoff)
+        # D-19: the window reads when the run EXECUTED (start_time, else
+        # created_at), so a back-dated upload is listed by its execution day.
+        filters.append(run_time_column() >= cutoff)
     if project_id:
         filters.append(TestRun.project_id == project_id)
     if accessible_project_ids is not None:

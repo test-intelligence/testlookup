@@ -94,6 +94,7 @@ import SuiteFilterSelect from '@/components/ui/SuiteFilterSelect'
 import { helpTopicParam } from '@/components/help/helpTopics'
 import { useSuspects } from '@/hooks/useCommitAttribution'
 import BisectNarrowing from '@/components/bisect/BisectNarrowing'
+import { useBisectNarrowing } from '@/hooks/useBisectNarrowing'
 import CorrectClassificationModal, {
   CATEGORY_CHOICES,
 } from '@/components/ai/CorrectClassificationModal'
@@ -1223,6 +1224,58 @@ function RowAction({
   )
 }
 
+/**
+ * A row's Suspects section body: the narrowing (W23b FAIL-12) above the ranked suspects (Epic 8 US-8.2).
+ *
+ * D-11: the suspects are ranked against the narrowing's FIRST failing build (`bisect.bad`) when it found
+ * one -- the commits that arrived with the build that broke the test -- not the test's latest failing run,
+ * whose commits can be unrelated. Both blocks share the one `/bisect` read (the same SWR key). While that
+ * read is pending the suspects wait (one `/suspects` read, never two); a failed or un-narrowed read falls
+ * back to the last failure (HON-05: still this test's own run, never the project's newest failed run).
+ */
+function RowSuspects({
+  lastFailedRunId, lastFailedBuild, lastFailed, fingerprint,
+}: {
+  lastFailedRunId: string
+  lastFailedBuild: string | null
+  lastFailed: string | null
+  fingerprint: string | null
+}) {
+  const bisect = useBisectNarrowing(lastFailedRunId, fingerprint)
+  // The last failure IS the first one (a streak of one): nothing moves, the line reads as before.
+  const bad = bisect.data?.state === 'narrowed' ? bisect.data.bad : null
+  const firstFailure = bad && bad.run_id !== lastFailedRunId ? bad : null
+  const pending = Boolean(fingerprint) && bisect.isLoading
+  const runId = firstFailure ? firstFailure.run_id : lastFailedRunId
+  const build = firstFailure ? firstFailure.build_number : lastFailedBuild
+  return (
+    <>
+      {/* HON-05: name the run the commits are attributed against — this test's own
+          first failure (the narrowing's) or, without one, its last failure. */}
+      {!pending && (
+        <p className="m-0 mb-3 text-xs text-[var(--color-text-muted)]" data-testid="suspects-run">
+          Commits leading up to this test&apos;s {firstFailure ? 'first' : 'last'} failure, in run{' '}
+          <Link
+            to={`/runs/${encodeURIComponent(runId)}`}
+            className="font-mono text-[var(--color-accent)] hover:underline"
+          >
+            {build || runId.slice(0, 8)}
+          </Link>
+          {!firstFailure && lastFailed ? ` (${shortAgo(lastFailed)})` : ''}.
+        </p>
+      )}
+      {/* W23b FAIL-12: this test's own last pass and first failure, above the
+          run-level suspects (read only while this section is open). */}
+      {fingerprint && (
+        <div className="mb-4">
+          <BisectNarrowing runId={lastFailedRunId} fingerprint={fingerprint} runBuild={lastFailedBuild} />
+        </div>
+      )}
+      <SuspectsPanel runId={pending ? null : runId} fingerprint={fingerprint} panelId="suspects-panel" />
+    </>
+  )
+}
+
 // ── Suspects panel (Epic 8 US-8.2) ────────────────────────────────────────
 // "Who / what changed" — the re-added bisect surface. Ranks the commits
 // landed since the last green run as SUSPECTS (never culprits) for the
@@ -2311,33 +2364,11 @@ export default function FailureAnalysisPage() {
           onClose={() => closeRowAction(open)}
           slot={tableSlot}
         >
-          {/* HON-05: name the run the commits are attributed against — this
-              test's own last failure, not the project's newest failed run. */}
-          <p className="m-0 mb-3 text-xs text-[var(--color-text-muted)]" data-testid="suspects-run">
-            Commits leading up to this test&apos;s last failure, in run{' '}
-            <Link
-              to={`/runs/${encodeURIComponent(runId)}`}
-              className="font-mono text-[var(--color-accent)] hover:underline"
-            >
-              {row.test.last_failed_build || runId.slice(0, 8)}
-            </Link>
-            {row.test.last_failed ? ` (${shortAgo(row.test.last_failed)})` : ''}.
-          </p>
-          {/* W23b FAIL-12: this test's own last pass and first failure, above the
-              run-level suspects (read only while this section is open). */}
-          {row.test.test_fingerprint && (
-            <div className="mb-4">
-              <BisectNarrowing
-                runId={runId}
-                fingerprint={row.test.test_fingerprint}
-                runBuild={row.test.last_failed_build ?? null}
-              />
-            </div>
-          )}
-          <SuspectsPanel
-            runId={runId}
+          <RowSuspects
+            lastFailedRunId={runId}
+            lastFailedBuild={row.test.last_failed_build ?? null}
+            lastFailed={row.test.last_failed ?? null}
             fingerprint={row.test.test_fingerprint ?? null}
-            panelId="suspects-panel"
           />
         </InlineFormSection>
       )

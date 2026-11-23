@@ -282,7 +282,7 @@ def test_a_day_is_a_half_open_utc_range_on_the_run_s_clock() -> None:
     sql, params = svc.build_rows_statement(
         _req(group_by=("day",), day="2026-09-20"), _scope(), now=FROZEN,
     )
-    assert "AND tr.created_at >= :bucket_day_from AND tr.created_at < :bucket_day_to" in sql
+    assert "AND COALESCE(tr.start_time, tr.created_at) >= :bucket_day_from AND COALESCE(tr.start_time, tr.created_at) < :bucket_day_to" in sql
     assert "TO_CHAR" not in sql
     assert params["bucket_day_from"] == datetime(2026, 9, 20, tzinfo=timezone.utc)
     assert params["bucket_day_to"] == datetime(2026, 9, 21, tzinfo=timezone.utc)
@@ -325,7 +325,7 @@ def test_the_chart_s_scope_fragments_bound_the_rows() -> None:
     scope = _scope(release_ids=(rel,), suite_names=("Payments",))
     sql, params = svc.build_rows_statement(_req(group_by=("day",), day="2026-09-20", scope=scope),
                                            scope, now=FROZEN)
-    assert "tr.created_at >= :period_start" in sql
+    assert "COALESCE(tr.start_time, tr.created_at) >= :period_start" in sql
     assert "AND tr.project_id = :project_id" in sql
     assert "AND tr.primary_release_id = :release_id" in sql
     assert params["release_id"] == rel
@@ -345,7 +345,7 @@ def test_the_page_is_ordered_newest_run_first_and_bounded_by_binds() -> None:
     sql, params = svc.build_rows_statement(
         _req(bucket_suite="a", page=3, size=20), _scope(), now=FROZEN,
     )
-    assert "ORDER BY tr.created_at DESC, tc.id DESC" in sql
+    assert "ORDER BY COALESCE(tr.start_time, tr.created_at) DESC, tc.id DESC" in sql
     assert "LIMIT :rows_limit OFFSET :rows_offset" in sql
     assert (params["rows_limit"], params["rows_offset"]) == (20, 40)
 
@@ -381,8 +381,8 @@ def test_the_signature_runs_after_the_window_behind_a_fence() -> None:
     sql, _ = svc.build_rows_statement(req, _scope(), now=FROZEN)
     candidates = sql.index("WITH candidates AS MATERIALIZED (")
     matched = sql.index("matched AS MATERIALIZED (")
-    window = sql.index("tr.created_at >= :period_start")
-    day = sql.index("AND tr.created_at >= :bucket_day_from")
+    window = sql.index("COALESCE(tr.start_time, tr.created_at) >= :period_start")
+    day = sql.index("AND COALESCE(tr.start_time, tr.created_at) >= :bucket_day_from")
     signature = sql.index(":bucket_error_signature")
     assert candidates < window < day < matched < signature
     assert sql.count(":bucket_error_signature") == 1, "the regex runs once, not per CTE"

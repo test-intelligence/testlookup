@@ -14,7 +14,7 @@ knows which lines of the product those tests touch.
 **Two populations, one tree.**
 
 * *Executed* tests: every ``test_cases`` row in the window (by the RUN's
-  ``created_at``, the clock chart-data and the heatmap use), grouped per test
+  run time, ``COALESCE(start_time, created_at)``, the clock chart-data and the heatmap use), grouped per test
   fingerprint under its EFFECTIVE suite -- the one suite rule
   (``analytics_scope.effective_suite_sql``), keyed exactly as chart-data keys
   its ``suite`` dimension, so a drill value means the same thing on both routes.
@@ -76,6 +76,7 @@ from app.services.analytics_scope import (
     suite_label_in_sql,
 )
 from app.services.chart_data_service import DIMENSIONS, NO_VALUE, window_start
+from app.services.run_time import RUN_TIME_SQL
 
 logger = structlog.get_logger(__name__)
 
@@ -281,7 +282,7 @@ def build_statement(
 
     1. ``ex`` -- one row per (effective suite, test) executed in scope, with the
        five status counts, whether any execution was flagged flaky, and the
-       latest run's ``created_at``.
+       latest run's run time.
     2. ``seen`` / ``idle`` -- canonical tests with no execution anywhere in the
        scope (window, project, releases: NOT the suite filters, so a test that
        ran under another suite is not "idle" here), with their last sighting.
@@ -329,7 +330,7 @@ def build_statement(
         seen = f"""
             SELECT DISTINCT tc.test_fingerprint AS fp
             FROM test_cases tc JOIN test_runs tr ON tr.id = tc.test_run_id
-            WHERE tr.created_at >= :period_start
+            WHERE {RUN_TIME_SQL} >= :period_start
               {tenant_runs}
               {releases}"""
 
@@ -401,9 +402,9 @@ def build_statement(
                 {_status_count(TestStatus.SKIPPED)} AS skipped,
                 {_status_count(TestStatus.UNKNOWN)} AS unknown,
                 BOOL_OR(tc.is_flaky_run IS TRUE) AS flaky,
-                MAX(tr.created_at) AS last_at
+                MAX({RUN_TIME_SQL}) AS last_at
             FROM test_cases tc JOIN test_runs tr ON tr.id = tc.test_run_id
-            WHERE tr.created_at >= :period_start
+            WHERE {RUN_TIME_SQL} >= :period_start
               {tenant_runs}
               {releases}
               {suite_scope_rows}
@@ -518,7 +519,7 @@ def _instant(moment: datetime) -> str:
 def staleness_days(last_at: datetime, now: datetime) -> int:
     """Whole UTC calendar days from the last execution to the request clock.
 
-    The run's own ``created_at`` against the request's ONE clock -- not the
+    The run's own run time (start_time, else created_at) against the request's ONE clock -- not the
     database's ``now()``, not the time of the cache fill. A run dated in the
     future (clock skew) is 0 days stale, never negative.
     """
@@ -667,8 +668,8 @@ def definitions(
         "level": {1: "suite", 2: "class", 3: "test"}[level.depth],
         "timezone": "UTC",
         "window_clock": (
-            "An execution counts when its RUN's created_at is in the window "
-            "(test_runs.created_at, UTC), the clock chart-data and the heatmap "
+            "An execution counts when its RUN's run time is in the window "
+            "(test_runs.start_time, else test_runs.created_at, UTC), the clock chart-data and the heatmap "
             "use. /analytics/coverage counts by the row's own created_at, so the "
             "two can differ by ingestion lag at the window edge."
         ),

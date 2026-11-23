@@ -43,6 +43,7 @@ import { Table, Td, Th, Tr } from '@/components/ui/Table'
 import { useTabParam } from '@/components/ui/useTabParam'
 import { helpTopicParam } from '@/components/help/helpTopics'
 import { formatRunWhen } from '@/utils/formatters'
+import { runBuildLabel } from '@/utils/runOption'
 import { SEVERITY_STYLE, severityLevel } from '@/components/ui/severity'
 import { useMyFailures, useReassignOptions } from '@/hooks/useMyFailures'
 import { useProjectStore, ALL_PROJECTS_ID } from '@/store/projectStore'
@@ -450,16 +451,20 @@ function FailureRow({
       </Td>
       <Td className="font-mono text-xs whitespace-nowrap">
         {/* Project name is omitted because the user selects it in the global
-            project dropdown — surfacing it again per-row is redundant. Run
-            identifier is the human-readable, per-(project, suite) incremental
-            ``Run #N``; falls back to the raw SDK build_number for pre-run_seq
-            rows. Under it, on the same line: when the run was generated (so
-            same-numbered "Run #N" rows are distinguishable at a glance, as on
-            /live) and the short test_run_id slug as a copy/correlation aid. */}
-        {item.run_seq != null ? (
-          <span className="text-[var(--color-text)]">Run #{item.run_seq}</span>
-        ) : item.build_number ? (
-          <span className="text-[var(--color-text)]">{item.build_number}</span>
+            project dropdown — surfacing it again per-row is redundant. D-67:
+            the run is named by its build label (`runBuildLabel`, as on /runs),
+            with the per-(project, suite) "Run #N" muted beside it (it repeats
+            in every suite). Under it, on the same line: when the run was
+            generated and the short test_run_id slug as a copy/correlation aid. */}
+        {item.build_number || item.run_seq != null ? (
+          <>
+            {item.build_number && (
+              <span className="text-[var(--color-text)]" data-run-build-label="">{runBuildLabel({ build_number: item.build_number })}</span>
+            )}
+            {item.run_seq != null && (
+              <span className={item.build_number ? 'ml-1.5 text-[var(--color-text-muted)]' : 'text-[var(--color-text)]'}>Run #{item.run_seq}</span>
+            )}
+          </>
         ) : (
           <span className="text-[var(--color-text-faint)]">—</span>
         )}

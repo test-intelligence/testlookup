@@ -70,7 +70,7 @@ test('the test table starts within the fold budget at 1440 x 900, failures first
 
   // One header, its tab bar, then the chips and the table.
   await expect(page.locator('[data-page-header]')).toHaveCount(1)
-  await expect(page.getByRole('heading', { level: 1, name: 'Run #240' })).toBeVisible()
+  await expect(page.getByRole('heading', { level: 1, name: 'Build 240' })).toBeVisible()
   const tabs = page.getByRole('tablist', { name: 'Run sections' })
   await expect(tabs.getByRole('tab', { name: /Tests/ })).toHaveAttribute('aria-selected', 'true')
   const chips = page.getByRole('group', { name: 'Filter by status' }).getByRole('button')

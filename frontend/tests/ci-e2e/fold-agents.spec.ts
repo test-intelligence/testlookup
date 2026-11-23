@@ -89,7 +89,7 @@ test('a run on screen: one picker, the AI report full width within the fold, the
   expect(geometry.pageSelects).toBe(1)
   const picker = page.getByLabel('Test suite & build')
   await expect(picker).toHaveValue(RUN_ID)
-  await expect(picker.locator('option:checked')).toHaveText(`Auth · Run #${RUN.run_seq}`)
+  await expect(picker.locator('option:checked')).toHaveText(`Auth · Build ${RUN.build_number} · Run #${RUN.run_seq}`)
   const row = page.getByRole('region', { name: 'Pipelines' }).getByRole('button', { name: /offline pipeline/i })
   await expect(row).toHaveAttribute('aria-pressed', 'true')
   await expect(row.getByTestId('pipeline-status-chip')).toHaveText('COMPLETED')

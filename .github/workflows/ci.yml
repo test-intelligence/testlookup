@@ -971,6 +971,7 @@ jobs:
           tests/integration/test_run_ai_verdicts_postgres.py
           tests/integration/test_run_signatures_postgres.py
           tests/integration/test_runs_list_filters_postgres.py
+          tests/integration/test_run_time_postgres.py
           tests/integration/test_failure_detail_postgres.py
           tests/integration/test_time_to_fix_postgres.py
           tests/integration/test_classification_hints_postgres.py

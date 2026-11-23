@@ -29,7 +29,7 @@ def mock_celery_dispatch():
     need a running broker. Returns the mocks so callers can assert on them.
     """
     batch_task = AsyncMock()
-    batch_task.delay = lambda *a, **kw: type("T", (), {"id": "task-batch-1"})()
+    batch_task.apply_async = lambda *, kwargs, task_id: type("T", (), {"id": task_id})()
     file_task = AsyncMock()
     file_task.apply_async = (
         lambda *, kwargs, task_id: type("T", (), {"id": task_id})()

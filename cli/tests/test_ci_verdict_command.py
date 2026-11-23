@@ -455,3 +455,41 @@ def test_the_in_progress_names_match_the_backend_run_status_enum():
     assert ci_verdict_mod._IN_PROGRESS_STATUSES & statuses == {"IN_PROGRESS"}, (
         "PASSED, FAILED and STOPPED are terminal: ci-verdict must not wait on them"
     )
+
+
+# ── D-124: the run id is positional like every other run command; --run still works ──
+
+
+def _run_calls(api):
+    return [(m, p) for m, p, _params in api["calls"] if p.startswith("/api/v1/runs/")]
+
+
+def test_the_run_id_can_be_positional_and_sends_the_same_requests_as_run(api):
+    by_option = CliRunner().invoke(app, ["ci-verdict", "--run", RUN_ID])
+    option_calls = _run_calls(api)
+    api["calls"].clear()
+
+    by_argument = CliRunner().invoke(app, ["ci-verdict", RUN_ID])
+
+    assert by_argument.exit_code == by_option.exit_code == 1, by_argument.output
+    assert _run_calls(api) == option_calls
+    assert option_calls[0] == ("GET", f"/api/v1/runs/{RUN_ID}")
+
+
+def test_the_same_run_given_both_ways_is_fine(api):
+    result = CliRunner().invoke(app, ["ci-verdict", RUN_ID, "--run", RUN_ID])
+    assert result.exit_code == 1, result.output  # the real failure on page 2, not a usage error
+
+
+def test_two_different_runs_are_a_usage_error_not_a_guess(api):
+    result = CliRunner().invoke(app, ["ci-verdict", RUN_ID, "--run", "other-run"])
+    assert result.exit_code == 2
+    assert "two different runs" in _plain(result.output)
+    assert api["calls"] == [], "nothing may be judged when the run is ambiguous"
+
+
+def test_no_run_at_all_is_a_usage_error(api):
+    result = CliRunner().invoke(app, ["ci-verdict"])
+    assert result.exit_code == 2
+    assert "RUN_ID or --run" in _plain(result.output)
+    assert api["calls"] == []

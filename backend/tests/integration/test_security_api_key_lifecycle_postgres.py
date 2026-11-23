@@ -136,12 +136,12 @@ async def world(monkeypatch):
     task = ingest_uploaded_results._get_current_object()
     signature = inspect.signature(task.run)
 
-    def _delay(*args, **kwargs):
-        bound = signature.bind(*args, **kwargs)
+    def _apply_async(args=None, kwargs=None, task_id=None, **_options):
+        bound = signature.bind(*(args or ()), **(kwargs or {}))
         queued.append(dict(bound.arguments))
-        return SimpleNamespace(id=f"secb1-task-{len(queued)}")
+        return SimpleNamespace(id=task_id)
 
-    monkeypatch.setattr(task, "delay", _delay)
+    monkeypatch.setattr(task, "apply_async", _apply_async)
 
     tag = uuid.uuid4().hex[:10]
     project = uuid.uuid4()

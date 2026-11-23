@@ -239,7 +239,9 @@ async def test_compute_regression_diff_carries_config_drift_and_fingerprints(_fl
 
     diff = await regression_diff_service.compute_regression_diff(run, db)
 
-    assert set(diff) == PRE_W23B_KEYS | {"config_drift"}
+    # D-10 adds how the baseline was chosen (and the fallback's threshold).
+    assert set(diff) == PRE_W23B_KEYS | {"config_drift", "baseline_kind", "baseline_threshold", "first_failing_test"}
+    assert diff["baseline_kind"] == "threshold"  # the double's baseline carries no PASSED status
     assert diff["new_failing_tests"] == [
         {"test_name": "t-fp-sentinel-a", "suite_name": "s", "test_fingerprint": "fp-sentinel-a"},
         {"test_name": "t-fp-sentinel-b", "suite_name": "s", "test_fingerprint": "fp-sentinel-b"},
@@ -259,4 +261,6 @@ async def test_the_no_baseline_answer_is_unchanged(_flat_commit_range):
                           build_number="1")
     diff = await regression_diff_service.compute_regression_diff(run, _DiffSession(run=run, baseline=None,
                                                                                   failing=[]))
-    assert set(diff) == {"run_id", "baseline_run_id", "baseline_available", "message", "baseline_purged"}
+    assert set(diff) == {"run_id", "baseline_run_id", "baseline_available", "message", "baseline_purged",
+                         "baseline_kind", "baseline_threshold", "first_failing_test"}  # D-10
+    assert diff["baseline_kind"] is None

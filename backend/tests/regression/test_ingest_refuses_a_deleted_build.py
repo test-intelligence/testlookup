@@ -62,11 +62,11 @@ async def test_a_live_run_id_is_let_through(monkeypatch):
 def test_the_batch_route_refuses_before_it_stores_or_queues():
     """The check is only worth having ahead of the 202.
 
-    Placed after ``put_object`` or ``.delay`` it would leave a stored payload
+    Placed after ``put_object`` or the publish it would leave a stored payload
     and a doomed task behind the refusal.
     """
     source = inspect.getsource(ingest_router.ingest_batch)
     refusal = source.index("_refuse_deleted_build(")
     assert refusal > source.index("_resolve_run_id(")
     assert refusal < source.index("put_object(")
-    assert refusal < source.index("ingest_uploaded_results.delay(")
+    assert refusal < source.index("ingest_uploaded_results.apply_async(")

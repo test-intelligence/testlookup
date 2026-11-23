@@ -184,8 +184,8 @@ describe('Pipeline runs — the page template (P5, D3)', () => {
     // run-1 is not among the picker's recent runs (only run-recent is).
     await renderWithPipeline()
     const picker = screen.getByLabelText(/test suite & build/i) as HTMLSelectElement
-    expect(picker.selectedOptions[0].textContent).toBe('AuthSuite · Run #41')
-    expect(within(picker).getByRole('option', { name: 'Recent · Run #9' })).toBeInTheDocument()
+    expect(picker.selectedOptions[0].textContent).toBe('AuthSuite · Build 41 · Run #41')
+    expect(within(picker).getByRole('option', { name: 'Recent · Build 9 · Run #9' })).toBeInTheDocument()
   })
 
   it('puts the AI report, full width, as the primary content — not a column beside the list', async () => {

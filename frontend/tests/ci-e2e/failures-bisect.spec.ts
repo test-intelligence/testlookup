@@ -81,11 +81,13 @@ for (const [width, height] of [[1280, 900], [1440, 900]] as const) {
       const { api, errors, world } = await openFailures(page, worldNarrowing())
       expect(requestsTo(api, BISECT), 'nothing is narrowed on page load').toEqual([])
       const closed = await tableBox(table(page))
+      // D-11: the suspects are ranked against the narrowing's first failure (#239), not the row's last failure.
       expect(await openSuspects(page, api)).toEqual([
         `GET /api/v1/runs/${RUN_ID}/bisect?fingerprint=${FP}`,
-        `GET /api/v1/runs/${RUN_ID}/suspects?fingerprint=${FP}`,
-      ])
+        `GET /api/v1/runs/${runs()[1].id}/suspects?fingerprint=${FP}`,
+      ].sort())
       expect(world.seen).toEqual([FP])
+      await expect(section(page).getByTestId('suspects-run')).toContainText("this test's first failure, in run 239")
       const b = block(page)
       await expect(b.getByRole('heading', { level: 3 })).toHaveText("Narrowed to this test's last pass")
       await expect(stateLine(b)).toHaveText('Last passed in build #236 (goodsen), first failed in build #239 (badsent).')

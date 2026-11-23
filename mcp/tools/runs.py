@@ -8,6 +8,7 @@ from typing import Optional
 import client as api  # type: ignore[import]
 import execution_format  # type: ignore[import]
 import untrusted  # type: ignore[import]
+from tools.metrics import DEFAULT_WINDOW_DAYS  # type: ignore[import]
 
 #: ``get_run_timing``: slowest tests listed by default, and the route's cap.
 RUN_TIMING_DEFAULT_SLOWEST = 10
@@ -22,6 +23,13 @@ _STATUS_EMOJI = {
     "BROKEN": "💥",
     "UNKNOWN": "❓",
 }
+
+
+def _window_text(days: int) -> str:
+    """The window a list covers, in words: "in the last 30 days", or "of all time" for 0."""
+    if days == 0:
+        return "of all time"
+    return f"in the last {days} day{'' if days == 1 else 's'}"
 
 
 def _status(s: Optional[str]) -> str:
@@ -128,7 +136,7 @@ def register(mcp) -> None:  # noqa: ANN001
     async def list_test_runs(
         project_id: str,
         status: Optional[str] = None,
-        days: int = 7,
+        days: int = DEFAULT_WINDOW_DAYS,
         page: int = 1,
         size: int = 20,
     ) -> str:
@@ -138,7 +146,7 @@ def register(mcp) -> None:  # noqa: ANN001
         Args:
             project_id: Project UUID (from list_projects).
             status: Filter by run status: PASSED, FAILED, IN_PROGRESS, or STOPPED.
-            days: How far back to look (0-365, 0 = all time; default 7).
+            days: How far back to look (0-365, 0 = all time; default 30, as the REST API).
             page: Page number (default 1).
             size: Results per page (1-100, default 20).
         """
@@ -157,11 +165,15 @@ def register(mcp) -> None:  # noqa: ANN001
         total = data.get("total", 0)
         pages = data.get("pages", 1)
 
+        window = _window_text(days)
         if not items:
-            return f"No test runs found for project `{project_id}` with the given filters."
+            return (
+                f"No test runs found for project `{project_id}` {window} with the given filters."
+                + ("" if days == 0 else " Pass days=0 for all time.")
+            )
 
         lines = [
-            f"## Test Runs — Page {page}/{pages} ({total} total)\n",
+            f"## Test Runs {window} — Page {page}/{pages} ({total} total)\n",
             f"| Build | Branch | Status | Pass Rate | Tests | Duration | Trigger | Started |",
             f"|-------|--------|--------|-----------|-------|----------|---------|---------|",
         ]
@@ -178,6 +190,8 @@ def register(mcp) -> None:  # noqa: ANN001
                 f"| {(r.get('start_time') or '')[:16]} |"
             )
 
+        if days != 0:
+            lines.append(f"\n*{total} run(s) {window}; pass days=0 for all time.*")
         lines.append(f"\n*Use `get_run_details` with a run ID for full details.*")
         return "\n".join(untrusted.with_notice(lines))
 
