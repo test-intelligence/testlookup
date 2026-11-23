@@ -23,6 +23,7 @@ from app.services.review_request_service import REVIEW_REJECTED_ERROR_PREFIX
 from app.services.workflow_run_state import (
     PUBLIC_STATUS,
     PipelineRunStatus,
+    is_known_status,
     is_resumable,
     is_terminal,
     normalize_status,
@@ -89,6 +90,11 @@ def _status_filter_values(status: str) -> list[str]:
     their internal set; internal (and legacy ``partial``) names pass through
     normalisation so a stale client keeps getting rows, not an empty page."""
     wanted = str(status or "").strip().lower()
+    if not is_known_status(wanted):
+        raise HTTPException(
+            status_code=422,
+            detail="status must be one of " + ", ".join(sorted(set(PUBLIC_STATUS.values()))) + ".",
+        )
     public = [s.value for s, pub in PUBLIC_STATUS.items() if pub == wanted]
     if public:
         return public

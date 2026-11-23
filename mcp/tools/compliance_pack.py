@@ -99,7 +99,7 @@ def register(mcp) -> None:  # noqa: ANN001
                 json_body=body,
             )
         except Exception as exc:
-            return f"❌ Failed to generate compliance pack: {exc}"
+            return f"❌ Failed to generate compliance pack: {api.error_text(exc)}"
 
         if not pack:
             return "❌ No pack returned from the backend."
@@ -140,7 +140,7 @@ def register(mcp) -> None:  # noqa: ANN001
         try:
             result = await api.post(api.path("/api/v1/compliance-packs/{pack_id}/verify", pack_id=api.uuid_id(pack_id)))
         except Exception as exc:
-            return f"❌ Failed to verify compliance pack: {exc}"
+            return f"❌ Failed to verify compliance pack: {api.error_text(exc)}"
         if not result:
             return "❌ No verification returned from the backend."
         return render_verification(result)

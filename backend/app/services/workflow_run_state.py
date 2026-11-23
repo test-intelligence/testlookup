@@ -136,6 +136,17 @@ def normalize_status(value: Any) -> PipelineRunStatus:
         return _S.FAILED
 
 
+def is_known_status(value: Any) -> bool:
+    """Whether ``value`` is a status a caller may filter on: internal, public or legacy.
+
+    ``normalize_status`` turns anything else into ``failed``, which is right
+    for a stored row and wrong for a filter: ``?status=success`` listed the
+    failed pipelines.
+    """
+    text = str(value or "").strip().lower()
+    return text in _LEGACY or text in {s.value for s in PipelineRunStatus} or text in set(PUBLIC_STATUS.values())
+
+
 def public_status(value: Any) -> str:
     """Internal (or legacy) status -> one of ``in_progress|completed|failed|passed``."""
     return PUBLIC_STATUS[normalize_status(value)]

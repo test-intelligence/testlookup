@@ -32,7 +32,7 @@ from app.core.deps import (
     require_role,
     resolve_project_scope,
 )
-from app.models.postgres import User, UserRole
+from app.models.postgres import FlakyQuarantineStatus, User, UserRole
 from app.models.schemas import (
     FlakyQuarantineRead,
     QuarantineDecisionRequest,
@@ -119,6 +119,17 @@ async def list_quarantine_requests(
     everything. The ``status_filter`` parameter accepts any value from
     ``FlakyQuarantineStatus``.
     """
+    if status_filter is not None and status_filter.strip():
+        # Any case; an unknown word is a 422, not an empty list.
+        wanted = status_filter.strip().upper()
+        if wanted not in {s.value for s in FlakyQuarantineStatus}:
+            raise HTTPException(
+                status_code=422,
+                detail="status_filter must be one of " + ", ".join(s.value for s in FlakyQuarantineStatus) + ".",
+            )
+        status_filter = wanted
+    else:
+        status_filter = None
     project_ids: Optional[set[uuid.UUID]]
     if project_id is not None:
         await resolve_project_scope(db, current_user, str(project_id))

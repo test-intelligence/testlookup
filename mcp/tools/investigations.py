@@ -98,12 +98,15 @@ def register(mcp) -> None:  # noqa: ANN001
         """
         SIDE EFFECT (safe): start the Investigator agent for a test run.
 
-        The Investigator is SHADOW-MODE ONLY — it weighs five root-cause
-        hypotheses (infra, commit onset, environment drift, known-flaky,
-        regression) against the run's evidence and produces a verdict with
-        proposed actions. It never executes actions itself; acting on the
-        verdict (quarantine proposals, defects, assignments) is done by YOU
-        via the existing write tools, with the human in the loop.
+        The Investigator weighs five root-cause hypotheses (infra, commit
+        onset, environment drift, known-flaky, regression) against the run's
+        evidence and produces a verdict with proposed actions.
+        It never executes actions itself. What happens to the proposals depends on the
+        project's mode, which `get_investigation` reports as `mode`:
+        "shadow" (the default) only records them, and acting on the verdict
+        is done by YOU via the write tools with the human in the loop;
+        "suggest" and "act" also file them as agent-action proposals in the
+        QA lead's approval queue (`proposals` in `get_investigation`).
 
         Returns {ok, investigation_id} on 202. Structured failures:
           - 403 → the project's agent policy disables the investigator
@@ -125,9 +128,10 @@ def register(mcp) -> None:  # noqa: ANN001
             "investigation_id": (data or {}).get("investigation_id"),
             "run_id": run_id,
             "note": (
-                "Shadow-mode investigation queued. Poll get_investigation "
-                "until status is terminal, then act on the verdict yourself "
-                "via the write tools."
+                "Investigation queued. Poll get_investigation until status is terminal. "
+                "Its `mode` says what happens to the proposed actions: in shadow mode act on "
+                "the verdict yourself via the write tools; in suggest or act mode they are "
+                "already in the approval queue (`proposals`), so do not file them again."
             ),
         }
 

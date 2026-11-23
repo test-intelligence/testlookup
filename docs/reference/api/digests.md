@@ -20,7 +20,7 @@ that view would receive. The view is checked for THIS caller in THIS
 project with the subscription rule: another project's view, a teammate's
 private view and a layout row all answer the same 422.
 
-Source: [backend/app/routers/digests.py:313](../../../backend/app/routers/digests.py#L313).
+Source: [backend/app/routers/digests.py:317](../../../backend/app/routers/digests.py#L317).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -28,6 +28,12 @@ Declared Python handler arguments (includes exact role/guard options):
 
 ```python
 project_id: uuid.UUID | None=None, period: str='weekly', saved_view_id: uuid.UUID | None=None, db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user)
+```
+
+Direct handler error branches (dependency/service errors can add others):
+
+```python
+HTTPException(status_code=422, detail='period must be one of ' + ', '.join(DIGEST_PERIODS) + '.')
 ```
 
 ### Declared wire contract
@@ -135,7 +141,7 @@ List Subscriptions
 
 List current user's digest subscriptions.
 
-Source: [backend/app/routers/digests.py:36](../../../backend/app/routers/digests.py#L36).
+Source: [backend/app/routers/digests.py:40](../../../backend/app/routers/digests.py#L40).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -217,7 +223,7 @@ cannot see it. It is verified explicitly: the delivery task reads
 unvalidated row is a standing instruction to mail another tenant's digest
 on a schedule.
 
-Source: [backend/app/routers/digests.py:50](../../../backend/app/routers/digests.py#L50).
+Source: [backend/app/routers/digests.py:54](../../../backend/app/routers/digests.py#L54).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -304,7 +310,7 @@ Delete Subscription
 
 Delete (unsubscribe from) a digest subscription.
 
-Source: [backend/app/routers/digests.py:246](../../../backend/app/routers/digests.py#L246).
+Source: [backend/app/routers/digests.py:250](../../../backend/app/routers/digests.py#L250).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -384,7 +390,7 @@ Get Subscription
 
 Get a single subscription.
 
-Source: [backend/app/routers/digests.py:157](../../../backend/app/routers/digests.py#L157).
+Source: [backend/app/routers/digests.py:161](../../../backend/app/routers/digests.py#L161).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -471,7 +477,7 @@ Update Subscription
 
 Update a digest subscription (own subscriptions only).
 
-Source: [backend/app/routers/digests.py:177](../../../backend/app/routers/digests.py#L177).
+Source: [backend/app/routers/digests.py:181](../../../backend/app/routers/digests.py#L181).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -568,7 +574,7 @@ Pause Subscription
 
 Pause digest delivery without deleting.
 
-Source: [backend/app/routers/digests.py:267](../../../backend/app/routers/digests.py#L267).
+Source: [backend/app/routers/digests.py:271](../../../backend/app/routers/digests.py#L271).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -655,7 +661,7 @@ Resume Subscription
 
 Resume a paused subscription.
 
-Source: [backend/app/routers/digests.py:289](../../../backend/app/routers/digests.py#L289).
+Source: [backend/app/routers/digests.py:293](../../../backend/app/routers/digests.py#L293).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 

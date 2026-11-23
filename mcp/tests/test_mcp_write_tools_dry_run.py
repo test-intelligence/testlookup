@@ -89,7 +89,8 @@ def api(monkeypatch):
         request_id = path.split("/")[4] if path.count("/") >= 5 else "req-new"
         return {
             "id": request_id,
-            "status": "RELEASED",
+            # A proposal answers with the request awaiting review; a release with the released one.
+            "status": state.get("proposal_status", "PROPOSED") if path == "/api/v1/quarantine" else "RELEASED",
             "test_name": "test_x",
             "test_fingerprint": "f" * 16,
         }
@@ -146,6 +147,7 @@ def test_promote_with_dry_run_false_releases_one_ready_row_exactly_once(api):
         "ok": True,
         "dry_run": False,
         "released_count": 1,
+        "remaining_ready": 0,
         "results": [
             {
                 "request_id": "00000000-0000-4000-8000-000000000001",
@@ -304,6 +306,18 @@ def test_propose_posts_a_proposal_and_never_approves(api):
         )
     ]
     assert result["ok"] is True and result["action"] == "proposed"
+    assert "approve_quarantine" in result["next_step"]
+
+
+@pytest.mark.parametrize("status", ["QUARANTINED", "RECHECK_SCHEDULED", "RE_QUARANTINED", "APPROVED"])
+def test_propose_on_a_test_already_quarantined_does_not_claim_a_new_proposal(api, status):
+    """O-01: the route answers with the test's live request; only a PROPOSED one awaits review."""
+    api["proposal_status"] = status
+
+    result = _call(api, "propose_quarantine", project_id=PROJECT_ID, fingerprint="abcd", reason="flips 40%")
+
+    assert result["ok"] is True and result["action"] == "already_live" and result["status"] == status
+    assert "approve_quarantine" not in result["next_step"] and status in result["next_step"]
 
 
 def test_release_posts_once_with_the_reason(api):

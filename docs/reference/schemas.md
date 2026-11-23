@@ -13456,6 +13456,12 @@ These are the full generated JSON Schema definitions, including required fields,
     },
     "severity": {
       "default": "HIGH",
+      "enum": [
+        "CRITICAL",
+        "HIGH",
+        "MEDIUM",
+        "LOW"
+      ],
       "title": "Severity",
       "type": "string"
     },
@@ -31643,6 +31649,8 @@ These are the full generated JSON Schema definitions, including required fields,
     },
     "phase_type": {
       "default": "qa_testing",
+      "maxLength": 50,
+      "minLength": 1,
       "title": "Phase Type",
       "type": "string"
     },
@@ -31672,6 +31680,8 @@ These are the full generated JSON Schema definitions, including required fields,
     },
     "status": {
       "default": "pending",
+      "maxLength": 30,
+      "minLength": 1,
       "title": "Status",
       "type": "string"
     }
@@ -31785,6 +31795,8 @@ These are the full generated JSON Schema definitions, including required fields,
     "phase_type": {
       "anyOf": [
         {
+          "maxLength": 50,
+          "minLength": 1,
           "type": "string"
         },
         {
@@ -31833,6 +31845,8 @@ These are the full generated JSON Schema definitions, including required fields,
     "status": {
       "anyOf": [
         {
+          "maxLength": 30,
+          "minLength": 1,
           "type": "string"
         },
         {
@@ -35337,6 +35351,11 @@ These are the full generated JSON Schema definitions, including required fields,
       "type": "string"
     },
     "track": {
+      "enum": [
+        "classifier",
+        "reasoning",
+        "embedding"
+      ],
       "title": "Track",
       "type": "string"
     }
@@ -37257,6 +37276,8 @@ These are the full generated JSON Schema definitions, including required fields,
     },
     "status": {
       "default": "planning",
+      "maxLength": 30,
+      "minLength": 1,
       "title": "Status",
       "type": "string"
     },
@@ -37878,6 +37899,8 @@ These are the full generated JSON Schema definitions, including required fields,
     "status": {
       "anyOf": [
         {
+          "maxLength": 30,
+          "minLength": 1,
           "type": "string"
         },
         {
