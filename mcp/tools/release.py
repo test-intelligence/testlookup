@@ -32,6 +32,15 @@ _GATE_ICON = {"GO": "🟢", "CONDITIONAL_GO": "🟡", "NO_GO": "🔴", "NOT_EVAL
 _READINESS_ICON = {"GREEN": "🟢", "AMBER": "🟡", "RED": "🔴"}
 
 
+def _never_evaluated(response: httpx.Response) -> bool:
+    """Whether a gate 404 is "this release has no stored verdict", not "no such release"."""
+    try:
+        detail = response.json().get("detail")
+    except Exception:  # noqa: BLE001 - a body that is not JSON is not that answer
+        return False
+    return isinstance(detail, str) and "not been evaluated" in detail.lower()
+
+
 def _reason_text(reason: Any) -> str:
     if isinstance(reason, dict):
         for key in ("reason", "message", "detail", "text"):
@@ -118,7 +127,10 @@ def register(mcp) -> None:  # noqa: ANN001
             else:
                 gate = await api.get(api.path("/api/v1/releases/{release_id}/gate", release_id=rid))
         except httpx.HTTPStatusError as exc:
-            if exc.response.status_code == 404 and not evaluate:
+            # TL-QA-24: the gate route has two 404s. Only "not evaluated yet" is
+            # an answer; "Release not found" (or one the caller cannot read) is
+            # an error, and used to read as a release awaiting its first verdict.
+            if exc.response.status_code == 404 and not evaluate and _never_evaluated(exc.response):
                 return {"ok": True, "release_id": rid, "evaluated": False,
                         "detail": "This release has not been evaluated yet; evaluate=True records a verdict (QA lead)."}
             return api.error_payload(exc)

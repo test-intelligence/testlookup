@@ -144,6 +144,7 @@ async def list_runs(
     # The toolbar's values, also before any database access (one 422 text each).
     toolbar = _parse_toolbar(q, branch, recommendation)
     run_order = parse_run_list_order(order)
+    status = runs_service.parse_run_list_status(status)
     # Verify the PROVIDED release(s). This route was the only one accepting
     # ``release_id`` that skipped the check: a malformed value reached
     # ``uuid.UUID()`` in the service and raised ValueError -> 500 rather than

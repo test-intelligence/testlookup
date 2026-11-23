@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.postgres import (
     CanonicalTestCase,
+    LaunchStatus,
     ManagedTestCase,
     Project,
     Release,
@@ -395,6 +396,26 @@ def parse_run_list_order(order: str | None) -> str:
     if order not in RUN_LIST_ORDERS:
         raise HTTPException(status_code=422, detail=RUN_ORDER_INVALID_DETAIL)
     return order
+
+
+RUN_STATUS_INVALID_DETAIL = "status must be one of " + ", ".join(s.value for s in LaunchStatus) + "."
+
+
+def parse_run_list_status(status: str | None) -> str | None:
+    """``status`` before any database access: blank = no filter, else a ``LaunchStatus`` in any case.
+
+    TL-QA-20: the filter is an exact match on the stored upper-case value, so
+    ``failed`` or a typo used to answer an empty page that read as "no such
+    runs". The sibling ``/runs/{id}/tests`` filter already ignored case.
+    """
+    from fastapi import HTTPException  # noqa: PLC0415
+
+    wanted = (status or "").strip().upper()
+    if not wanted:
+        return None
+    if wanted not in {s.value for s in LaunchStatus}:
+        raise HTTPException(status_code=422, detail=RUN_STATUS_INVALID_DETAIL)
+    return wanted
 
 
 def run_list_newest_order_keys() -> tuple:

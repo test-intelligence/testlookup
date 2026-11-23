@@ -180,7 +180,7 @@ resource still reads the last 7 days, as its description says.
 |------|-----------|-------------|
 | `list_test_runs` | `project_id`, `status?`, `days?`, `page?`, `size?` | Runs newest-first with pass rate |
 | `get_run_details` | `run_id` | Aggregated stats, timeline, OCP context |
-| `list_test_cases` | `run_id`, `status?`, `suite?`, `page?`, `size?` | Filter by status/suite with error snippets |
+| `list_test_cases` | `run_id`, `status?`, `suite?`, `page?`, `size?` | Filter by status/suite; the error message is on `get_test_case` |
 | `get_test_case` | `run_id`, `test_id`, `include_steps?` | Full test record with Allure labels; `include_steps=true` adds the latest run's step tree |
 | `get_test_step_flips` | `run_id`, `test_id` | Step-level flakiness across retained runs: which step flipped between PASSED and FAILED, how often, in how many runs, and its current status. Read-only. |
 | `get_run_timing` | `run_id`, `slowest?` | How long one run took and where the time went: wall clock, test time (summed) and parallelism, setup/test body/teardown totals, per-suite times, the slowest tests (default 10, max 100) against their baselines, and the run's duration regressions. Compact markdown plus the REST body (`/runs/{run_id}/timing`, waterfall bars left out). A null figure is "not reported", never 0. Read-only. |
@@ -196,11 +196,11 @@ resource still reads the last 7 days, as its description says.
 
 | Tool | Parameters | Description |
 |------|-----------|-------------|
-| `get_flaky_tests` | `project_id`, `days?`, `limit?` | Flakiness leaderboard (5-95% failure rate) |
+| `get_flaky_tests` | `project_id`, `days?`, `limit?` | Flakiness leaderboard (5-95% failure rate) with each test's fingerprint, then tests a person flagged; states the total when the list is cut |
 | `get_failure_categories` | `project_id`, `days?` | Distribution by root cause category |
 | `get_top_failing_tests` | `project_id`, `days?`, `limit?` | Highest raw failure count |
 | `get_coverage_report` | `project_id`, `days?` | Suite coverage: unique tests, per-suite pass rates |
-| `get_defects` | `project_id`, `resolution_status?`, `page?`, `size?` | Defects with Jira links (paginated) |
+| `get_defects` | `project_id`, `resolution_status?`, `page?`, `size?` | Defects with Jira links (paginated). Statuses: `OPEN`, `IN_PROGRESS`, `RESOLVED`, `INVALID`, or `ACTIVE` for open + in progress |
 | `list_defects` | `project_id`, `resolution_status?`, `limit?` | Defect list (lightweight, limit-based) |
 | `create_defect` | `project_id`, `fingerprint?` or `cluster_id?`, `target?`, `issue_type?`, `jira_project_key?`, `assignee?`, `extra_comment?`, `dry_run?` | **Write.** One-click Jira issue (or `target="webhook"` event) for a failure signature; `dry_run=true` returns the server preview without creating anything (default `false`); dedup-first (QA_ENGINEER+) |
 | `get_ai_analysis_summary` | `project_id`, `days?` | AI triage coverage and confidence distribution |
@@ -233,10 +233,10 @@ touched a suite whole, so under a suite filter it differs from
 | `get_ai_history` | `run_id`, `limit?` | The stored versions of a run's AI analysis, newest first: engine and model, fallback, verdict, risk, failing tests. Returns `{ok, summary, history}` |
 | `diff_ai_versions` | `run_id`, `from_version`, `to_version?` (number, `latest` or `live`) | What changed between two versions of a run's AI analysis, provenance first (an engine change, rules vs LLM, is not a product change). Returns `{ok, summary, diff}`; an unstored version number is answered without a diff |
 | `compare_ai_with_previous` | `run_id`, `baseline_run_id?` | The run's AI analysis against the previous run of the same suite and branch: verdict, new and resolved root causes, tests that changed category. The summary says `deterministic summary` when no LLM wrote it. Returns `{ok, summary, verdict_regressed, compare}`; "not analysed" is not "no change" |
-| `trigger_deep_analysis` | `run_id` | Queue a multi-agent deep investigation; returns a task ID |
+| `trigger_deep_analysis` | `run_id` | Queue a multi-agent deep investigation; returns a task ID, or the pipeline already running for the run (nothing new is queued) |
 | `get_pipeline_status` | `run_id`, `workflow_type?` | Pipeline execution status and stage summary |
 | `get_failure_clusters` | `run_id` | Failure clusters with representative errors |
-| `get_deep_findings` | `run_id` | Root-cause findings per cluster |
+| `get_deep_findings` | `run_id` | Root-cause findings per cluster: category, confidence, origin and the root cause |
 
 ### Investigator agent
 
@@ -340,7 +340,7 @@ workbook is a file, so `testlookup cases export` writes it (see the [CLI](../cli
 | `list_release_gate_policies` | `project_id?` | Active GO/NO_GO rules |
 | `list_saved_views` | `project_id?`, `page?` | Saved filter views |
 | `list_digest_subscriptions` | `project_id?` | Scheduled quality report subscriptions |
-| `list_ownership_rules` | `project_id` | Service ownership glob patterns for a project |
+| `list_ownership_rules` | `project_id` | Ownership rules for a project: match type and pattern, team, service, contact |
 | `list_feature_flags` | none | All feature flags (admin only) |
 | `check_feature_flag` | `key`, `project_id?` | Evaluate a flag for the caller's context |
 
@@ -374,12 +374,12 @@ Resources are read-only context URIs that clients can fetch as background knowle
 | `testlookup://projects` | Index of all active projects |
 | `testlookup://projects/{project_id}` | Full project record and integrations |
 | `testlookup://projects/{project_id}/metrics` | Dashboard KPIs (last 7 days) |
-| `testlookup://projects/{project_id}/runs/latest` | 10 most recent runs |
+| `testlookup://projects/{project_id}/runs/latest` | 10 most recently received runs, however old |
 | `testlookup://projects/{project_id}/quarantine-manifest` | CI quarantine manifest: currently effective quarantines with lifecycle flags (what `testlookup ci-verdict` matches against) |
 | `testlookup://projects/{project_id}/flaky-tests` | Flakiness leaderboard (30 days, top 20) |
-| `testlookup://projects/{project_id}/defects/open` | Open defects (up to 100) |
+| `testlookup://projects/{project_id}/defects/open` | Live defects: open and in progress (first 100; `total` counts all) |
 | `testlookup://runs/{run_id}` | Full run record and aggregated stats |
-| `testlookup://runs/{run_id}/failures` | Test cases with status `FAILED` (up to 200) |
+| `testlookup://runs/{run_id}/failures` | Test cases with status `FAILED` or `BROKEN` (up to 200; `total` counts all) |
 | `testlookup://runs/{run_id}/investigation` | Latest Investigator-agent investigation for the run (hypotheses and verdict), or a hint when there is none |
 | `testlookup://tests/{run_id}/{test_id}` | Full test case, error and Allure labels |
 
@@ -389,8 +389,8 @@ Prompts are reusable investigation workflows that expand into sequences of tool 
 
 | Prompt | Parameters | Description |
 |--------|-----------|-------------|
-| `investigate_failure` | `test_case_id`, `project_id` | Full RCA: context gathering, AI analysis, structured findings report |
-| `release_readiness_report` | `project_id`, `release_version?` | Executive go/no-go: metrics, trends, categories, blockers, flakiness risk |
+| `investigate_failure` | `test_case_id`, `project_id`, `run_id?` | Full RCA: context gathering, AI analysis, structured findings report. Without `run_id` it stops and asks for the run |
+| `release_readiness_report` | `project_id`, `release_version?` | Executive go/no-go for the named release: its stored gate verdict first (read with `get_release_gate`, nothing recorded), then metrics, trends, categories, blockers, flakiness risk. Asks which release when the name does not resolve |
 | `weekly_quality_digest` | `project_id` | Team digest: pass rate trend, top failures, flakiness watch, action items |
 | `flakiness_investigation` | `project_id`, `threshold_pct?` | Prioritised remediation: quick wins vs strategic improvements |
 | `defect_triage_session` | `project_id` | Structured triage: review defects, identify duplicates, produce a P1/P2/P3 list |

@@ -47,7 +47,8 @@ def register(mcp) -> None:  # noqa: ANN001
         Args:
             project_id: The project UUID to scope the listing.
             resolution_status: Optional filter — one of OPEN, IN_PROGRESS,
-                RESOLVED, WONT_FIX, DUPLICATE. Default returns all statuses.
+                RESOLVED, INVALID, or ACTIVE (OPEN and IN_PROGRESS together).
+                Default returns all statuses.
             limit: Max rows to return (default 20, cap 100).
         """
         params = {

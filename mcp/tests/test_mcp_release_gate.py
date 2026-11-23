@@ -35,9 +35,13 @@ class _FakeMCP:
         return _register
 
 
-def _status_error(code):
+def _status_error(code, detail="This release has not been evaluated yet"):
+    # The gate route's own 404 body (routers/releases.py). TL-QA-24: the tool
+    # reads it, because "Release not found" is a 404 too and is not this answer.
     req = httpx.Request("GET", "http://x")
-    return httpx.HTTPStatusError("e", request=req, response=httpx.Response(code, request=req))
+    return httpx.HTTPStatusError(
+        "e", request=req, response=httpx.Response(code, request=req, json={"detail": detail}),
+    )
 
 
 def _tool(monkeypatch, gate=GATE, missing=False):

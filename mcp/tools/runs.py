@@ -287,23 +287,24 @@ def register(mcp) -> None:  # noqa: ANN001
 
         lines = [
             f"## Test Cases — Run `{run_id[:8]}` — Page {page}/{pages} ({total} total)\n",
-            f"| Test Name | Suite | Status | Duration | Category | Error |",
-            f"|-----------|-------|--------|----------|----------|-------|",
+            f"| Test Name | Suite | Status | Duration | Category |",
+            f"|-----------|-------|--------|----------|----------|",
         ]
         for t in items:
-            error_snippet = (t.get("error_message") or "")[:60]
-            if error_snippet.strip():
-                error_snippet = untrusted.inline(error_snippet + "...")
+            # TL-QA-14: no Error column. The list route's rows carry no error
+            # message, so the column read "-" for every failure; the message
+            # is on the detail read.
             lines.append(
-                f"| {untrusted.inline(t.get('test_name'), limit=50)} "
+                f"| {untrusted.inline(t.get('test_name'), limit=80)} "
                 f"| {untrusted.inline(t.get('suite_name'), limit=30)} "
                 f"| {_status(t.get('status'))} "
                 f"| {(t.get('duration_ms') or 0) / 1000:.1f}s "
-                f"| {t.get('failure_category') or '-'} "
-                f"| {error_snippet.strip() or '-'} |"
+                f"| {t.get('failure_category') or '-'} |"
             )
             # Append test_id as a subtle row annotation for follow-up tool calls
             lines.append(f"> ID: `{t['id']}`")
+
+        lines.append("\n*Error messages are not part of this list: use `get_test_case` with a test ID.*")
 
         return "\n".join(untrusted.with_notice(lines))
 

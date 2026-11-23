@@ -92,15 +92,30 @@ def register(mcp) -> None:  # noqa: ANN001
             api.path("/api/v1/metrics/summary"),
             params={"project_id": project_id, "days": 7},
         )
-        return json.dumps(without_meta(data), indent=2, default=str)
+        body = without_meta(data)
+        if not body:
+            # TL-QA-17: a project the caller cannot read is answered 200 with
+            # only the envelope. Without it that was ``{}``: say what it means.
+            return json.dumps(
+                {
+                    "project_id": project_id,
+                    "metrics": None,
+                    "note": "No dashboard metrics were returned for this project "
+                    "(no access to it, or no data in the last 7 days).",
+                },
+                indent=2,
+            )
+        return json.dumps(body, indent=2, default=str)
 
     @mcp.resource("testlookup://projects/{project_id}/runs/latest")
     async def latest_runs(project_id: str) -> str:
-        """The 10 most recent test runs for a project."""
+        """The 10 most recent test runs for a project, however old."""
         data = await api.get(
             api.path("/api/v1/runs"),
             # TL-QA-03: "most recent" is receipt time; the API's default is build order.
-            params={"project_id": project_id, "order": RUNS_NEWEST_FIRST, "page": 1, "size": 10},
+            # TL-QA-18: ``days=0`` is all time. The route's default window is 30
+            # days, so a project quiet for a month read as having no runs.
+            params={"project_id": project_id, "order": RUNS_NEWEST_FIRST, "days": 0, "page": 1, "size": 10},
         )
         return untrusted.document(data)
 
@@ -129,10 +144,14 @@ def register(mcp) -> None:  # noqa: ANN001
 
     @mcp.resource("testlookup://projects/{project_id}/defects/open")
     async def open_defects(project_id: str) -> str:
-        """All currently open defects linked to test failures."""
+        """Live defects linked to test failures: OPEN and IN_PROGRESS, the
+        first 100 (``total`` counts them all)."""
         data = await api.get(
             api.path("/api/v1/analytics/defects"),
-            params={"project_id": project_id, "resolution_status": "OPEN", "size": 100},
+            # TL-QA-16: ACTIVE is the API's word for OPEN + IN_PROGRESS. "OPEN"
+            # alone left out the defects someone has started on, which still
+            # block a release gate.
+            params={"project_id": project_id, "resolution_status": "ACTIVE", "size": 100},
         )
         return untrusted.document(without_meta(data))
 

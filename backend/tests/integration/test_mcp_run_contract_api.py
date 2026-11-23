@@ -282,6 +282,54 @@ async def test_investigation_list_narrows_to_a_run_inside_the_project(client, au
     assert "ORDER BY agent_investigations.created_at DESC, agent_investigations.id DESC" in page
 
 
+@pytest.mark.parametrize(
+    ("sent", "filtered_on"),
+    [("FAILED", "FAILED"), ("failed", "FAILED"), (" In_Progress ", "IN_PROGRESS"), ("", None)],
+    ids=["upper", "lower", "mixed-padded", "blank"],
+)
+async def test_run_listing_matches_a_status_in_any_case(client, auth_as, monkeypatch, sent, filtered_on):
+    """TL-QA-20: ``status=failed`` is the FAILED filter, not an empty page."""
+    auth_as(role=UserRole.ADMIN)
+    listing = AsyncMock(return_value=([], 0, 0))
+    monkeypatch.setattr(runs, "list_project_runs", listing)
+
+    response = await client.get("/api/v1/runs", params={"status": sent})
+
+    assert response.status_code == 200, response.text
+    assert listing.await_args.args[4] == filtered_on
+
+
+@pytest.mark.parametrize("status", ["success", "BROKEN", "FAILED,PASSED"])
+async def test_run_listing_refuses_a_status_no_run_can_have(client, auth_as, monkeypatch, status):
+    """TL-QA-20: an unknown status is a 422 naming the accepted values, before any read."""
+    auth_as(role=UserRole.ADMIN)
+    listing = AsyncMock(return_value=([], 0, 0))
+    monkeypatch.setattr(runs, "list_project_runs", listing)
+
+    response = await client.get("/api/v1/runs", params={"status": status})
+
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"] == "status must be one of IN_PROGRESS, PASSED, FAILED, STOPPED."
+    listing.assert_not_awaited()
+
+
+@pytest.mark.parametrize("route", ["summary", "export"])
+@pytest.mark.parametrize("mode", ["technical", "Developer", ""])
+async def test_run_summary_routes_refuse_a_mode_they_do_not_write(client, auth_as, monkeypatch, route, mode):
+    """TL-QA-21: an unknown mode is a 422 on ``query.mode``, never the executive summary under another name."""
+    from app.routers import run_intelligence
+
+    auth_as(role=UserRole.ADMIN)
+    summary = AsyncMock(return_value=None)
+    monkeypatch.setattr(run_intelligence, "get_run_mode_summary", summary)
+
+    response = await client.get(f"{RUN_PATH}/{route}", params={"mode": mode})
+
+    assert response.status_code == 422, response.text
+    assert response.json()["detail"][0]["loc"] == ["query", "mode"]
+    summary.assert_not_awaited()
+
+
 async def test_investigation_list_refuses_a_run_filter_that_is_not_a_uuid(client, auth_as):
     auth_as(role=UserRole.ADMIN)
 

@@ -25,7 +25,7 @@ PROMPT_TEMPLATE_VERSIONS: dict[str, int] = {
     "mcp.release_readiness_report": 3,
     "mcp.weekly_quality_digest": 1,
     "mcp.flakiness_investigation": 1,
-    "mcp.defect_triage_session": 1,
+    "mcp.defect_triage_session": 2,
     "mcp.suite_health_check": 1,
     "mcp.fix_this_flaky_test": 1,
 }
@@ -65,7 +65,7 @@ Run these steps in order, then compile the final report:
 3. Call `get_dashboard_metrics` with project_id="{project_id}", days=7.
 4. Call `get_test_trends` with project_id="{project_id}", days=14 — look for trend direction.
 5. Call `get_failure_categories` with project_id="{project_id}", days=7 — categorise risk.
-6. Call `get_defects` with project_id="{project_id}", resolution_status="OPEN" — list blocking issues.
+6. Call `get_defects` with project_id="{project_id}", resolution_status="ACTIVE" (open and in progress) — list blocking issues.
 7. Call `get_flaky_tests` with project_id="{project_id}", days=7 — identify risk from flakiness.
 8. Call `get_ai_analysis_summary` with project_id="{project_id}", days=7 — check triage coverage.
 
@@ -182,7 +182,7 @@ You are a QA lead running a defect triage session.
 Goal: Review all open defects, confirm their status, and produce a prioritised triage list.
 
 Steps:
-1. `get_defects` — project_id="{project_id}", resolution_status="OPEN", size=50
+1. `get_defects` — project_id="{project_id}", resolution_status="ACTIVE", size=50 (ACTIVE = OPEN and IN_PROGRESS)
 2. `get_ai_analysis_summary` — project_id="{project_id}", days=30
 3. `get_failure_categories` — project_id="{project_id}", days=30
 4. `get_dashboard_metrics` — project_id="{project_id}" (understand severity context)

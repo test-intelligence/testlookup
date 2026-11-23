@@ -54741,6 +54741,10 @@ These are the full generated JSON Schema definitions, including required fields,
     },
     "mode": {
       "default": "deep",
+      "enum": [
+        "deep",
+        "offline"
+      ],
       "title": "Mode",
       "type": "string"
     },

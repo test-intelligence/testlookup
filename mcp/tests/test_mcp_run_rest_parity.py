@@ -372,7 +372,7 @@ def test_latest_runs_resource_keeps_its_page_of_ten(mcp_request):
         return httpx.Response(200, json=page)
 
     assert mcp_request(backend, f"testlookup://projects/{PROJECT}/runs/latest") == page
-    assert seen == {"project_id": PROJECT, "order": "newest", "page": "1", "size": "10"}
+    assert seen == {"project_id": PROJECT, "order": "newest", "days": "0", "page": "1", "size": "10"}
 
 
 def test_deep_findings_says_so_when_a_cluster_has_no_root_cause(mcp_request):

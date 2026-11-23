@@ -38,8 +38,8 @@
       "version": 1
     },
     "mcp.defect_triage_session": {
-      "content_hash": "670026c0afac",
-      "version": 1
+      "content_hash": "66b736044cc9",
+      "version": 2
     },
     "mcp.fix_this_flaky_test": {
       "content_hash": "fa9621e63ddf",
@@ -50,12 +50,12 @@
       "version": 1
     },
     "mcp.investigate_failure": {
-      "content_hash": "590cb27ee41f",
-      "version": 1
+      "content_hash": "e2673b261d88",
+      "version": 2
     },
     "mcp.release_readiness_report": {
-      "content_hash": "9b907492d754",
-      "version": 2
+      "content_hash": "9917e59b2af3",
+      "version": 3
     },
     "mcp.suite_health_check": {
       "content_hash": "b6bfbd9fe1cd",
