@@ -241,7 +241,8 @@ async def test_trend_window_starts_at_utc_midnight_and_covers_exactly_n_days(mon
 
     params = db.execute.await_args.args[1]
     assert params["period_start"] == datetime(2026, 10, 26, tzinfo=timezone.utc)
-    assert "tr.created_at AT TIME ZONE 'UTC'" in str(db.execute.await_args.args[0])
+    # D-19: the day bucket is the run's execution time (receipt when none was sent), in UTC.
+    assert "COALESCE(tr.start_time, tr.created_at) AT TIME ZONE 'UTC'" in str(db.execute.await_args.args[0])
 
 
 @pytest.mark.asyncio
