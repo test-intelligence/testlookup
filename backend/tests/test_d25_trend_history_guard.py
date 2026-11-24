@@ -9,6 +9,7 @@ points that Trends prints) follows the same rule, so Home and Trends agree.
 """
 from __future__ import annotations
 
+import importlib.util
 import sys
 import types
 import uuid
@@ -18,9 +19,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-try:  # the import chain pulls the mailer in; stub it only where it is not installed
-    import aiosmtplib  # noqa: F401
-except ImportError:  # pragma: no cover - CI installs it
+if importlib.util.find_spec("aiosmtplib") is None:  # pragma: no cover - CI installs it
+    # The import chain pulls the mailer in; stub it only where it is not installed.
     _stub = types.ModuleType("aiosmtplib")
     _stub.send = AsyncMock()  # type: ignore[attr-defined]
     sys.modules["aiosmtplib"] = _stub

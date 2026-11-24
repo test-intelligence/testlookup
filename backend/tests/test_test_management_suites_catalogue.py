@@ -68,7 +68,7 @@ def _session(auto_rows, manual_rows):
             _Result([]),          # first-class suites (TCL-07)
         ]),
         rollback=AsyncMock(),
-        begin_nested=lambda: _NoopSavepoint(),
+        begin_nested=_NoopSavepoint,
     )
 
 
