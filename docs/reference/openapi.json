@@ -82210,7 +82210,7 @@
     },
     "/api/v1/projects/{project_id}/reviews": {
       "get": {
-        "description": "The project's review queue, newest first. ``?state=pending_review`` for the open queue.",
+        "description": "The project's review queue, newest first. ``?state=pending_review`` for the open queue.\n\nThe body stays a bare list cut at ``limit``; the number of reviews\nmatching the filter is the ``X-Total-Count`` header.",
         "operationId": "list_reviews_api_v1_projects__project_id__reviews_get",
         "parameters": [
           {
@@ -84554,7 +84554,7 @@
     },
     "/api/v1/quarantine": {
       "get": {
-        "description": "List quarantine requests visible to the caller.\n\nNon-admin callers see only projects they're members of. Admins see\neverything. The ``status_filter`` parameter accepts any value from\n``FlakyQuarantineStatus``.",
+        "description": "List quarantine requests visible to the caller.\n\nThe body stays a bare list, newest first, cut at ``limit`` (at most 500).\nThe number of requests matching the filters is the ``X-Total-Count``\nheader, so a caller can tell a full page from the whole list.\n\nNon-admin callers see only projects they're members of. Admins see\neverything. The ``status_filter`` parameter accepts any value from\n``FlakyQuarantineStatus``.",
         "operationId": "list_quarantine_requests_api_v1_quarantine_get",
         "parameters": [
           {

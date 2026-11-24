@@ -35,6 +35,8 @@ import server  # noqa: E402
 from resources import registry  # noqa: E402
 
 VERBS = ("get", "post", "put", "patch", "delete")
+#: Client helpers that send one of the verbs above under another name.
+VERB_OF = {**{verb: verb for verb in VERBS}, "get_with_total": "get"}
 BENIGN = "11111111-1111-4111-8111-111111111111"
 OTHER = "22222222-2222-4222-8222-222222222222"
 HOSTILE = "../x?y#z"
@@ -82,12 +84,12 @@ def _routes() -> set[tuple[str, re.Pattern[str]]]:
             if (
                 isinstance(node, ast.Call)
                 and isinstance(node.func, ast.Attribute)
-                and node.func.attr in VERBS
+                and node.func.attr in VERB_OF
                 and node.args
             ):
                 template = _template_of(node.args[0])
                 if template and template.startswith("/"):
-                    routes.add((node.func.attr.upper(), _path_pattern(template)))
+                    routes.add((VERB_OF[node.func.attr].upper(), _path_pattern(template)))
     return routes
 
 

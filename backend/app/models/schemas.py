@@ -55,6 +55,7 @@ from app.core.search_vocab import (
 # W13 (TCL-01): the saved case view's rules and sentences live with the
 # test-library vocabulary, which the services, the routers and the tests import too.
 from app.core.test_library_vocab import (
+    AUTOMATION_STATUSES,
     AUTOMATION_TARGET_DEFAULT,
     CASE_AUTOMATION_FILTERS,
     CASE_FILTER_MAX_VALUES,
@@ -68,6 +69,8 @@ from app.core.test_library_vocab import (
     CASE_VIEW_SUITE_MAX,
     CASE_VIEW_TYPE_MAX,
     CASE_VIEW_VALUE_SENTENCE,
+    PRIORITY_ALIASES,
+    PRIORITY_INVALID_SENTENCE,
     LIFECYCLE_STATES,
     OWNER_ME,
     TEST_CASE_VIEW_KIND,
@@ -4376,6 +4379,49 @@ class TestCaseParameterSchema(BaseModel):
     masked: bool = False
 
 
+def _case_word(value: Any) -> Any:
+    """A vocabulary word as it is stored: trimmed, lower-case. ``None`` (an omitted field) stays ``None``."""
+    return value.strip().lower() if isinstance(value, str) else value
+
+
+def case_priority(value: Any) -> Any:
+    """critical / high / medium / low, or P0-P3 (any case) mapped to them; anything else is refused.
+
+    The case list refuses a filter on any other priority, so a case saved
+    with ``urgent`` could never be found by its priority again.
+    """
+    word = _case_word(value)
+    if word is None:
+        return None
+    word = PRIORITY_ALIASES.get(word, word)
+    if word not in CASE_PRIORITIES:
+        raise ValueError(PRIORITY_INVALID_SENTENCE)
+    return word
+
+
+def case_severity(value: Any) -> Any:
+    """Lower-cased; open beyond the five listed severities, as the import allows, but it must fit the column."""
+    word = _case_word(value)
+    if word is not None and not 1 <= len(word) <= 20:
+        raise ValueError("severity must be 1 to 20 characters.")
+    return word
+
+
+def case_test_type(value: Any) -> Any:
+    """Lower-cased free text: cases carry types beyond the built-in ones, within the import's character set."""
+    word = _case_word(value)
+    if word is not None and not re.fullmatch(r"[a-z0-9 _-]{1,50}", word):
+        raise ValueError("test_type must be 1 to 50 letters, digits, spaces, '-' or '_'.")
+    return word
+
+
+def case_automation_status(value: Any) -> Any:
+    word = _case_word(value)
+    if word is not None and word not in AUTOMATION_STATUSES:
+        raise ValueError("automation_status must be " + ", ".join(AUTOMATION_STATUSES[:-1]) + f" or {AUTOMATION_STATUSES[-1]}.")
+    return word
+
+
 class ManagedTestCaseCreate(BaseModel):
     project_id: uuid.UUID
     title: str = Field(..., min_length=3, max_length=500)
@@ -4403,9 +4449,53 @@ class ManagedTestCaseCreate(BaseModel):
     # an admin. Without the field the choice was dropped silently.
     assignee_id: Optional[uuid.UUID] = None
 
+    # The same rules the CSV / Excel import applies (``test_case_import_service``):
+    # validators, not Literals, so the published OpenAPI schema stays the same.
+    @field_validator("priority", mode="before")
+    @classmethod
+    def _known_priority(cls, value: Any) -> Any:
+        return case_priority(value)
+
+    @field_validator("severity", mode="before")
+    @classmethod
+    def _bounded_severity(cls, value: Any) -> Any:
+        return case_severity(value)
+
+    @field_validator("test_type", mode="before")
+    @classmethod
+    def _well_formed_type(cls, value: Any) -> Any:
+        return case_test_type(value)
+
+    @field_validator("automation_status", mode="before")
+    @classmethod
+    def _known_automation_status(cls, value: Any) -> Any:
+        return case_automation_status(value)
+
 
 class ManagedTestCaseUpdate(BaseModel):
     expected_version: int = Field(..., ge=1)
+
+    # The same rules the CSV / Excel import applies (``test_case_import_service``):
+    # validators, not Literals, so the published OpenAPI schema stays the same.
+    @field_validator("priority", mode="before")
+    @classmethod
+    def _known_priority(cls, value: Any) -> Any:
+        return case_priority(value)
+
+    @field_validator("severity", mode="before")
+    @classmethod
+    def _bounded_severity(cls, value: Any) -> Any:
+        return case_severity(value)
+
+    @field_validator("test_type", mode="before")
+    @classmethod
+    def _well_formed_type(cls, value: Any) -> Any:
+        return case_test_type(value)
+
+    @field_validator("automation_status", mode="before")
+    @classmethod
+    def _known_automation_status(cls, value: Any) -> Any:
+        return case_automation_status(value)
     title: Optional[str] = Field(None, min_length=3, max_length=500)
     description: Optional[str] = Field(None, max_length=MAX_LONG_TEXT)
     objective: Optional[str] = Field(None, max_length=MAX_LONG_TEXT)

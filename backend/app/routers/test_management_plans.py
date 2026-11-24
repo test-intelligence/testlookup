@@ -54,6 +54,11 @@ async def list_plans(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
+    if status is not None and status not in TestPlanUpdate.PLAN_STATUSES:
+        # An unknown status used to answer an empty page, which read as "no such plans".
+        raise HTTPException(
+            status_code=422, detail="status must be one of: " + ", ".join(TestPlanUpdate.PLAN_STATUSES),
+        )
     # F-042: this check ran ONLY in the ``not project_id`` branch, so naming a
     # project skipped it entirely — the guard fired only where there was
     # nothing to guard. Third recurrence of the class (F-033 digests, F-040

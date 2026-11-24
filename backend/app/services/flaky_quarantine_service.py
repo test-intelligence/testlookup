@@ -40,7 +40,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Optional, Sequence
 
 import structlog
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.postgres import AsyncSessionLocal
@@ -637,6 +637,37 @@ async def list_requests(
     stmt = stmt.order_by(FlakyQuarantineRequest.created_at.desc()).limit(limit)
     result = await db.execute(stmt)
     return list(result.scalars().all())
+
+
+async def count_requests(
+    db: AsyncSession,
+    *,
+    project_ids: Optional[set[uuid.UUID]] = None,
+    status_filter: Optional[str] = None,
+    live_only: bool = False,
+) -> int:
+    """How many requests ``list_requests`` would return without its ``limit``.
+
+    The four filters are ``list_requests``'s, repeated here on purpose: that
+    function's body is pinned as written by a regression test, and
+    ``test_the_quarantine_count_uses_the_lists_filters`` holds the two equal.
+    """
+    stmt = select(func.count()).select_from(FlakyQuarantineRequest)
+    stmt = stmt.where(
+        FlakyQuarantineRequest.project_id.in_(
+            select(Project.id).where(Project.is_active.is_(True))
+        )
+    )
+    if project_ids is not None:
+        if not project_ids:
+            return 0
+        stmt = stmt.where(FlakyQuarantineRequest.project_id.in_(project_ids))
+    if status_filter:
+        stmt = stmt.where(FlakyQuarantineRequest.status == status_filter)
+    if live_only:
+        stmt = stmt.where(FlakyQuarantineRequest.status.in_(_LIVE_STATES))
+    total = (await db.execute(stmt)).scalar()
+    return int(total) if isinstance(total, int) else 0
 
 
 async def stats_by_status(

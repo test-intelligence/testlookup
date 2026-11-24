@@ -16,7 +16,7 @@ import client as api  # type: ignore[import]
 MAX_LIMIT = 200
 
 
-def render_pending_reviews(project_id: str, rows: Any, limit: int | None = None) -> str:
+def render_pending_reviews(project_id: str, rows: Any, limit: int | None = None, total: int | None = None) -> str:
     """Markdown for a project's open review queue.
 
     The route returns a list cut at ``limit`` and no total, so a full page
@@ -24,7 +24,12 @@ def render_pending_reviews(project_id: str, rows: Any, limit: int | None = None)
     """
     if not isinstance(rows, list) or not rows:
         return f"No AI reports are awaiting human review in project {project_id}."
-    count = f"{len(rows)}" if limit is None or len(rows) < limit else f"showing {len(rows)}; more may exist"
+    if isinstance(total, int) and total > len(rows):
+        count = f"showing {len(rows)} of {total}"
+    elif isinstance(total, int) or limit is None or len(rows) < limit:
+        count = f"{len(rows)}"
+    else:
+        count = f"showing {len(rows)}; more may exist"
     lines = [
         f"## Pending reviews ({count})",
         "",
@@ -64,8 +69,8 @@ def register(mcp) -> None:  # noqa: ANN001
             limit: Maximum reviews to return (1-200, default 50).
         """
         limit = max(1, min(int(limit), MAX_LIMIT))
-        rows = await api.get(
+        rows, total = await api.get_with_total(
             api.path("/api/v1/projects/{project_id}/reviews", project_id=api.uuid_id(project_id)),
             params={"state": "pending_review", "limit": limit},
         )
-        return render_pending_reviews(project_id, rows, limit=limit)
+        return render_pending_reviews(project_id, rows, limit=limit, total=total)
