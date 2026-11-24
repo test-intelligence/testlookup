@@ -53,7 +53,8 @@ vi.mock('@/store/projectStore', () => ({
   ALL_PROJECTS_ID: '__ALL__',
   useProjectStore: vi.fn((selector: (state: typeof store.state) => unknown) => selector(store.state)),
 }))
-vi.mock('@/services/flakyQuarantineService', () => ({ flakyQuarantineService: { propose: vi.fn() } }))
+vi.mock('@/services/flakyQuarantineService', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/services/flakyQuarantineService')>(), flakyQuarantineService: { propose: vi.fn() } }))
 vi.mock('@/services/aiFeedbackService', () => ({ aiFeedbackService: { submitFeedback: vi.fn() } }))
 vi.mock('@/hooks/useJiraDefects', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/hooks/useJiraDefects')>(),
@@ -129,7 +130,10 @@ describe('Top failing rows: the failure detail (W07 FAIL-01)', () => {
     expect(detailRows()).toHaveLength(0)
     // BEFORE the name, in the Test cell (204 px + the 16 px toggle = the old 220 px).
     const cell = toggle.closest('td') as HTMLElement
-    expect(toggle.compareDocumentPosition(within(cell).getByRole('link', { name: 'checkout_flow' })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    // D-44: the name is itself a toggle of the same detail (it was a link to Search).
+    const name = within(cell).getByRole('button', { name: 'checkout_flow' })
+    expect(toggle.compareDocumentPosition(name) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(name).toHaveAttribute('aria-expanded', 'false')
     expect(cell.style.minWidth).toBe('204px')
   })
 
@@ -187,7 +191,10 @@ describe('Top failing rows: the failure detail (W07 FAIL-01)', () => {
     renderFailures()
     fireEvent.click(await screen.findByRole('button', { name: 'Show failure detail for checkout_flow' }))
     const detail = detailRows()[0] as HTMLElement
-    expect(detail.textContent).toBe('Select a project to see failure detail.')
+    // D-44: plus the "Find this test's runs" link every detail row now ends with (Search works across projects).
+    expect(detail.querySelector('p')?.textContent).toBe('Select a project to see failure detail.')
+    expect(within(detail).getAllByRole('link').map((a) => a.textContent)).toEqual(["Find this test's runs"])
+    expect(detail.textContent).toBe("Select a project to see failure detail.Find this test's runs")
   })
 
   it('a hostile error and stack render as text inside their <pre>, never as markup', async () => {

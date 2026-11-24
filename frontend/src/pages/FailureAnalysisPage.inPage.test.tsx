@@ -61,7 +61,8 @@ vi.mock('@/store/projectStore', () => ({
     selector({ activeProjectId: 'proj-1', activeProject: { id: 'proj-1', name: 'Project One' } }),
 }))
 const propose = vi.hoisted(() => vi.fn())
-vi.mock('@/services/flakyQuarantineService', () => ({ flakyQuarantineService: { propose } }))
+vi.mock('@/services/flakyQuarantineService', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/services/flakyQuarantineService')>(), flakyQuarantineService: { propose } }))
 vi.mock('@/services/aiFeedbackService', () => ({ aiFeedbackService: { submitFeedback: vi.fn() } }))
 vi.mock('@/hooks/useJiraDefects', () => ({
   useJiraDefectMetadata: () => ({ metadata: undefined, isLoading: true, isError: false }),

@@ -22,7 +22,7 @@ import { InlineRowSection } from '@/components/ui/inPage/InlineRowSection'
 import { useInlineSlot } from '@/components/ui/inPage/useInlineSlot'
 import { useFeatureEnabled } from '@/hooks/useFeatureFlags'
 import { refreshTestCases } from '@/hooks/useTestManagement'
-import { testManagementService } from '@/services/testManagementService'
+import { ACTION_DONE_LABELS, testManagementService } from '@/services/testManagementService'
 import type { ManagedTestCase, TestCaseTransitionAction } from '@/types/test-management'
 import { formatDay } from '@/utils/formatters'
 import { useCaseQueues, type CaseQueueEntry } from './approvalQueues'
@@ -83,7 +83,7 @@ export default function CaseApprovals() {
     // The case's own form closes (its version moved on); another row's form, opened meanwhile, stays.
     setPending((current) => (current?.caseItem.id === tc.id ? null : current))
     setTransitioning(null)
-    toast.success(`Test case ${action.replace(/_/g, ' ')}`)
+    toast.success(ACTION_DONE_LABELS[action] ?? 'Test case updated')
     void refreshQueues()
   }
 

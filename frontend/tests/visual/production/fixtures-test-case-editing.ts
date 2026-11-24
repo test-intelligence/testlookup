@@ -441,6 +441,7 @@ export function testCaseEditingWorld(options: TestCaseEditingOptions = {}) {
       actual_duration_minutes: null,
       executed_case_version: null,
       case_version: Number(cases[caseIndex].version),
+      test_case_title: String(cases[caseIndex].title),
       created_at: isoAgo(6),
       ...over,
     })

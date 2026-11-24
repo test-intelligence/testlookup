@@ -14,6 +14,7 @@ import FailureAnalysisPage, {
 import { shiftDayIso, utcDayIso } from '@/utils/calendarDay'
 import { DEFAULT_TIME_WINDOW_DAYS, useTimeWindowStore } from '@/store/timeWindowStore'
 import { useAuthStore } from '@/store/authStore'
+import toast from 'react-hot-toast'
 
 // Correct and Classify are QA engineer and above (E2E 2026-10-10): the suites
 // below act as one; the viewer test at the end sets its own role.
@@ -77,7 +78,8 @@ vi.mock('@/store/projectStore', () => ({
 // US-2.4 wiring — the page posts quarantine proposals + classification
 // corrections through these services and resolves analysis ids via the
 // lookup hook. Mocked so the tests exercise the page's behavior only.
-vi.mock('@/services/flakyQuarantineService', () => ({
+vi.mock('@/services/flakyQuarantineService', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/services/flakyQuarantineService')>(),
   flakyQuarantineService: {
     propose: vi.fn(),
   },
@@ -1095,6 +1097,64 @@ describe('FailureAnalysisPage — US-2.4 wired actions', () => {
     await waitFor(() => expect(screen.queryByRole('region', { name: /Mute test/i })).toBeNull())
   })
 
+  // D-41: the form and the toast named a raw route ("on /quarantine") and printed a raw status enum.
+  it('D-41: the Mute form and its toasts name Flaky tests › Proposed, never a route or a raw status', async () => {
+    useAuthStore.setState({ user: { id: 'lead', role: 'QA_LEAD' } as never })
+    const { flakyQuarantineService } = await import('@/services/flakyQuarantineService')
+    const success = vi.spyOn(toast, 'success')
+    try {
+      for (const status of ['PROPOSED', 'RECHECK_SCHEDULED']) {
+        success.mockClear()
+        ;(flakyQuarantineService.propose as ReturnType<typeof vi.fn>).mockResolvedValue({ status })
+        await seedFailingScenario()
+        const { unmount } = renderPage()
+        fireEvent.click(await screen.findByRole('button', { name: /Mute test/i }))
+        const form = await screen.findByRole('region', { name: /Mute test \(propose quarantine\)/i })
+        expect(form).not.toHaveTextContent('/quarantine')
+        expect(form).toHaveTextContent('A QA lead approves or rejects it under Flaky tests › Proposed. Nothing is muted until then.')
+        fireEvent.change(within(form).getByPlaceholderText(/Why should this test stop gating runs/i), { target: { value: 'infra flake' } })
+        fireEvent.click(within(form).getByRole('button', { name: /Propose quarantine/i }))
+        await waitFor(() => expect(success).toHaveBeenCalledTimes(1))
+        const message = String(success.mock.calls[0][0])
+        expect(message).not.toMatch(/\/quarantine|PROPOSED|RECHECK_SCHEDULED/)
+        expect(message).toBe(status === 'PROPOSED'
+          ? 'Quarantine proposed. It waits for a QA lead under Flaky tests › Proposed.'
+          : 'Quarantine request updated: now waiting for its recheck.')
+        unmount()
+      }
+    } finally {
+      success.mockRestore()
+    }
+  })
+
+  // D-42: the primary "Open triage queue" went to the Runs list; the triage queue is the Inbox.
+  it('D-42: "Open triage queue" links to the Inbox (/my-failures)', async () => {
+    await seedFailingScenario()
+    renderPage()
+    expect(await screen.findByRole('link', { name: /Open triage queue/ })).toHaveAttribute('href', '/my-failures')
+  })
+
+  // D-44: clicking a test's name opened Search; it now opens the row's detail, which carries the Search link.
+  it("D-44: the test name toggles the row's detail and does not navigate; \"Find this test's runs\" is inside it", async () => {
+    await seedFailingScenario()
+    renderPage()
+    const name = await screen.findByRole('button', { name: 'checkout_flow' })
+    expect(name).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByRole('link', { name: 'checkout_flow' })).toBeNull()
+    fireEvent.click(name)
+    expect(name).toHaveAttribute('aria-expanded', 'true')
+    // Still on the page (the router has no /search route: a navigation would unmount it).
+    expect(screen.getByRole('table', { name: 'Top failing tests' })).toBeInTheDocument()
+    const detail = document.querySelector('[data-failure-detail]') as HTMLElement
+    expect(detail).not.toBeNull()
+    expect(within(detail).getByRole('link', { name: "Find this test's runs" })).toHaveAttribute(
+      'href', '/search?q=checkout_flow&scope=tests&mode=keyword',
+    )
+    fireEvent.click(name)
+    expect(name).toHaveAttribute('aria-expanded', 'false')
+    expect(document.querySelector('[data-failure-detail]')).toBeNull()
+  })
+
   it('disables "Mute test" with a tooltip when the top failing test has no fingerprint', async () => {
     useAuthStore.setState({ user: { id: 'lead', role: 'QA_LEAD' } as never })  // Mute is QA lead on the API
     await seedFailingScenario({
@@ -1286,11 +1346,11 @@ describe('FailureAnalysisPage — failure-kind triad (US-9.2)', () => {
     return renderFailures(search)
   }
 
-  it('renders the kind filter chips with by-kind counts and the AI-classified provenance copy', async () => {
+  it('renders the kind filter chips with by-kind counts and the "Classified" provenance copy', async () => {
     await seedKindScenario()
     renderPage()
 
-    const group = await screen.findByRole('group', { name: /Filter by failure kind \(AI-classified\)/i })
+    const group = await screen.findByRole('group', { name: /Filter by failure kind \(classified\)/i })
     // All four kinds stay visible (zero counts included) + the All chip
     // (5 product + 3 infrastructure = 8 analyzed failures).
     const allChip = within(group).getByRole('button', { name: /All\s*8/i })
@@ -1299,8 +1359,11 @@ describe('FailureAnalysisPage — failure-kind triad (US-9.2)', () => {
     expect(within(group).getByRole('button', { name: /Test code\s*0/i })).toBeInTheDocument()
     expect(within(group).getByRole('button', { name: /Infrastructure\s*3/i })).toBeInTheDocument()
     expect(within(group).getByRole('button', { name: /Unknown\s*0/i })).toBeInTheDocument()
-    // Provenance copy — kinds are AI-classified, never ground truth.
-    expect(within(group).getByText('AI-classified')).toBeInTheDocument()
+    // Provenance copy: kinds are a classification, never ground truth. D-13 row 13: no model produced them,
+    // so the chip row does not say "AI".
+    expect(within(group).getByText('Classified')).toBeInTheDocument()
+    expect(within(group).queryByText(/AI/)).toBeNull()
+    expect(group.getAttribute('aria-label')).not.toMatch(/AI/)
     // "All" starts active.
     expect(allChip).toHaveAttribute('aria-pressed', 'true')
   })
@@ -1313,9 +1376,10 @@ describe('FailureAnalysisPage — failure-kind triad (US-9.2)', () => {
     fireEvent.click(within(group).getByRole('button', { name: /Infrastructure\s*3/i }))
 
     // Card copy flips to the filtered wording…
-    expect(
-      await screen.findByText(/filtered to AI-classified/i),
-    ).toBeInTheDocument()
+    // D-13 row 13: "filtered to infrastructure failures", no "AI-classified".
+    const filtered = (await screen.findByText(/filtered to/i)).closest('p') as HTMLElement
+    expect(filtered).toHaveTextContent(/filtered to infrastructure failures/)
+    expect(filtered).not.toHaveTextContent(/AI/)
     // …and the card total now reflects only the infrastructure category rows
     // (2 categorised INFRASTRUCTURE failures; the BROKEN-nudged row has no
     // category item, which is exactly the category-only fidelity limit).
@@ -1331,9 +1395,9 @@ describe('FailureAnalysisPage — failure-kind triad (US-9.2)', () => {
     renderPage('')
 
     await screen.findAllByText('checkout_flow')
-    // The badge carries the AI-classified provenance in its tooltip.
+    // The badge names the kind in its tooltip (KindEvidence's wording, with or without a provenance word).
     const row = within(screen.getByRole('table', { name: 'Top failing tests' })).getAllByRole('row')[1]
-    const badges = within(row).getAllByTitle(/AI-classified failure kind: Product/i)
+    const badges = within(row).getAllByTitle(/failure kind: Product/i)
     expect(badges.length).toBeGreaterThan(0)
   })
 

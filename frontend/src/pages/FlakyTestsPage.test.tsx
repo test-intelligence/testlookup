@@ -56,7 +56,8 @@ const quarantineMock = vi.hoisted(() => ({
   release: vi.fn(),
   propose: vi.fn(),
 }))
-vi.mock('@/services/flakyQuarantineService', () => ({ flakyQuarantineService: quarantineMock }))
+vi.mock('@/services/flakyQuarantineService', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/services/flakyQuarantineService')>(), flakyQuarantineService: quarantineMock }))
 
 vi.mock('@/hooks/useFeatureFlags', () => ({
   useFeatureFlagStatus: (key: string) => (key === 'flaky_auto_quarantine' ? state.quarantineOn : undefined),

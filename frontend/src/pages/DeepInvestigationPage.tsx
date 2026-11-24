@@ -94,7 +94,7 @@ import type { IntegrationStatus } from '@/services/integrationHealthService'
 import type { LlmQuotaRead, LlmUsageRead } from '@/services/llmBudgetService'
 import type { TestRun } from '@/types/runs'
 import SuiteBadge from '@/components/ui/SuiteBadge'
-import { formatRunWhen, shortAgo } from '@/utils/formatters'
+import { formatRunWhen, runName, shortAgo } from '@/utils/formatters'
 import { isPipelineInProgress } from '@/types/agent'
 
 /** The page's help topic (the header's **?**): `topic#anchor` for the route. */
@@ -698,7 +698,7 @@ function buildModel({
     // counts the focused run, or the latest runs when none is focused. This
     // used to read a "6h / 24h / 7d" setting that was never sent anywhere.
     windowLabel: focusedRun
-      ? (focusedRun.run_seq != null ? `Run #${focusedRun.run_seq}` : `run ${focusedRun.id.slice(0, 8)}`)
+      ? (focusedRun.run_seq != null ? `Run #${focusedRun.run_seq}` : runName(focusedRun, 'this run'))
       : `latest ${recentRuns.length} run${recentRuns.length === 1 ? '' : 's'}`,
     // A focused run's creation time. (This was "since <commit>", where the
     // "commit" was the first 7 characters of the run's UUID.)
@@ -1185,6 +1185,8 @@ function ClusterRow({ cluster }: { cluster: ProposedCluster }) {
             label="root cause"
             confidence={cluster.confidence != null ? Math.round(cluster.confidence * 100) : null}
             confidenceBasis={cluster.confidenceBasis}
+            // The origin phrase names where the finding came from (the provenance line); a finding records
+            // no engine, and deep runs can answer by rules, so the badge stays the neutral "Suggestion".
             provenance={cluster.origin ? { modeUsed: ORIGIN_LABELS[cluster.origin] } : null}
           >
             <p className="text-xs m-0" style={{ color: 'var(--color-text-secondary)', lineHeight: 1.5 }}>
@@ -1652,7 +1654,8 @@ export default function DeepInvestigationPage() {
       const res = await deepInvestigationService.triggerDeep(runId, 'deep')
       // W14 AGT-07: a deep run already in progress is answered as such (200), not queued a second time.
       if (res?.already_in_progress) toast(res.message || DEEP_ALREADY_IN_PROGRESS, { icon: 'ℹ️' })
-      else toast.success(`Deep analysis queued for ${runId.slice(0, 8)}`)
+      // S-E-3: the run's build label or Run #N, never a slice of its id.
+      else toast.success(`Deep analysis queued for ${runName(focusedRun, 'this run')}`)
     } catch {
       toast.error('Trigger failed')
     }

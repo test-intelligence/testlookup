@@ -85,7 +85,8 @@ async def _with_owner_names(db: AsyncSession, rows) -> list[FlakyQuarantineRead]
         for p in payloads:
             owner = users.get(p.owner_user_id) if p.owner_user_id else None
             if owner is not None:
-                p.owner_name = owner.username
+                # D-101 sibling: a person reads as full name, else username (as the proposer below).
+                p.owner_name = owner.full_name or owner.username
             proposer = users.get(p.proposed_by_user_id) if p.proposed_by_user_id else None
             if proposer is not None:
                 p.proposed_by_name = proposer.full_name or proposer.username

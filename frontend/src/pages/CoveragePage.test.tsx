@@ -1106,7 +1106,7 @@ describe('CoveragePage P2: no stubs, no invented values', () => {
     }
     // The real actions stay, in the header's ⋯ menu (P3).
     expect(menuItems()).toEqual(['Compare to previous window', 'Export CSV', 'Open triage queue', 'View all suites'])
-    expect(screen.getByRole('menuitem', { name: 'Open triage queue' })).toHaveAttribute('href', '/failures?days=30')
+    expect(screen.getByRole('menuitem', { name: 'Open triage queue' })).toHaveAttribute('href', '/my-failures')
   })
 
   it('renders no recommended-actions card and no provenance footer', async () => {

@@ -71,7 +71,7 @@ describe('TestCasePage — the page template (P4)', () => {
     expect(screen.getAllByRole('heading', { level: 1 })).toHaveLength(1)
     expect(screen.getByRole('heading', { level: 1, name: 'Login should work' })).toBeInTheDocument()
     expect(screen.getByText('com.example.LoginTest.loginShouldWork')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Help: Login should work' })).toHaveAttribute('data-help-topic', 'ingestion')
+    expect(screen.getByRole('button', { name: 'Help: Login should work' })).toHaveAttribute('data-help-topic', 'runs')
     const header = document.querySelector('[data-page-header]') as HTMLElement
     expect(header).toHaveAttribute('data-compact', 'true')
     const primary = document.querySelector('[data-primary]') as HTMLElement

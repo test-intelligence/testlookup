@@ -10,7 +10,7 @@
  * ancestor of either.
  */
 import { Fragment, useState, useEffect, useCallback } from 'react'
-import { Edit3, FlaskConical, Plus, Trash2 } from 'lucide-react'
+import { ArchiveX as ArchiveIcon, Edit3, FlaskConical, Plus } from 'lucide-react'
 import PageHeader from '@/components/ui/PageHeader'
 import InlineConfirm from '@/components/ui/inPage/InlineConfirm'
 import InlineFormSection from '@/components/ui/inPage/InlineFormSection'
@@ -301,14 +301,18 @@ export default function ProjectsPage() {
               </div>
             </div>
             {canEdit && (
-              <div className="absolute top-3 right-3 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                <button onClick={(e) => { e.stopPropagation(); slot.open(editKey) }}
+              // D-66: each button is named for its project; Archive shows an archive box (not a red bin, which read as
+              // Delete) in the neutral colour until hover, a little apart from Edit.
+              <div className="absolute top-3 right-3 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                <button type="button" onClick={(e) => { e.stopPropagation(); slot.open(editKey) }}
+                  aria-label={`Edit ${p.name}`}
                   className="p-1.5 bg-[var(--color-bg-secondary)] hover:bg-[var(--color-bg-hover)] rounded text-[var(--color-text)] hover:text-[var(--color-text-secondary)] transition-colors" title="Edit">
-                  <Edit3 className="h-3.5 w-3.5" />
+                  <Edit3 className="h-3.5 w-3.5" aria-hidden="true" />
                 </button>
-                <button onClick={(e) => { e.stopPropagation(); setConfirmingArchive(p.id) }}
-                  className="p-1.5 bg-[var(--color-bg-secondary)] hover:bg-[var(--color-bg-hover)] rounded text-[var(--status-failed)] hover:text-[var(--status-failed)] transition-colors" title="Archive">
-                  <Trash2 className="h-3.5 w-3.5" />
+                <button type="button" onClick={(e) => { e.stopPropagation(); setConfirmingArchive(p.id) }}
+                  aria-label={`Archive ${p.name}`}
+                  className="p-1.5 bg-[var(--color-bg-secondary)] hover:bg-[var(--color-bg-hover)] rounded text-[var(--color-text-secondary)] hover:text-[var(--status-failed)] transition-colors" title="Archive">
+                  <ArchiveIcon className="h-3.5 w-3.5" aria-hidden="true" />
                 </button>
               </div>
             )}

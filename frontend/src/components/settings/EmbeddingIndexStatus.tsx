@@ -41,7 +41,8 @@ export default function EmbeddingIndexStatus({
 }: EmbeddingIndexStatusProps) {
   const [starting, setStarting] = useState(false)
   const [refusal, setRefusal] = useState<string | null>(null)
-  const lines = statusLines(index)
+  // D-159: whether the server can load the embedder in use (on the same read; null: not probed).
+  const lines = statusLines(index, index?.embedder_available)
   const action = isAdmin ? lines.action : null
 
   async function rebuild() {

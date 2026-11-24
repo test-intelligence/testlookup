@@ -371,6 +371,13 @@ describe('OverviewCatalogue — failure categories are the page’s own read', (
     expect(catalog.calls.map((c) => c.source)).toEqual(['overview-top-failing'])
   })
 
+  it('D-13: the takeaway says "Failures by category", not "AI-classified" (the categories read names no engine)', () => {
+    renderSections()
+    const frame = section('overview-categories')
+    expect(frame).toHaveTextContent(/Failures by category over/)
+    expect(frame.textContent).not.toMatch(/AI-classified/)
+  })
+
   it('draws the page’s payload, one slice per category', () => {
     renderSections()
     const frame = section('overview-categories')

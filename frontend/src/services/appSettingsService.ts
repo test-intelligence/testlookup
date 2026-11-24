@@ -153,6 +153,8 @@ export interface EmbeddingIndex {
    * Re-embed now resumes it (the rebuild re-enqueues instead of a 409). null / missing = not stalled.
    */
   stalled?: boolean | null
+  /** D-159: whether this server can load the built-in embedder in use; null / missing for Ollama / OpenAI (not probed). */
+  embedder_available?: boolean | null
   target?: EmbeddingGeneration | null
   families?: EmbeddingFamilyProgress[]
   processed?: number

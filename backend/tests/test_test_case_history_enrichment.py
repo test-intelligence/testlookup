@@ -180,12 +180,14 @@ async def test_list_plan_items_fills_case_version_beside_the_executed_version():
     )
     db = SimpleNamespace(
         get=AsyncMock(return_value=SimpleNamespace(id=plan_id)),
-        execute=AsyncMock(return_value=_Rows([(ran_old, 2), (not_run, None)])),
+        execute=AsyncMock(return_value=_Rows([(ran_old, 2, "Pay by card"), (not_run, None, None)])),
     )
 
     items = await list_plan_items(plan_id=plan_id, db=db, current_user=SimpleNamespace(), _plan=None)
 
     assert [(i.executed_case_version, i.case_version) for i in items] == [(1, 2), (None, None)]
+    # D-62: the row names its case (title from the same join; None for a deleted case).
+    assert [i.test_case_title for i in items] == ["Pay by card", None]
     sql = str(db.execute.await_args.args[0].compile())
     assert "LEFT OUTER JOIN managed_test_cases ON managed_test_cases.id = test_plan_items.test_case_id" in sql
     assert "ORDER BY test_plan_items.order_index" in sql

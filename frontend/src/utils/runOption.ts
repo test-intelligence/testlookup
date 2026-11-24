@@ -11,22 +11,11 @@
  */
 import type { TestRun } from '@/types/runs'
 
-type RunNameFields = { id?: string | null; build_number?: number | string | null; run_seq?: number | null }
+// The three naming helpers live in `./formatters`, which the run pages already load: importing them
+// from here made this module another chunk in those routes' eager preload lists (batch 6).
+import { runBuildLabel, runSeqLabel, type RunNameFields } from './formatters'
 
-/**
- * The run's build label: `main-1865`, or `Build 240` when the label is only a
- * number (a bare "240" reads as a count), or the short id when there is none.
- */
-export function runBuildLabel(run: { id?: string | null; build_number?: number | string | null }): string {
-  const raw = run.build_number == null ? '' : String(run.build_number).trim()
-  if (raw === '') return run.id ? `Run ${run.id.slice(0, 8)}` : 'Run'
-  return /^\d+$/.test(raw) ? `Build ${raw}` : raw
-}
-
-/** `Run #12`, the per-suite ordinal; null when the run has not been numbered. */
-export function runSeqLabel(run: { run_seq?: number | null }): string | null {
-  return run.run_seq != null ? `Run #${run.run_seq}` : null
-}
+export { runBuildLabel, runName, runSeqLabel } from './formatters'
 
 /** `main-1865 · Run #12`, or the label alone when the run has no number. */
 export function runIdent(run: RunNameFields): string {

@@ -104,10 +104,10 @@ for (const width of [1280, 1440]) {
   })
 }
 
-test('each run on screen carries its AI verdict, and the verdict opens the run’s Analysis tab', async ({ page }) => {
+test('each run on screen carries its verdict, and the verdict opens the run’s Analysis tab', async ({ page }) => {
   const { api, errors } = await openRollout(page, '/runs', { handlers: RUNS_PAGE, ready })
   const table = page.locator('[data-primary]').getByRole('table')
-  await expect(table.getByRole('columnheader', { name: 'AI verdict' })).toBeVisible()
+  await expect(table.getByRole('columnheader', { name: 'Verdict' })).toBeVisible()
   // The newest build: a No-Go nobody has reviewed yet.
   const newest = table.locator(`#run-row-${RUN_ID}`)
   const verdict = newest.locator('[data-ai-verdict-cell] a')

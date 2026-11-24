@@ -235,7 +235,7 @@ export function ProjectMembersTab({ isAdmin, canManageUsers }: { isAdmin: boolea
 
               {qaLeadCandidates.length === 0 ? (
                 <p className="text-xs text-[var(--status-broken)] bg-[var(--status-broken-bg)]/20 border border-[var(--status-broken-bd)]/30 rounded px-2 py-1.5 mt-2 inline-block">
-                  No project members have the QA_LEAD role yet. Add one below before setting a default.
+                  No project members have the QA Lead role yet. Add one below before setting a default.
                 </p>
               ) : isAdmin ? (
                 <div className="flex items-center gap-2 mt-2 flex-wrap">
@@ -514,7 +514,7 @@ function AddProjectMemberModal({ projectId, projectName, memberUserIds, onClose,
             {usersError ? (
               <p className="flex items-center gap-2 text-xs text-[var(--status-broken)] py-2">
                 <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-                Could not load users. Check your permissions (QA_LEAD+ required).
+                Could not load users. Check your permissions (QA Lead or higher required).
               </p>
             ) : usersLoading && !found ? (
               <div className="flex items-center gap-2 text-xs text-[var(--color-text-muted)] py-2">

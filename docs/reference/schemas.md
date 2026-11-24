@@ -16011,6 +16011,17 @@ These are the full generated JSON Schema definitions, including required fields,
       ],
       "title": "Configured Note"
     },
+    "embedder_available": {
+      "anyOf": [
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Embedder Available"
+    },
     "families": {
       "items": {
         "$ref": "#/components/schemas/EmbeddingFamilyProgress"
@@ -52695,6 +52706,17 @@ These are the full generated JSON Schema definitions, including required fields,
       "format": "uuid",
       "title": "Test Case Id",
       "type": "string"
+    },
+    "test_case_title": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Test Case Title"
     }
   },
   "required": [

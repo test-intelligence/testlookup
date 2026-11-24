@@ -454,7 +454,7 @@ describe('Plans tab controls follow the role (D-57)', () => {
     expect(screen.getByTestId('plan-status-readonly')).toHaveTextContent('draft')
     expect(screen.queryByRole('combobox')).toBeNull()
     fireEvent.click(screen.getByText('Release 4 regression'))
-    expect(screen.getByText('not run')).toBeInTheDocument()
+    expect(screen.getByText('Not run')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /Link Suite/ })).toBeNull()
     expect(screen.queryByRole('button', { name: 'passed' })).toBeNull()
   })

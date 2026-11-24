@@ -20,6 +20,7 @@ import { TEST_CASES } from '../visual/production/fixtures-pages'
 const PLAN_ID = '9a000000-0000-4000-8000-000000000001'
 const ITEM_ID = '9b000000-0000-4000-8000-000000000001'
 const CASE_ID = 'c0ffee00-0000-4000-8000-000000000001'
+const CASE_TITLE = 'Pay by card with 3-D Secure'
 const EXECUTE = `/api/v1/test-management/plans/${PLAN_ID}/items/${ITEM_ID}/execute`
 
 const ready = (p: Page) => p.getByRole('heading', { name: 'Test Case Management', level: 1 })
@@ -63,7 +64,8 @@ function planHandlers(state: PlanState): ApiHandlers {
   })
   return [
     ['/api/v1/test-management/plans', () => ({ items: [plan()], total: 1, page: 1, size: 10, pages: 1 })],
-    [`/api/v1/test-management/plans/${PLAN_ID}/items`, () => [item()]],
+    // D-62: the list read carries the case's title (its join); the execute answer does not.
+    [`/api/v1/test-management/plans/${PLAN_ID}/items`, () => [{ ...item(), test_case_title: CASE_TITLE }]],
     [
       EXECUTE,
       ({ route }) => {
@@ -89,15 +91,15 @@ test('clicking "passed" on a plan item records the execution with a PATCH', asyn
   await page.getByRole('tablist', { name: 'Test case sections' }).getByRole('tab', { name: 'Plans' }).click()
   await page.getByRole('heading', { name: 'Release 2026.11 regression' }).click()
 
-  const row = page.getByRole('row').filter({ hasText: CASE_ID.slice(0, 8) })
-  await expect(row.getByRole('cell').nth(2)).toHaveText('not run')
+  const row = page.getByRole('row').filter({ hasText: CASE_TITLE })
+  await expect(row.getByRole('cell').nth(2)).toHaveText('Not run')
 
   await row.getByRole('button', { name: 'passed', exact: true }).click()
 
   await expect(page.getByText('Execution recorded')).toBeVisible()
   await expect(page.getByText('Failed to record execution')).toHaveCount(0)
   // The row and the plan's counts change without a reload.
-  await expect(row.getByRole('cell').nth(2)).toHaveText('passed')
+  await expect(row.getByRole('cell').nth(2)).toHaveText('Passed')
   await expect(page.getByText('1/1 executed')).toBeVisible()
 
   await networkQuiet(page, api)

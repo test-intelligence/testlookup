@@ -420,7 +420,9 @@ test('L6 a plan › Link Suite: the suites read on open; Cancel sends nothing; C
   ])
   expect(requestsTo(api, itemsPath).length, 'the items re-read').toBeGreaterThan(itemReads)
   expect(requestsTo(api, '/api/v1/test-management/plans').length, 'the plans re-read').toBeGreaterThan(plansReads)
-  await expect(page.getByRole('cell', { name: `${CHECKOUT_SUITE_CASES[0].id.slice(0, 8)}…` }), 'the plan lists the two linked cases').toHaveCount(2)
+  // D-62: a plan row names its case by title, never a slice of its id.
+  await expect(page.getByRole('cell', { name: CHECKOUT_SUITE_CASES[0].test_name, exact: true }), 'the plan lists the first linked case').toBeVisible()
+  await expect(page.getByRole('cell', { name: CHECKOUT_SUITE_CASES[2].test_name, exact: true }), 'and the second').toBeVisible()
   assertHermetic(api, errors)
 })
 
@@ -548,7 +550,7 @@ test('L9 Approvals (legacy) › Request changes: Cancel sends nothing; notes →
   await form.getByLabel('Review notes').fill('  Steps 2 and 3 overlap  ')
   await form.getByRole('button', { name: 'Request changes', exact: true }).click()
   await expect(form).toHaveCount(0)
-  await expect(page.getByText('Test case request changes', { exact: true })).toBeVisible()
+  await expect(page.getByText('Changes requested', { exact: true })).toBeVisible()
   await expect(approvalCard(page, 2), 'the case left the queue').toHaveCount(0)
   await networkQuiet(page, api)
   expect(world.writes).toEqual([
@@ -564,7 +566,7 @@ test('L9 Approvals (lifecycle v2): Claim review sends at once; Approve → the n
   await networkQuiet(page, api)
 
   await approvalCard(page, 2).getByRole('button', { name: 'Claim review', exact: true }).click()
-  await expect(page.getByText('Test case claim review', { exact: true })).toBeVisible()
+  await expect(page.getByText('Review claimed', { exact: true })).toBeVisible()
   await networkQuiet(page, api)
   expect(world.writes).toEqual([{ line: `POST ${CASES}/${tmCaseId(2)}/transition`, body: { action: 'claim_review', expected_version: 1 } }])
 
@@ -573,7 +575,7 @@ test('L9 Approvals (lifecycle v2): Claim review sends at once; Approve → the n
   await form.getByLabel('Review notes').fill(' Looks complete ')
   await form.getByRole('button', { name: 'Approve', exact: true }).click()
   await expect(form).toHaveCount(0)
-  await expect(page.getByText('Test case approve', { exact: true })).toBeVisible()
+  await expect(page.getByText('Test case approved', { exact: true })).toBeVisible()
   await networkQuiet(page, api)
   expect(world.writes.slice(1)).toEqual([
     { line: `POST ${CASES}/${tmCaseId(5)}/transition`, body: { action: 'approve', expected_version: 1, notes: 'Looks complete' } },

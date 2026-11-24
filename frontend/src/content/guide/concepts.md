@@ -52,7 +52,7 @@ flowchart LR
 
 **Release** — a named grouping of runs used for readiness assessment, with phases. See [Releases and gates](/docs/releases#releases).
 
-**Release gate** — the policy evaluated for a release, producing GO / CONDITIONAL_GO / NO_GO **as a recommendation**.
+**Release gate** — the verdict for a release (or one of its phases), worked out from its linked runs' results and the release's open defects: GO, NO_GO or NOT_EVALUATED (too few tests carried results to decide), **as a recommendation**. A release gate has no CONDITIONAL_GO; a single run's recommendation can be GO, CONDITIONAL_GO or NO_GO. See [Releases and gates](/docs/releases#evaluating-the-release-gate).
 
 **Analysis pipeline** — the sequence of stages run after a run finishes. See [AI agents and the pipeline](/docs/ai-agents).
 

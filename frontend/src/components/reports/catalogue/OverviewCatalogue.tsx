@@ -427,7 +427,7 @@ function FailureCategories({
   return (
     <BreakdownChart
       title="Failure categories"
-      takeaway={`AI-classified failures by category over ${windowWords(days)}`}
+      takeaway={`Failures by category over ${windowWords(days)}`}
       headingLevel={3}
       height={OVERVIEW_BREAKDOWN_HEIGHT}
       state={state}

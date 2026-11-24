@@ -10,6 +10,7 @@
  */
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
+import toast from 'react-hot-toast'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useFeatureEnabled } from '@/hooks/useFeatureFlags'
@@ -144,6 +145,9 @@ describe('Inbox › Approvals › Test cases: the notes form in the page', () =>
     })
     expect(testManagementService.transitionCase).toHaveBeenCalledWith('c1', { action: 'claim_review', expected_version: 1 })
     expect(screen.queryByRole('region', { name: 'Claim review' })).toBeNull()
+    // D-63: the toast says what happened in words, not the transition's API name.
+    expect(toast.success).toHaveBeenLastCalledWith('Review claimed')
+    expect(vi.mocked(toast.success).mock.calls.flat().join(' ')).not.toMatch(/claim review|claim_review/)
 
     fireEvent.click(within(rowOf('Checkout case c2')).getByRole('button', { name: 'Request changes' }))
     const form = screen.getByRole('region', { name: 'Request changes' })

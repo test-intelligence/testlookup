@@ -508,8 +508,15 @@ describe('ReleaseGatePage — the risk score explains itself', () => {
       recommendation: 'GO',
       pass_rate: 96.0,
     }))
-    expect(await screen.findByText(/Build ui-6 — AI-powered/)).toBeInTheDocument()
+    expect(await screen.findByText(/Build ui-6 — release decision/)).toBeInTheDocument()
     expect(screen.queryByText(/raised to the NO-GO floor/i)).not.toBeInTheDocument()
+  })
+
+  it('D-13: the subtitle says what the verdict is, never "AI-powered"', async () => {
+    await renderGate(flooredDecision({ synthesized: true }))
+    expect(await screen.findByText(/Build ui-6 — quick look from this run's results/)).toBeInTheDocument()
+    expect(screen.queryByText(/AI-powered/)).toBeNull()
+    expect(screen.queryByText(/and AI\s+narrative/)).toBeNull()
   })
 
   it('S-B-4: a scorer failure shows "Not scored", not a ring at the stand-in 50', async () => {

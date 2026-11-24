@@ -39,6 +39,7 @@ import { bandsTone, formatGaugeNumber, type GaugeBands } from '@/components/char
 import { GateContextPending } from '@/components/reports/catalogue/GateContextHeader'
 import { lazyWithRetry } from '@/utils/lazyWithRetry'
 import { formatCompactDateTime, formatDay } from '@/utils/formatters'
+import { runName, runSeqLabel } from '@/utils/formatters'
 import { DECISION_LABEL } from '@/components/ui/statusVocabulary'
 
 /**
@@ -247,9 +248,10 @@ export default function ReleaseGatePage() {
               <tbody>
                 {runs.map((run) => (
                   <tr key={run.id} className="table-row">
-                    <td className="td font-mono text-[var(--color-text)] text-xs">{run.id.slice(0, 8)}</td>
+                    {/* S-E-3: the run's ordinal, never a slice of its id (the row links by id). */}
+                    <td className="td text-[var(--color-text)] text-xs" title={run.id}>{runSeqLabel(run) ?? '—'}</td>
                     <td className="td text-[var(--color-text-secondary)] text-xs">{run.build_number ?? '—'}</td>
-                    <td className="td text-[var(--color-text-muted)] text-xs">{run.project_name ?? run.project_id?.slice(0, 8) ?? '—'}</td>
+                    <td className="td text-[var(--color-text-muted)] text-xs">{run.project_name ?? '—'}</td>
                     <td className="td text-[var(--color-text-muted)] text-xs">
                       {run.created_at ? formatDay(run.created_at) : '—'}
                     </td>
@@ -305,7 +307,7 @@ export default function ReleaseGatePage() {
         <PageHeader
           compact
           title="Release Gate"
-          subtitle={`Run ${runId?.slice(0, 8) ?? '—'}`}
+          subtitle={runName(recentRunsData?.items.find((r) => r.id === runId), 'this run')}
           helpTopic={HELP_TOPIC}
         />
         {releaseStrip}
@@ -394,7 +396,7 @@ export default function ReleaseGatePage() {
       <PageHeader
         compact
         title="Release Gate"
-        subtitle={`Build ${decision.build_number ?? runId} — AI-powered go/no-go assessment`}
+        subtitle={`${decision.build_number ? `Build ${decision.build_number}` : runName(recentRunsData?.items.find((r) => r.id === runId), 'this run')} — ${decision.synthesized ? "quick look from this run's results" : 'release decision'}`}
         helpTopic={HELP_TOPIC}
         actions={
           <>
@@ -446,7 +448,7 @@ export default function ReleaseGatePage() {
             <div>
               <strong className="font-semibold">Quick-look decision.</strong>{' '}
               Derived from this run&apos;s aggregates because deep investigation
-              has not run yet. Cluster insights, defect breakdown, and AI
+              has not run yet. Cluster insights, defect breakdown, and the written
               narrative require a deep investigation pass.
             </div>
           </div>
@@ -484,7 +486,7 @@ export default function ReleaseGatePage() {
             )}
             {hasEvidence && decision.original_recommendation && decision.original_recommendation !== decision.recommendation && (
               <p className="text-xs text-[var(--status-broken)] mt-1">
-                Original AI recommendation: {decision.original_recommendation}
+                Original recommendation: {decision.original_recommendation}
                 {decision.original_risk_score != null && ` (score: ${decision.original_risk_score})`}
               </p>
             )}

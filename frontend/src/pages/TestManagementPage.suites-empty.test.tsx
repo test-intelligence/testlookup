@@ -109,11 +109,21 @@ describe('Test Cases › Suites: a suite before its first run (TCL-07)', () => {
     expect(within(empty).getByText('Waiting for its first run: no result reports this suite yet.')).toBeInTheDocument()
     expect(within(empty).getByText('Priya Lead')).toBeInTheDocument()
     expect(within(empty).getByRole('button', { name: 'change' })).toBeInTheDocument()
-    // No counts, no pass rate, no AI verdict, no review badge, no trend link.
+    // No counts, no pass rate, no review row (D-64: it was labelled "AI verdict"), no review badge, no trend link.
     expect(empty).not.toHaveTextContent(/passed|failed|pass rate|tests|executions/)
-    expect(within(empty).queryByText(/AI verdict/)).toBeNull()
+    expect(within(empty).queryByText(/^Review:/)).toBeNull()
     expect(within(empty).queryByText('Pending review')).toBeNull()
     expect(within(empty).queryByRole('link', { name: 'Trend →' })).toBeNull()
+  })
+
+  it('S-E-3: changing the owner with no QA lead on the project says so in words, not the role enum', async () => {
+    renderAt('/test-management?tab=suites')
+    await screen.findByText('2 suites')
+    const empty = card('Checkout API')
+    fireEvent.click(within(empty).getByRole('button', { name: 'change' }))
+    const note = within(empty).getByText('No QA Leads on this project')
+    expect(note).toHaveAttribute('title', 'Add a project member with the QA Lead role before assigning.')
+    expect(empty.textContent).not.toMatch(/QA_LEAD/)
   })
 
   it('an aggregated card is unchanged beside it: counts, review badge, no Empty badge', async () => {

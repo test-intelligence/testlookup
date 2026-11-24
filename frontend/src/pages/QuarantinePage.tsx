@@ -28,6 +28,7 @@ import {
   type QuarantineStatus,
 } from '@/services/flakyQuarantineService'
 import { parseQuarantinePolicy } from '@/services/quarantinePolicyService'
+import { extractErrorMessage } from '@/services/apiErrors'
 import { formatDay } from '@/utils/formatters'
 import {
   QUARANTINE_VIEW_STATUSES,
@@ -268,7 +269,17 @@ function QuarantineRow({
       setDecision(null)
       setNotes('')
     } catch (err) {
-      toast.error(`Failed: ${(err as Error).message}`)
+      // S-E-4: the shared client has already toasted the server's own sentence
+      // (a 409's "This request is quarantined now, ..."); a second toast would
+      // add the HTTP client's "Request failed with status code 409". Only what
+      // the client keeps quiet (401, 404) is said here, in the server's words.
+      // The client's rule (`shouldToastError` in services/apiErrors) said inline: importing it here made
+      // the eager bundle export one more name.
+      const failure = err as { response?: { status?: number; data?: { detail?: unknown } } }
+      const status = failure?.response?.status
+      if (status === 401 || status === 404) {
+        toast.error(extractErrorMessage(failure?.response?.data?.detail, 'The action could not be saved. Refresh the list and try again.'))
+      }
     } finally {
       setBusy(false)
     }

@@ -198,11 +198,11 @@ const PLAN: TestPlan = {
 }
 const ITEMS: TestPlanItem[] = [
   {
-    id: 'item-1', plan_id: 'plan-1', test_case_id: 'c-1aaaaaaa', order_index: 0, execution_status: 'passed',
+    id: 'item-1', plan_id: 'plan-1', test_case_id: 'c-1aaaaaaa', order_index: 0, execution_status: 'passed', test_case_title: 'Pay by card',
     executed_at: '2026-10-05T00:00:00Z', executed_case_version: 1, case_version: 2, created_at: '2026-10-01T00:00:00Z',
   },
   {
-    id: 'item-2', plan_id: 'plan-1', test_case_id: 'c-2bbbbbbb', order_index: 1, execution_status: 'not_run',
+    id: 'item-2', plan_id: 'plan-1', test_case_id: 'c-2bbbbbbb', order_index: 1, execution_status: 'not_run', test_case_title: null,
     executed_case_version: null, case_version: 1, created_at: '2026-10-01T00:00:00Z',
   },
 ]
@@ -273,7 +273,16 @@ describe('/test-management Plans (W28)', () => {
     const table = await openPlan()
     expect(within(table).getAllByRole('columnheader').map((h) => h.textContent)).toEqual(['#', 'Test Case', 'Status', 'Ran against', 'Actions'])
     const first = within(table).getAllByRole('row')[1]
-    expect(within(first).getAllByRole('cell')[2]).toHaveTextContent('passed')
+    expect(within(first).getAllByRole('cell')[2]).toHaveTextContent('Passed')
+  })
+
+  it('D-62 / S-E-3: a plan row names its case and its status in words, never an id slice or an enum', async () => {
+    const table = await openPlan()
+    const [, first, second] = within(table).getAllByRole('row')
+    expect(within(first).getAllByRole('cell')[1]).toHaveTextContent(/^Pay by card$/)
+    expect(within(second).getAllByRole('cell')[1]).toHaveTextContent(/^Deleted test case$/)
+    expect(within(second).getAllByRole('cell')[2]).toHaveTextContent(/^Not run$/)
+    expect(table.textContent).not.toMatch(/c-1aaaaa|c-2bbbbb|not_run|not run/)
   })
 
   it('a version button opens that version\'s steps in a row under the item, one at a time', async () => {

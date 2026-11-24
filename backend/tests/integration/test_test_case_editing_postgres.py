@@ -374,6 +374,7 @@ async def test_an_execution_keeps_the_version_it_ran_against(world):
         case = await session.get(ManagedTestCase, case_id)
         history = await case_history(session, case)
     assert [(i.id, i.executed_case_version, i.case_version) for i in items] == [(item_id, 1, 2)]
+    assert [i.test_case_title for i in items] == ["Refund a payment"]
     by_version = {h.version: h for h in history}
     assert [e.item_id for e in by_version[1].executions] == [item_id]
     assert by_version[1].executions[0].plan_name == "W28 plan"

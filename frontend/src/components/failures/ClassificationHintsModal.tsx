@@ -262,7 +262,10 @@ export default function ClassificationHintsModal({
                     {preview.data.examples.length > 0 && (
                       <ul className="m-0 mt-1 p-0 list-none space-y-0.5 text-xs text-[var(--color-text-muted)]">
                         {preview.data.examples.slice(0, 5).map((ex, i) => (
-                          <li key={i} className="font-mono [overflow-wrap:anywhere]">{ex.test_name}: {ex.value}</li>
+                          // D-31: on the Test name field the matched value IS the test name; print it once.
+                          <li key={i} className="font-mono [overflow-wrap:anywhere]">
+                            {field === 'test_name' ? ex.value : `${ex.test_name}: ${ex.value}`}
+                          </li>
                         ))}
                       </ul>
                     )}

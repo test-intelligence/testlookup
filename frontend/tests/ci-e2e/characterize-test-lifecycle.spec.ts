@@ -191,7 +191,7 @@ test('L14 Inbox › Test cases (legacy) › Approve: Cancel and Escape send noth
   await form.getByLabel('Review notes').fill('  Covers the refund path  ')
   await form.getByRole('button', { name: 'Approve', exact: true }).click()
   await expect(form).toHaveCount(0)
-  await expect(page.getByText('Test case approve', { exact: true })).toBeVisible()
+  await expect(page.getByText('Test case approved', { exact: true })).toBeVisible()
   await expect(caseRow(page, 'Checkout case c1'), 'the approved case left the queue').toHaveCount(0)
   await networkQuiet(page, api)
   expect(world.writes).toEqual([
@@ -207,7 +207,7 @@ test('L14 Inbox › Test cases (lifecycle v2): Claim review sends at once; Reque
   await networkQuiet(page, api)
 
   await caseRow(page, 'Checkout case c1').getByRole('button', { name: 'Claim review', exact: true }).click()
-  await expect(page.getByText('Test case claim review', { exact: true })).toBeVisible()
+  await expect(page.getByText('Review claimed', { exact: true })).toBeVisible()
   await networkQuiet(page, api)
   expect(world.writes).toEqual([
     { line: 'POST /api/v1/test-management/cases/c1/transition', body: { action: 'claim_review', expected_version: 1 } },
@@ -218,7 +218,7 @@ test('L14 Inbox › Test cases (lifecycle v2): Claim review sends at once; Reque
   await form.getByLabel('Review notes').fill(' Step 3 has no expected result ')
   await form.getByRole('button', { name: 'Request changes', exact: true }).click()
   await expect(form).toHaveCount(0)
-  await expect(page.getByText('Test case request changes', { exact: true })).toBeVisible()
+  await expect(page.getByText('Changes requested', { exact: true })).toBeVisible()
   await networkQuiet(page, api)
   expect(world.writes.slice(1)).toEqual([
     { line: 'POST /api/v1/test-management/cases/c2/transition', body: { action: 'request_changes', expected_version: 1, notes: 'Step 3 has no expected result' } },

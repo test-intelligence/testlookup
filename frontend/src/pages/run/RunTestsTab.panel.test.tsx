@@ -108,6 +108,74 @@ describe('Run page › Tests: a test opens in a side panel', () => {
     expect(within(panel()).getByTestId('test-case-body')).toHaveTextContent('r1/f1 compact')
   })
 
+  // jsdom has no layout: the open test body reports 640 px, as a long stack trace would.
+  function bodyHeight640() {
+    return vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockImplementation(function (this: HTMLElement) {
+      return this.parentElement?.hasAttribute('data-test-pane-body') ? 640 : 0
+    })
+  }
+  const paneBody = () => document.querySelector('[data-test-pane-body]') as HTMLElement
+
+  it('D-28: Next failure keeps the pane body at its height while the next test loads (the page does not shrink)', () => {
+    const spy = bodyHeight640()
+    try {
+      renderTab()
+      fireEvent.click(row('f1'))
+      expect(paneBody().style.minHeight).toBe('')
+      fireEvent.click(within(panel()).getByRole('button', { name: /Next failure/ }))
+      expect(within(panel()).getByTestId('test-case-body')).toHaveTextContent('r1/f2 compact')
+      expect(paneBody().style.minHeight).toBe('640px')
+      // Closed and reopened: nothing is held.
+      fireEvent.click(within(panel()).getByRole('button', { name: 'Close panel' }))
+      fireEvent.click(row('f1'))
+      expect(paneBody().style.minHeight).toBe('')
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  it('D-28: the hold lets go while the pane stays open, at the latest after 5 s (it never strands a short test)', () => {
+    vi.useFakeTimers()
+    const spy = bodyHeight640()
+    try {
+      renderTab()
+      fireEvent.click(row('f1'))
+      fireEvent.click(within(panel()).getByRole('button', { name: /Next failure/ }))
+      expect(paneBody().style.minHeight).toBe('640px')
+      act(() => { vi.advanceTimersByTime(5000) })
+      expect(paneBody().style.minHeight).toBe('')
+    } finally {
+      spy.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+
+  it('D-28: the hold lets go as soon as the new body has drawn (its first resize after the spinner)', () => {
+    const callbacks: Array<() => void> = []
+    const original = globalThis.ResizeObserver
+    globalThis.ResizeObserver = class {
+      constructor(cb: () => void) { callbacks.push(cb) }
+      observe() {}
+      disconnect() {}
+      unobserve() {}
+    } as unknown as typeof ResizeObserver
+    const spy = bodyHeight640()
+    try {
+      renderTab()
+      fireEvent.click(row('f1'))
+      fireEvent.click(within(panel()).getByRole('button', { name: /Next failure/ }))
+      expect(paneBody().style.minHeight).toBe('640px')
+      const observed = callbacks[callbacks.length - 1]
+      act(() => observed())   // the spinner it mounted with
+      expect(paneBody().style.minHeight).toBe('640px')
+      act(() => observed())   // its content
+      expect(paneBody().style.minHeight).toBe('')
+    } finally {
+      spy.mockRestore()
+      globalThis.ResizeObserver = original
+    }
+  })
+
   it('closes, and Ctrl-click opens the full page instead', () => {
     renderTab()
     fireEvent.click(row('f2'))

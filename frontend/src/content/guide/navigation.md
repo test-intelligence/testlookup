@@ -64,7 +64,7 @@ Pages that were merged in the October 2026 redesign keep their old addresses. Bo
 
 | Old address | Now opens |
 |---|---|
-| `/intelligence` | **Runs** (`/runs`) — the AI verdict is a column of the runs table |
+| `/intelligence` | **Runs** (`/runs`) — each run's verdict is a column of the runs table |
 | `/runs/<id>/intelligence` | the run's **Analysis** tab (`/runs/<id>?tab=analysis`) |
 | `/deep-investigate/<run id>` | the run's **Analysis** tab |
 | `/agents/run/<run id>` | the run's **Evidence** tab (`/runs/<id>?tab=evidence`) |

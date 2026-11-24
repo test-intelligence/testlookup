@@ -2,7 +2,7 @@
  * Contract tests for the shared AI trust chrome (US-15.1).
  *
  * The honesty invariants, in order of how badly they hurt when broken:
- *  - the "AI-suggested" badge renders ALWAYS;
+ *  - the provenance badge renders ALWAYS ("AI-suggested" only for a model, D-13);
  *  - a confidence renders ONLY when one is supplied, and never without its
  *    calibration basis;
  *  - an absent/unknown basis reads "estimated", never "calibrated";
@@ -12,7 +12,7 @@
  */
 import { render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
-import AISuggestion, { AIBadge, basisLabel, engineLabel, normalizeProvenance } from './AISuggestion'
+import AISuggestion, { AIBadge, basisLabel, engineLabel, normalizeProvenance, producedByWord } from './AISuggestion'
 
 describe('AISuggestion', () => {
   it('always renders the AI-suggested badge', () => {
@@ -282,5 +282,46 @@ describe('engineLabel', () => {
   it('FAIL-10: the hint engine (`mode_used: hint`) reads "project hint"', () => {
     expect(engineLabel('hint')).toBe('project hint')
     expect(engineLabel('HINT')).toBe('project hint')
+  })
+})
+
+describe('D-13: producedByWord / the badge names what answered', () => {
+  it('a rules provenance gives no "AI" in the badge, its tooltip or the section name', () => {
+    render(<AISuggestion provenance={{ modeUsed: 'rules' }} />)
+    const badge = screen.getByTestId('ai-suggested-badge')
+    expect(badge).toHaveTextContent('Rule-based suggestion')
+    expect(badge.textContent).not.toMatch(/\bAI\b/)
+    expect(badge.getAttribute('title')).not.toMatch(/\bAI\b/)
+    expect(screen.getByTestId('ai-suggestion').getAttribute('aria-label')).toBe('Rule-based suggestion')
+  })
+
+  it('an llm provenance gives "AI-suggested"', () => {
+    render(<AISuggestion provenance={{ modeUsed: 'llm' }} />)
+    expect(screen.getByTestId('ai-suggested-badge')).toHaveTextContent('AI-suggested')
+    expect(screen.getByTestId('ai-suggestion').getAttribute('aria-label')).toBe('AI-suggested output')
+  })
+
+  it('a classifier, a hint and a stub that no engine wrote each get their own words', () => {
+    const { rerender } = render(<AISuggestion provenance={{ modeUsed: 'ml' }} />)
+    expect(screen.getByTestId('ai-suggested-badge')).toHaveTextContent('Classifier suggestion')
+    rerender(<AISuggestion provenance={{ modeUsed: 'hint' }} />)
+    expect(screen.getByTestId('ai-suggested-badge')).toHaveTextContent('From a project hint')
+    rerender(<AISuggestion provenance={{ modeUsed: null, fallbackFrom: 'llm', fallbackReason: 'llm_unavailable' }} />)
+    expect(screen.getByTestId('ai-suggested-badge')).toHaveTextContent('Needs review')
+  })
+
+  it('maps every engine id; unknown ids are a plain "Suggestion", no id at all keeps "AI-suggested"', () => {
+    expect(producedByWord('heuristic').badge).toBe('Rule-based suggestion')
+    expect(producedByWord('ML_CLASSIFIER').badge).toBe('Classifier suggestion')
+    expect(producedByWord('local_llm').badge).toBe('AI-suggested')
+    expect(producedByWord('slm').badge).toBe('AI-suggested')
+    expect(producedByWord('human_corrected').badge).toBe('Corrected by a person')
+    expect(producedByWord('seeded demo data').badge).toBe('Suggestion')
+    expect(producedByWord(null).badge).toBe('AI-suggested')
+  })
+
+  it('an explicit badgeText still wins', () => {
+    render(<AISuggestion provenance={{ modeUsed: 'rules' }} badgeText="Hedged" />)
+    expect(screen.getByTestId('ai-suggested-badge')).toHaveTextContent('Hedged')
   })
 })

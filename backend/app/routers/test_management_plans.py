@@ -122,17 +122,19 @@ async def list_plan_items(
 ):
     await get_plan_or_404(db, plan_id)
     # W28 TCM-05: each item with its case's CURRENT version (one outer join),
-    # beside the version its recorded execution ran against.
+    # beside the version its recorded execution ran against. D-62: the same
+    # join carries the case's title, so a plan row names its case.
     result = await db.execute(
-        select(TestPlanItem, ManagedTestCase.version)
+        select(TestPlanItem, ManagedTestCase.version, ManagedTestCase.title)
         .outerjoin(ManagedTestCase, ManagedTestCase.id == TestPlanItem.test_case_id)
         .where(TestPlanItem.plan_id == plan_id)
         .order_by(TestPlanItem.order_index)
     )
     items: list[TestPlanItemResponse] = []
-    for item, case_version in result.all():
+    for item, case_version, case_title in result.all():
         response = row(item, TestPlanItemResponse)
         response.case_version = case_version if isinstance(case_version, int) else None
+        response.test_case_title = case_title if isinstance(case_title, str) else None
         items.append(response)
     return items
 

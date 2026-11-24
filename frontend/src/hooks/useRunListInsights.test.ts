@@ -85,7 +85,7 @@ describe('useRunAiVerdicts — ONE request for the runs on screen', () => {
   it('an id the batch lists as unavailable and a failed request both read "unavailable", with different titles', async () => {
     svc.getAiVerdicts.mockResolvedValueOnce({ items: [], unavailable: ['run-01'], max_ids: 25 })
     const { result } = renderHook(() => useRunAiVerdicts([run(1)]), { wrapper })
-    await waitFor(() => expect(result.current.verdictOf(run(1))).toMatchObject({ reason: 'unavailable', title: 'AI verdict unavailable: the run is not available to you' }))
+    await waitFor(() => expect(result.current.verdictOf(run(1))).toMatchObject({ reason: 'unavailable', title: 'Verdict unavailable: the run is not available to you' }))
 
     svc.getAiVerdicts.mockRejectedValueOnce(new Error('503'))
     const failing = renderHook(() => useRunAiVerdicts([run(2)]), { wrapper })

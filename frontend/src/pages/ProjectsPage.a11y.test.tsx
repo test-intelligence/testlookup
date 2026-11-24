@@ -231,6 +231,18 @@ describe('ProjectsPage in the page (W27b)', () => {
     expect(screen.queryByRole('region', { name: 'Edit Project' })).toBeNull()
   })
 
+  // D-66: two icon buttons named only by a title, the second a red bin that read as Delete for an Archive action.
+  it('D-66: a card\'s buttons are named "Edit <project>" and "Archive <project>"; none is called Delete or drawn as a bin', async () => {
+    const { card } = await renderWithCards()
+    const own = card(OTHER.name)
+    expect(within(own).getByRole('button', { name: 'Edit Storefront' })).toBeInTheDocument()
+    const archive = within(own).getByRole('button', { name: 'Archive Storefront' })
+    expect(archive.querySelector('svg.lucide-archive-x')).not.toBeNull()
+    expect(own.querySelector('svg.lucide-trash-2, svg.lucide-trash')).toBeNull()
+    expect(within(own).queryByRole('button', { name: /delete/i })).toBeNull()
+    expect(archive.className).not.toMatch(/(^|\s)text-\[var\(--status-failed\)\]/)
+  })
+
   // D-20's fallback: inside the ≈ 199 px card at 1280 the strip's Cancel + Archive left only 21 px (< 40 px), so it
   // asks in the full-width grid row right after the card, where Edit opens.
   it('Archive asks in the full-width row right after its card; the trigger sends nothing, the strip\'s Archive sends once; no native confirm', async () => {

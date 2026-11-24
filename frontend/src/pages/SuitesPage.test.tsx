@@ -142,6 +142,24 @@ describe('SuitesPage', () => {
     expect(screen.getByText('4')).toBeInTheDocument()
   })
 
+  // D-26: the subtitle described a default suite the list did not have (it is created lazily).
+  it('D-26: the subtitle names "the default suite" only when a default row is listed', () => {
+    const { unmount } = renderPage({
+      data: { items: [makeSuite({ name: 'auth-api', test_case_count: 10 })], total: 1 },
+      isLoading: false,
+      error: undefined,
+    })
+    expect(screen.queryByText(/The default suite catches/)).toBeNull()
+    expect(screen.getByText(/Tests that arrive without a suite name are filed in a default suite, created when the first one arrives\./)).toBeInTheDocument()
+    unmount()
+    renderPage({
+      data: { items: [makeSuite({ name: 'auth-api' }), makeSuite({ name: 'All Tests', is_default: true })], total: 2 },
+      isLoading: false,
+      error: undefined,
+    })
+    expect(screen.getByText(/The default suite catches new cases ingested without an explicit suite name\./)).toBeInTheDocument()
+  })
+
   it('renders the error state when the API rejects', () => {
     renderPage({
       data: undefined,

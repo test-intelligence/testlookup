@@ -26,7 +26,10 @@ describe('helpTopics (UX redesign P1)', () => {
     expect(helpTopicFor('/settings/seed-data')).toEqual({ topic: 'administration', anchor: 'the-settings-index' })
     expect(helpTopicFor('/settings/ai')).toEqual({ topic: 'administration', anchor: 'ai-configuration' })
     expect(helpTopicFor('/defects')).toEqual({ topic: 'failure-analysis', anchor: 'promoting-to-a-defect' })
-    expect(helpTopicFor('/runs/r1/intelligence')).toEqual({ topic: 'ingestion' })
+    // D-27: the Runs list and a run's page open the runs chapter, not "Getting results in".
+    expect(helpTopicFor('/runs')).toEqual({ topic: 'runs' })
+    expect(helpTopicFor('/runs/abc')).toEqual({ topic: 'runs' })
+    expect(helpTopicFor('/runs/r1/intelligence')).toEqual({ topic: 'runs' })
     expect(helpTopicFor('/runs/compare')).toEqual({ topic: 'runs', anchor: 'comparing-two-runs' })
     expect(helpTopicFor('/nowhere')).toBe(DEFAULT_HELP_TOPIC)
   })

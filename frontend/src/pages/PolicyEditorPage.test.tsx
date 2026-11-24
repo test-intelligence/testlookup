@@ -686,6 +686,13 @@ describe('a published policy: its versions, a new version from it, the simulator
     history.rows = []
   })
 
+  it('D-13: the failure-kind rules say where kinds come from, without calling them AI-classified', () => {
+    renderPolicy()
+    fireEvent.click(screen.getByRole('button', { name: /Failure-kind weighting/ }))
+    expect(screen.getByText(/Failure kinds come from the analysis/)).toBeInTheDocument()
+    expect(screen.queryByText(/AI-classified/)).toBeNull()
+  })
+
   it('as ADMIN, New version from this posts the loaded version and opens the draft', async () => {
     mockCreatePolicy.mockResolvedValue({ ...row(5, { is_draft: true }), id: 'pol-v5' })
     renderPolicy()

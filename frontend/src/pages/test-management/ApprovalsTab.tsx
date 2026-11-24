@@ -6,7 +6,7 @@ import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import TransitionReasonDialog from '@/components/testManagement/TransitionReasonDialog'
 import { useInlineSlot } from '@/components/ui/inPage/useInlineSlot'
 import { refreshTestCases, useTestCases } from '@/hooks/useTestManagement'
-import { testManagementService } from '@/services/testManagementService'
+import { ACTION_DONE_LABELS, testManagementService } from '@/services/testManagementService'
 import type { ManagedTestCase, TestCaseTransitionAction } from '@/types/test-management'
 import { PRIORITY_COLORS, fmtDate } from './format'
 import { QualityScore, StatusPill } from './tmUi'
@@ -134,7 +134,7 @@ export default function ApprovalsTab({ projectId: _projectId, lifecycleV2 }: App
     // The case's own form closes (its version moved on); another card's form, opened meanwhile, stays.
     setPendingDecision((current) => (current?.caseItem.id === tc.id ? null : current))
     setTransitioning(null)
-    toast.success(`Test case ${action.replace(/_/g, ' ')}`)
+    toast.success(ACTION_DONE_LABELS[action] ?? 'Test case updated')
     try {
       await mutateReviews()
     } catch {

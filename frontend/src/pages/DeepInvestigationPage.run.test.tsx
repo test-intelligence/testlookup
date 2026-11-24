@@ -15,6 +15,7 @@ import { fireEvent, render, screen, waitFor, within } from '@testing-library/rea
 import { useEffect } from 'react'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import toast from 'react-hot-toast'
 
 import DeepInvestigationPage, { RunDeepClusters } from './DeepInvestigationPage'
 
@@ -181,5 +182,12 @@ describe('/deep-investigate keeps its focused run in ?run=', () => {
     fireEvent.click(rows[0])
     await waitFor(() => expect(location).toBe('/deep-investigate?run=run-1'))
     expect(hooks.useFailureClusters).toHaveBeenLastCalledWith('run-1')
+  })
+
+  it('S-E-3: queuing a deep analysis names the run by its build label, never a slice of its id', async () => {
+    renderLanding('/deep-investigate?run=run-1')
+    await screen.findByRole('region', { name: 'Investigation verdict' })
+    fireEvent.click(screen.getByTitle('Trigger a deep investigation now'))
+    await waitFor(() => expect(toast.success).toHaveBeenCalledWith('Deep analysis queued for Build 42'))
   })
 })

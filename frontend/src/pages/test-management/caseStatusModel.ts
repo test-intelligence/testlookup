@@ -26,6 +26,9 @@ export const ACTION_LABELS: Record<TestCaseTransitionAction, string> = {
   archive: 'Archive',
 }
 
+/** D-63: the toast words for a done transition live with the action type (shared by the Inbox). */
+export { ACTION_DONE_LABELS } from '@/services/testManagementService'
+
 export const REASON_ACTIONS: ReadonlySet<TestCaseTransitionAction> = new Set<TestCaseTransitionAction>([
   'deprecate',
   'reinstate',

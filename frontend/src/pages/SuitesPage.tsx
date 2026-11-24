@@ -348,13 +348,18 @@ export default function SuitesPage() {
 
   const items = data?.items ?? []
   const showRunColumns = !isAllProjects
+  // D-26: the default suite is created lazily, when the first test without a suite name arrives, so a project whose
+  // results all name a suite has no default row: the subtitle points at one only when it is listed.
+  const hasDefaultRow = items.some((s) => s.is_default)
 
   return (
     <div className="space-y-4">
       <PageHeader
         compact
         title="Test Suites"
-        subtitle="Project-scoped groupings of test cases. The default suite catches new cases ingested without an explicit suite name."
+        subtitle={hasDefaultRow
+          ? 'Project-scoped groupings of test cases. The default suite catches new cases ingested without an explicit suite name.'
+          : 'Project-scoped groupings of test cases. Tests that arrive without a suite name are filed in a default suite, created when the first one arrives.'}
         helpTopic={helpTopicParam('/suites')}
         actions={
           canCreate ? (

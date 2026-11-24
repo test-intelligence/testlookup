@@ -649,10 +649,10 @@ export default function ValueMetricsPage() {
           sparkline={<CounterNote>{metrics.releases_conditional} conditional · {metrics.release_overrides} overridden</CounterNote>}
         />
         <MetricCard
-          title="AI reports"
+          title="Run reports"
           hint="Intelligence reports"
           metric={{ value: counter(metrics.intelligence_reports_generated) }}
-          sparkline={<CounterNote>AI analyses generated</CounterNote>}
+          sparkline={<CounterNote>run analyses generated</CounterNote>}
         />
       </KpiStrip>
 

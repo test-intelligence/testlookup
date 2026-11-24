@@ -83,7 +83,7 @@ The email goes through the mail server saved in **Settings › Notifications** (
 
 ## Value metrics
 
-**Reports → Value** (`/value-metrics`, titled **Value Metrics**) answers "what is this saving us": an estimate of **engineer-hours saved** over the window you pick (7, 14, 30 or 90 days, or a year), its full-time equivalent, a monthly trend, and the counters behind it (**Defects grouped**, **Duplicates avoided**, **Flaky tests found**, **Releases blocked**, **AI reports**). The headline follows the window picker like the counters do, and says which window it covers (`Eng-hours saved · last 14 days`). **How is this calculated?** opens the full method.
+**Reports → Value** (`/value-metrics`, titled **Value Metrics**) answers "what is this saving us": an estimate of **engineer-hours saved** over the window you pick (7, 14, 30 or 90 days, or a year), its full-time equivalent, a monthly trend, and the counters behind it (**Defects grouped**, **Duplicates avoided**, **Flaky tests found**, **Releases blocked**, **Run reports**). The headline follows the window picker like the counters do, and says which window it covers (`Eng-hours saved · last 14 days`). **How is this calculated?** opens the full method.
 
 ### How the hours are estimated
 

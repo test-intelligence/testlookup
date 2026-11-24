@@ -33,7 +33,8 @@
 | Agent pipeline internal | `pending`, `running`, `retry_wait`, `completed`, `passed`, `failed` |
 | Agent pipeline public | Internal pending/running/retry_wait become `in_progress`; completed/passed/failed retain those names |
 | AI review | Carries its own pending/accepted/rejected/superseded semantics; `completed` pipeline does not imply human approval |
-| Release-level decision | `GO`, `CONDITIONAL_GO`, `NO_GO`, `NOT_EVALUATED`; distribution projection may add pending-review signaling |
+| Release-level decision | `GO`, `NO_GO`, `NOT_EVALUATED` (the release and phase gates never produce `CONDITIONAL_GO`, though the column accepts it); distribution projection may add pending-review signaling |
+| Run-level recommendation | `GO`, `CONDITIONAL_GO`, `NO_GO` |
 | Authored test lifecycle | `draft`, `review_requested`, `under_review`, `approved`, `active`, `rejected`, `needs_update`, `deprecated`, `archived` |
 
 For exact transition legality, see [workflow state](../../backend/app/services/workflow_run_state.py), [test lifecycle](../../backend/app/services/test_case_lifecycle_service.py) and the request/response [schemas](../reference/schemas.md). A completed-but-degraded pipeline is represented by metadata, not a new public “partial” status.

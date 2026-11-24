@@ -590,7 +590,10 @@ describe('ValueMetricsPage', () => {
     expect(counterCard('Flaky tests found')).toHaveTextContent('2 recommended for quarantine')
     // Blocked and conditional are both on this card: their sum needs no card of its own.
     expect(counterCard('Releases blocked')).toHaveTextContent('1 conditional · 0 overridden')
-    expect(within(counterCard('AI reports')).getByText('7')).toBeInTheDocument()
+    // D-13: one report per analysed run, whatever the engine, so the card does not say "AI".
+    expect(within(counterCard('Run reports')).getByText('7')).toBeInTheDocument()
+    expect(counterCard('Run reports')).toHaveTextContent('run analyses generated')
+    expect(screen.queryByText(/^AI reports$/)).toBeNull()
     expect(screen.queryByText(/^Release Decisions$/i)).toBeNull()
     expect(screen.queryByText(/^Defects Promoted$/i)).toBeNull()
   })

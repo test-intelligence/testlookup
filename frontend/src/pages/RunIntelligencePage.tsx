@@ -987,7 +987,7 @@ function RoleRow({
 }
 
 // ── Body: AI confidence ────────────────────────────────────────────────────
-function AIConfidenceCard({
+export function AIConfidenceCard({
   confidencePct,
   evidenceCount,
   toolCount,
@@ -1055,7 +1055,9 @@ function AIConfidenceCard({
           confidence={confidencePct}
           lowConfidence={tone === 'bad'}
           provenance={{
-            modeUsed: generatedBy ?? (llmUsed ? 'llm' : 'rules'),
+            // Batch 6 review: `generated_by` is "ai_pipeline" or "deterministic", not an engine id
+            // producedByWord knows, so the engine comes from whether a model answered.
+            modeUsed: generatedBy === 'deterministic' || !llmUsed ? 'rules' : 'llm',
             fallbackFrom: fallbackUsed || !llmUsed ? 'llm' : null,
             fallbackReason: fallbackUsed
               ? 'At least one pipeline stage answered deterministically instead.'

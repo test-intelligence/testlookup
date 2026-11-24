@@ -236,3 +236,30 @@ async def test_the_list_names_the_proposer_by_full_name_else_username():
 
     assert [p.proposed_by_name for p in payloads] == ["Quinn Lead", "bare.user", None]
     assert payloads[0].proposed_by_user_id == lead
+
+
+@pytest.mark.asyncio
+async def test_the_list_names_the_owner_by_full_name_else_username():
+    """D-101 sibling: the owner read as the username while the proposer read as the full name."""
+    from app.routers.flaky_quarantine import _with_owner_names
+
+    lead, bare = uuid.uuid4(), uuid.uuid4()
+
+    def row(owner):
+        return FlakyQuarantineRequest(
+            id=uuid.uuid4(), project_id=uuid.uuid4(), test_fingerprint="fp", status="QUARANTINED",
+            detection_method="manual", detected_at=svc.datetime.now(svc.timezone.utc),
+            quarantine_duration_days=14, owner_user_id=owner,
+            consecutive_passes=0, ready_to_promote=False,
+            created_at=svc.datetime.now(svc.timezone.utc), updated_at=svc.datetime.now(svc.timezone.utc),
+        )
+
+    db = MagicMock()
+    db.execute = AsyncMock(return_value=_Result([
+        SimpleNamespace(id=lead, username="qa.lead", full_name="Quinn Lead"),
+        SimpleNamespace(id=bare, username="bare.user", full_name=None),
+    ]))
+
+    payloads = await _with_owner_names(db, [row(lead), row(bare), row(None)])
+
+    assert [p.owner_name for p in payloads] == ["Quinn Lead", "bare.user", None]

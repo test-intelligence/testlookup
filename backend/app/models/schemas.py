@@ -4853,6 +4853,7 @@ class TestPlanItemResponse(BaseModel):
     # W28 TCM-05 (migration 0222)
     executed_case_version: Optional[int] = None   # the case version the recorded execution ran against; None = not run, or run before 0222
     case_version: Optional[int] = None            # the case's current version (the list route's join); None on a create / execute answer is allowed
+    test_case_title: Optional[str] = None         # D-62: the case's title (the list route's join); None on a create / execute answer, or a deleted case
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -6388,6 +6389,9 @@ class EmbeddingIndexRead(BaseModel):
     last_error: Optional[str] = None           # ≤ 300 chars, a sentence (no host, no key, no query text)
     configured_note: Optional[str] = None      # CONFIGURED_UNSUPPORTED_NOTE / PREFIX_INVALID_NOTE when one applies
     stalled: Optional[bool] = None             # status == "building" and its worker died / nothing claimed it (build_is_stalled)
+    # D-159: whether this server can load the built-in embedder in use (model file present, or a
+    # download allowed); None for Ollama / OpenAI, which are not probed on a read.
+    embedder_available: Optional[bool] = None
 
 
 # ── AI Configuration Schemas ─────────────────────────────────

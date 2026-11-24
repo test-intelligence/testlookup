@@ -132,7 +132,9 @@ test('in All Projects an expanded row asks for one project', async ({ page }) =>
   })
   await toggle(page, 'card declined shows reason').click()
   const row = detailOf(page, 'card declined shows reason')
-  await expect(row).toHaveText('Select a project to see failure detail.')
+  // D-44: the detail also carries "Find this test's runs" (a search across projects), so pin the sentence itself.
+  await expect(row.locator('p')).toHaveText('Select a project to see failure detail.')
+  await expect(row.getByRole('link', { name: "Find this test's runs" })).toBeVisible()
   await expect(row.locator('[data-failure-open-run]')).toHaveCount(0)
   await networkQuiet(page, api)
   expect(requestsTo(api, '/api/v1/analytics/top-failing').every((line) => !line.includes('project_id=')), 'All Projects').toBe(true)

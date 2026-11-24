@@ -5,6 +5,7 @@ import { SWRConfig } from 'swr'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import DefectsPage from './DefectsPage'
+import { DEFECT_STATUS_OPTIONS } from '@/components/defects/defectTriage'
 import { reportViewFilters } from '@/components/reports/savedViewsModel'
 import type { SavedView } from '@/services/savedViewsService'
 import { useReleaseStore } from '@/store/releaseStore'
@@ -1222,7 +1223,7 @@ describe('DefectsPage — row actions and the status vocabulary (DEF-01)', () =>
     const filter = screen.getByRole('tablist', { name: 'Status filter' })
     expect(heading()).toHaveTextContent(/^All defects\s*3 · sorted by/)
     fireEvent.click(within(filter).getByRole('tab', { name: /^Closed/ }))
-    expect(heading()).toHaveTextContent(/^Closed defects\s*1 · sorted by/)
+    expect(heading()).toHaveTextContent(/^Closed \/ invalid defects\s*1 · sorted by/)
     expect(heading()).not.toHaveTextContent(/^All defects/)
     // The All tab still counts everything.
     expect(within(filter).getByRole('tab', { name: /^All/ }).querySelector('[data-tab-count]')?.textContent).toBe('3')
@@ -1251,6 +1252,18 @@ describe('DefectsPage — row actions and the status vocabulary (DEF-01)', () =>
     fireEvent.click(within(filter).getByRole('tab', { name: /^Closed/ }))
     const rows = within(screen.getByRole('table', { name: 'Defects' })).getAllByRole('row').slice(1)
     expect(rows.map(r => r.querySelectorAll('td')[1].querySelector('span')?.textContent).sort()).toEqual(['defect closed', 'defect invalid'])
+  })
+
+  // D-39: the tab read "Closed" while the Change status dialog offers "Invalid" (and the row reads "Invalid").
+  it('D-39: every status the Change status dialog offers is named by a filter tab', async () => {
+    await mockRows([defect('open')])
+    renderDefects()
+    await screen.findByRole('table', { name: 'Defects' })
+    const tabNames = within(screen.getByRole('tablist', { name: 'Status filter' })).getAllByRole('tab')
+      .map(t => (t.textContent ?? '').replace(/\d+$/, '').trim().toLowerCase())
+    for (const option of DEFECT_STATUS_OPTIONS) {
+      expect(tabNames.some(name => name.includes(option.label.toLowerCase()))).toBe(true)
+    }
   })
 })
 

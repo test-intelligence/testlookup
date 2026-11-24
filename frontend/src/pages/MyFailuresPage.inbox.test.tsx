@@ -32,7 +32,8 @@ const reviews = vi.hoisted(() => ({ list: vi.fn(), accept: vi.fn(), reject: vi.f
 vi.mock('@/services/reviewService', () => ({ reviewService: reviews }))
 
 const quarantine = vi.hoisted(() => ({ list: vi.fn(), stats: vi.fn(), approve: vi.fn(), reject: vi.fn(), release: vi.fn() }))
-vi.mock('@/services/flakyQuarantineService', () => ({ flakyQuarantineService: quarantine }))
+vi.mock('@/services/flakyQuarantineService', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/services/flakyQuarantineService')>(), flakyQuarantineService: quarantine }))
 
 const cases = vi.hoisted(() => ({ listCases: vi.fn(), transitionCase: vi.fn(), reviewAction: vi.fn() }))
 vi.mock('@/services/testManagementService', () => ({ testManagementService: cases }))
@@ -282,9 +283,12 @@ describe('Inbox — Assigned to me', () => {
     const detail = cell.querySelector('[data-row-detail]') as HTMLElement
     expect(detail).toHaveTextContent('AssertionError: expected 200 · failed at: Click "Pay" · via CODEOWNERS: src/checkout/**')
     expect(detail).toHaveAttribute('title', 'AssertionError: expected 200 · failed at: Click "Pay" · via CODEOWNERS: src/checkout/**')
-    // The run cell: Run #N over its time and id, one line each.
+    // The run cell: Run #N over its time, one line each. S-E-3: the run id is the
+    // time line's tooltip, never printed as a slug.
     const run = screen.getByText('Run #7').closest('td') as HTMLElement
-    expect(run).toHaveTextContent(/Run #7.+ · run-1234$/)
+    expect(run).toHaveTextContent(/Run #7.+/)
+    expect(run).not.toHaveTextContent(/run-1234/)
+    expect(run.querySelector('[title="run-12345678"]')).not.toBeNull()
   })
 
   // Browser E2E pass (2026-10-08): a lead opens on the team scope, and the tab

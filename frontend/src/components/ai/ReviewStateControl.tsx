@@ -27,7 +27,7 @@ const STATE_OPTIONS: Array<{
     label: 'Reviewed',
     Icon: CheckCircle2,
     badgeCls: 'bg-[var(--status-passed-bg)]/40 text-[var(--status-passed-ink)] border border-[var(--status-passed-bd)]/50',
-    helper: 'Human confirmed the AI verdict.',
+    helper: 'A person confirmed this result.',
   },
   {
     value: 'defect_filed',

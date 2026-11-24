@@ -20,7 +20,8 @@ import { splitMessageSources } from '@/types/chat'
 import type { SuggestedAction, ToolTraceEntry } from '@/types/chat'
 
 const mockPropose = vi.fn()
-vi.mock('@/services/flakyQuarantineService', () => ({
+vi.mock('@/services/flakyQuarantineService', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/services/flakyQuarantineService')>(),
   flakyQuarantineService: {
     propose: (...args: unknown[]) => mockPropose(...args),
   },
