@@ -76,6 +76,9 @@ from app.services.search_service import search_test_cases_query
 from app.services.search_suggestions import suggestions_for_project
 from app.services.search_usage_service import build_event, usage_summary
 
+#: ``GET /search?status=``: the statuses a test result can have (``TestStatus``).
+_TEST_STATUSES: tuple[str, ...] = ("PASSED", "FAILED", "SKIPPED", "BROKEN", "UNKNOWN")
+
 router = APIRouter(prefix="/api/v1/search", tags=["Search"])
 
 #: stdlib logger: every line formats the exception TYPE only (``%s`` of
@@ -592,6 +595,9 @@ async def search_test_cases(
     started = time.monotonic()
     stripped = q.strip()
     _refuse_long_query(stripped)
+    if status is not None and status.strip() and status.strip().upper() not in _TEST_STATUSES:
+        # Upper-cased and matched exactly below: an unknown word answered "no results".
+        raise HTTPException(status_code=422, detail="status must be one of " + ", ".join(_TEST_STATUSES) + ".")
     # Tenant isolation: resolve the effective project scope. ADMIN gets
     # unrestricted access; non-admin is pinned to their accessible set (and
     # receives 403 when requesting a specific project they don't belong to).

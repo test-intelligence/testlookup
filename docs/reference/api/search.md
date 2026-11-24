@@ -29,7 +29,7 @@ Any other filter means nothing is searched, and ``parsed.notes`` says so.
 search after the response (a recent + a usage row, no query text in the
 row).
 
-Source: [backend/app/routers/search.py:556](../../../backend/app/routers/search.py#L556).
+Source: [backend/app/routers/search.py:559](../../../backend/app/routers/search.py#L559).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -37,6 +37,12 @@ Declared Python handler arguments (includes exact role/guard options):
 
 ```python
 q: str=Query(..., min_length=1), project_id: str | None=None, status: str | None=None, days: int=Query(None, ge=1, le=365), search_type: str=Query('keyword', pattern='^(keyword|semantic|hybrid)$'), page: int=Query(1, ge=1), size: int=Query(20, ge=1, le=100), db: AsyncSession=Depends(get_db), current_user: User=Depends(get_current_active_user), record: bool=False, background_tasks: BackgroundTasks=None
+```
+
+Direct handler error branches (dependency/service errors can add others):
+
+```python
+HTTPException(status_code=422, detail='status must be one of ' + ', '.join(_TEST_STATUSES) + '.')
 ```
 
 ### Declared wire contract
@@ -230,7 +236,7 @@ Notes:
     flagged as flaky", not just live quarantines. Released rows are
     excluded since those are no longer flagged-as-flaky.
 
-Source: [backend/app/routers/search.py:357](../../../backend/app/routers/search.py#L357).
+Source: [backend/app/routers/search.py:360](../../../backend/app/routers/search.py#L360).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -344,7 +350,7 @@ for each. A ``release:`` value is resolved only inside the caller's
 scope. ``record=true`` (the /search page's own page-1 searches) records
 the search after the response.
 
-Source: [backend/app/routers/search.py:771](../../../backend/app/routers/search.py#L771).
+Source: [backend/app/routers/search.py:777](../../../backend/app/routers/search.py#L777).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -535,7 +541,7 @@ W12 SRCH-01/-02: also the active collection / generation / embedder (from
 ``semantic_available``, ``semantic_reason`` and its sentence
 (``core/search_vocab.semantic_availability``). Every key is always present.
 
-Source: [backend/app/routers/search.py:226](../../../backend/app/routers/search.py#L226).
+Source: [backend/app/routers/search.py:229](../../../backend/app/routers/search.py#L229).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -628,7 +634,7 @@ Clear Recent Searches
 
 Forget the caller's recent searches (their own Redis list only).
 
-Source: [backend/app/routers/search.py:915](../../../backend/app/routers/search.py#L915).
+Source: [backend/app/routers/search.py:921](../../../backend/app/routers/search.py#L921).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -703,7 +709,7 @@ projects the reader can access NOW: an entry of a project they lost is
 left out of the answer (this GET writes nothing, so it is filtered, not
 deleted). A Redis fault answers an empty list.
 
-Source: [backend/app/routers/search.py:891](../../../backend/app/routers/search.py#L891).
+Source: [backend/app/routers/search.py:897](../../../backend/app/routers/search.py#L897).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -786,7 +792,7 @@ project memberships could queue an instance-wide rebuild.
 * No project named means *every* tenant's index, so that variant is
   ADMIN-only — otherwise a lead in one project rebuilds everyone else's.
 
-Source: [backend/app/routers/search.py:283](../../../backend/app/routers/search.py#L283).
+Source: [backend/app/routers/search.py:286](../../../backend/app/routers/search.py#L286).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -905,7 +911,7 @@ relevance order. ``semantic_status`` says whether the index answered:
 ``ok``, ``not_configured`` (no ChromaDB server answers) or ``unavailable``
 -- an outage is never shown as "nothing similar".
 
-Source: [backend/app/routers/search.py:470](../../../backend/app/routers/search.py#L470).
+Source: [backend/app/routers/search.py:473](../../../backend/app/routers/search.py#L473).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -1008,7 +1014,7 @@ The tests failing most in the last 7 days (top 5, each with its failure
 count), the newest open defects with a Jira key (top 5) and the active
 release. The project is authorised FIRST (400 / 403).
 
-Source: [backend/app/routers/search.py:927](../../../backend/app/routers/search.py#L927).
+Source: [backend/app/routers/search.py:933](../../../backend/app/routers/search.py#L933).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -1100,7 +1106,7 @@ QA lead and up. The project is authorised FIRST; without one a QA lead
 sees the projects they belong to and an ADMIN the whole deployment. No
 search in the window answers ``measured: false`` (never ``0 %``).
 
-Source: [backend/app/routers/search.py:948](../../../backend/app/routers/search.py#L948).
+Source: [backend/app/routers/search.py:954](../../../backend/app/routers/search.py#L954).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 

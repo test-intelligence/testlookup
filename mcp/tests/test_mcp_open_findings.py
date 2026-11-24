@@ -303,6 +303,36 @@ def test_promote_dry_run_counts_every_ready_test(mcp_request):
     assert result["scan_limit_reached"] is False and "15 more are ready" in result["note"]
 
 
+def _listing(rows, total):
+    return lambda request: httpx.Response(200, json=rows, headers={"X-Total-Count": str(total)})
+
+
+def test_quarantine_and_review_lists_state_the_total_the_api_sends(mcp_request):
+    """With ``X-Total-Count`` the heading is a count, not a guess from a full page."""
+    quarantined = [{"id": REQUEST, "status": "QUARANTINED", "test_name": f"t{i}", "test_fingerprint": f"{i:016x}"}
+                   for i in range(3)]
+    reviews = [{"id": str(i), "kind": "summary", "subject_type": "run", "subject_id": RUN} for i in range(2)]
+
+    cut = mcp_request(_listing(quarantined, 120), "list_quarantine_requests", {"limit": 3})
+    whole = mcp_request(_listing(quarantined, 3), "list_quarantine_requests", {"limit": 3})
+    queue = mcp_request(_listing(reviews, 80), "list_pending_reviews", {"project_id": PROJECT, "limit": 2})
+
+    assert "## Quarantine requests (showing 3 of 120)" in cut
+    assert "## Quarantine requests (3)" in whole and "more may exist" not in whole
+    assert "## Pending reviews (showing 2 of 80)" in queue
+
+
+def test_promote_knows_from_the_total_whether_every_live_request_was_scanned(mcp_request):
+    rows = [{"id": f"00000000-0000-4000-8000-{i:012d}", "status": "QUARANTINED", "ready_to_promote": True}
+            for i in range(2)]
+
+    partial = mcp_request(_listing(rows, 900), "promote_ready_quarantines", {"project_id": PROJECT})
+    complete = mcp_request(_listing(rows, 2), "promote_ready_quarantines", {"project_id": PROJECT})
+
+    assert partial["scan_limit_reached"] is True and "older ones may be ready too" in partial["note"]
+    assert complete["scan_limit_reached"] is False
+
+
 # ── O-12: defects ────────────────────────────────────────────────────────────
 
 

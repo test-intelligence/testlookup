@@ -24,9 +24,9 @@ import uuid
 from datetime import datetime
 from typing import Any, Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel, ConfigDict, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import (
@@ -260,10 +260,15 @@ async def list_reviews(
     project_id: uuid.UUID,
     state: Optional[ReviewState] = Query(default=None),
     limit: int = Query(default=50, ge=1, le=200),
+    response: Response = None,  # type: ignore[assignment]  # injected; absent on a direct call
     db: AsyncSession = Depends(get_db),
     _: User = Depends(require_project_access()),
 ):
-    """The project's review queue, newest first. ``?state=pending_review`` for the open queue."""
+    """The project's review queue, newest first. ``?state=pending_review`` for the open queue.
+
+    The body stays a bare list cut at ``limit``; the number of reviews
+    matching the filter is the ``X-Total-Count`` header.
+    """
     stmt = select(ReviewRequest).where(ReviewRequest.project_id == project_id)
     # Never offer a review whose subject is gone. ``pipeline_run_id`` is an FK
     # with ``ON DELETE SET NULL``; ``subject_id`` is a plain varchar with no FK,
@@ -277,6 +282,9 @@ async def list_reviews(
     rows = (
         await db.execute(stmt.order_by(ReviewRequest.created_at.desc()).limit(limit))
     ).scalars().all()
+    if response is not None:
+        total = (await db.execute(select(func.count()).select_from(stmt.order_by(None).subquery()))).scalar()
+        response.headers["X-Total-Count"] = str(max(total if isinstance(total, int) else 0, len(rows)))
     return [_to_response(row) for row in rows]
 
 

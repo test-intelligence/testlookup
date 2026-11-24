@@ -10,6 +10,9 @@ List Reviews
 
 The project's review queue, newest first. ``?state=pending_review`` for the open queue.
 
+The body stays a bare list cut at ``limit``; the number of reviews
+matching the filter is the ``X-Total-Count`` header.
+
 Source: [backend/app/routers/reviews.py:258](../../../backend/app/routers/reviews.py#L258).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`.
@@ -17,7 +20,7 @@ Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_curren
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-project_id: uuid.UUID, state: Optional[ReviewState]=Query(default=None), limit: int=Query(default=50, ge=1, le=200), db: AsyncSession=Depends(get_db), _: User=Depends(require_project_access())
+project_id: uuid.UUID, state: Optional[ReviewState]=Query(default=None), limit: int=Query(default=50, ge=1, le=200), response: Response=None, db: AsyncSession=Depends(get_db), _: User=Depends(require_project_access())
 ```
 
 ### Declared wire contract
@@ -129,7 +132,7 @@ Get Review
 
 
 
-Source: [backend/app/routers/reviews.py:283](../../../backend/app/routers/reviews.py#L283).
+Source: [backend/app/routers/reviews.py:291](../../../backend/app/routers/reviews.py#L291).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_review_access.<locals>._check`.
 
@@ -216,7 +219,7 @@ Accept Review
 
 Accept an AI report. Its run becomes ``passed``.
 
-Source: [backend/app/routers/reviews.py:297](../../../backend/app/routers/reviews.py#L297).
+Source: [backend/app/routers/reviews.py:305](../../../backend/app/routers/reviews.py#L305).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_review_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -314,7 +317,7 @@ Reject Review
 
 Reject an AI report with a reason code. Its run becomes ``failed``.
 
-Source: [backend/app/routers/reviews.py:324](../../../backend/app/routers/reviews.py#L324).
+Source: [backend/app/routers/reviews.py:332](../../../backend/app/routers/reviews.py#L332).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_review_access.<locals>._check`, `require_role.<locals>._check`.
 

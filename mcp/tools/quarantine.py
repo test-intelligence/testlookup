@@ -68,14 +68,20 @@ def register(mcp) -> None:  # noqa: ANN001
         if status:
             params["status_filter"] = status
 
-        data = await api.get(api.path("/api/v1/quarantine"), params=params)
+        data, total = await api.get_with_total(api.path("/api/v1/quarantine"), params=params)
         if not data:
             return "No quarantine requests found for this filter."
 
-        # The route returns a list cut at ``limit`` and no total, so a full
-        # page is "at least this many", not a count.
+        # The body is a list cut at ``limit``; ``X-Total-Count`` is how many
+        # matched. Against a backend that sends no total, a full page is "at
+        # least this many", not a count.
         shown = len(data)
-        heading = f"{shown}" if shown < max(1, int(limit)) else f"showing {shown}; the limit was reached, more may exist"
+        if isinstance(total, int) and total > shown:
+            heading = f"showing {shown} of {total}"
+        elif isinstance(total, int) or shown < max(1, int(limit)):
+            heading = f"{shown}"
+        else:
+            heading = f"showing {shown}; the limit was reached, more may exist"
         lines = [f"## Quarantine requests ({heading})\n"]
         for row in data:
             flip = row.get("flip_rate")
@@ -320,7 +326,7 @@ def register(mcp) -> None:  # noqa: ANN001
                 (capped at 10 per call).
         """
         try:
-            rows = await api.get(
+            rows, live_total = await api.get_with_total(
                 api.path("/api/v1/quarantine"),
                 params={"project_id": project_id, "live_only": True, "limit": PROMOTE_SCAN_LIMIT},
             )
@@ -329,7 +335,8 @@ def register(mcp) -> None:  # noqa: ANN001
 
         rows = rows if isinstance(rows, list) else []
         total_ready = sum(1 for r in rows if isinstance(r, dict) and r.get("ready_to_promote"))
-        scan_limit_reached = len(rows) >= PROMOTE_SCAN_LIMIT
+        # With the route's total, "not everything was scanned" is known, not guessed from a full page.
+        scan_limit_reached = live_total > len(rows) if isinstance(live_total, int) else len(rows) >= PROMOTE_SCAN_LIMIT
         candidates = _select_ready_to_promote(rows)
         listing = [
             {
