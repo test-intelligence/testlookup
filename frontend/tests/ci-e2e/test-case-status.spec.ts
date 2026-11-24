@@ -20,7 +20,7 @@
  *  - `/projects` › Edit Project › tick `Require review before a test case becomes Active` → exactly
  *    `PUT /api/v1/projects/{id}` `{ require_case_review: true }`;
  *  - Plans › Link Suite links only the Active (approved / active) manual cases by default: two POSTs and
- *    `Linked 2 test cases from "Checkout" · 1 not Active left out`; with `Include cases that are not Active` three
+ *    `Linked 2 test cases from "Checkout" · 1 not Approved or Active left out`; with `Also add cases that are not Approved or Active` three
  *    (the Draft too); the Deprecated case and the automation row never.
  *
  * Harness: `tests/lib/rollout.ts` (fail closed, pinned clock). Fixtures: `testCaseEditingWorld()`,
@@ -257,10 +257,10 @@ test('Plans › Link Suite links the Active manual cases by default (and says ho
   await page.getByRole('button', { name: 'Link Suite', exact: true }).first().click()
   let form = opened(page, 'Link Test Suite to Plan')
   await form.getByRole('combobox').selectOption('Checkout')
-  await expect(form.getByLabel('Include cases that are not Active'), 'unticked').not.toBeChecked()
+  await expect(form.getByLabel('Also add cases that are not Approved or Active'), 'unticked').not.toBeChecked()
   await form.getByRole('button', { name: 'Link Suite', exact: true }).click()
   await expect(form).toHaveCount(0)
-  await expect(page.getByText('Linked 2 test cases from "Checkout" · 1 not Active left out', { exact: true })).toBeVisible()
+  await expect(page.getByText('Linked 2 test cases from "Checkout" · 1 not Approved or Active left out', { exact: true })).toBeVisible()
   await networkQuiet(page, api)
   expect(world.writes).toEqual([
     { line: `POST ${ITEMS}`, body: { test_case_id: active.id } },
@@ -270,7 +270,7 @@ test('Plans › Link Suite links the Active manual cases by default (and says ho
   await page.getByRole('button', { name: 'Link Suite', exact: true }).first().click()
   form = opened(page, 'Link Test Suite to Plan')
   await form.getByRole('combobox').selectOption('Checkout')
-  await form.getByLabel('Include cases that are not Active').check()
+  await form.getByLabel('Also add cases that are not Approved or Active').check()
   await form.getByRole('button', { name: 'Link Suite', exact: true }).click()
   await expect(form).toHaveCount(0)
   await expect(page.getByText('Linked 3 test cases from "Checkout"', { exact: true })).toBeVisible()

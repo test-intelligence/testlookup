@@ -106,8 +106,8 @@ async def test_every_summary_query_reads_only_the_members_projects(monkeypatch):
 
     await metrics_service.get_dashboard_summary(db, None, 7, allowed_project_ids=MEMBER)
 
-    # Two periods, active defects, flaky, new failures in 24h, open P0s.
-    assert len(db.statements) == 6, [sql[:80] for sql, _ in db.statements]
+    # Two periods, the first run (D-25), active defects, flaky, new failures in 24h, open P0s.
+    assert len(db.statements) == 7, [sql[:80] for sql, _ in db.statements]
     for sql, binds in db.statements:
         ids = _bound_ids(binds)
         assert {str(A), str(B)} <= ids, f"a summary query ignored the member set:\n{sql}"
@@ -122,7 +122,7 @@ async def test_an_empty_set_reads_nothing(monkeypatch):
 
     await metrics_service.get_dashboard_summary(db, None, 7, allowed_project_ids=frozenset())
 
-    assert len(db.statements) == 6
+    assert len(db.statements) == 7
     for sql, _ in db.statements:
         assert "false" in sql.lower(), f"an empty set must fail closed:\n{sql}"
 
@@ -135,7 +135,7 @@ async def test_the_admin_read_is_unchanged(monkeypatch):
 
     await metrics_service.get_dashboard_summary(db, None, 7)
 
-    assert len(db.statements) == 6
+    assert len(db.statements) == 7
     for sql, binds in db.statements:
         assert "pid_" not in sql and str(A) not in _bound_ids(binds)
         assert "is_active" in sql

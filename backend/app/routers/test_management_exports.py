@@ -33,6 +33,7 @@ from app.services.analytics_scope import (
     AnalyticsScope,
     ScopePolicy,
     analytics_scope,
+    effective_suite_sql,
     release_filter_sql,
     scoped_text,
     suite_keys,
@@ -859,58 +860,42 @@ async def list_test_suites(
     # suite, how many last ran green/red" — which is the snapshot the
     # Test Management page actually wants.
     #
-    # ``last_run_id`` keeps its original semantic (latest run row that
-    # has this suite_name) — used by the per-suite review action to
-    # target the most recent run regardless of which logical test was in
-    # it.
+    # ``last_run_id`` is the latest run that carried one of the suite's
+    # own tests -- used by the per-suite review action to target the
+    # most recent run of the suite.
     auto_where = "AND tr.project_id = :project_id" if project_id else ""
-    sub_where = "AND tr2.project_id = :project_id" if project_id else ""
     auto_params: dict = {"project_id": project_id} if project_id else {}
     # VIZ-202: the release narrows every automation source to its runs --
     # the snapshot, the last run id and the no-rows fallback alike. Appended
     # only when asked, so the unfiltered statements are unchanged.
     release_where = release_filter_sql(auto_params, release_id)
     auto_where = f"{auto_where} {release_where}".strip() if release_where else auto_where
-    if release_where:
-        sub_where = f"{sub_where} {release_filter_sql({}, release_id, table_alias='tr2')}"
-    # A test_case row legitimately belongs to TWO suite buckets when its
-    # per-row ``tc.suite_name`` (often the Java class name from a TestNG
-    # SDK) differs from its run-level ``tr.primary_suite_name`` (the
-    # ``testlookup.suite`` the SDK stamps once at session create). User-
-    # facing list: clicking either bucket should surface the same case.
-    # A COALESCE picks ONE name; a UNION ALL emits the row under BOTH
-    # (deduped by DISTINCT ON when names happen to match). See
-    # ``feedback_live_stream_suite_name_nulls`` for the SDK behaviour
-    # this addresses.
-    #
-    # Path A: run-level suite (``primary_suite_name`` not NULL).
-    # Path B: per-row suite (``tc.suite_name`` not NULL and DISTINCT
-    #         FROM the run-level value to avoid double-counting when
-    #         they happen to match).
+    # Each test lands in exactly ONE suite: its EFFECTIVE suite, the shared
+    # ``effective_suite_sql()`` every analytics query groups by (the run
+    # label for live_stream rows, whose SDKs stamp the class name on each
+    # event; the row's own suite otherwise). D-60 / S-E-6 (2026-11-21): the
+    # former "Path A / Path B" union filed EVERY test of a run under the
+    # run's dominant ``primary_suite_name`` as well, so a multi-suite upload
+    # whose dominant suite was checkout listed checkout with the whole
+    # run's tests, passes and failures (25 tests for a 10-test suite) --
+    # Bug 2026-05-20 again, which /coverage had already fixed. A row with no
+    # suite of its own (legacy rows, from before ingestion filled the
+    # default suite) still falls to the run label, as Path A filed it and
+    # ``compute_suite_history`` counts it, so no test leaves the catalogue.
+    effective_suite = (
+        f"COALESCE({effective_suite_sql()}, NULLIF(TRIM(tr.primary_suite_name), ''))"
+    )
     auto_query = scoped_text(f"""
         WITH effective AS (
             SELECT
-                NULLIF(TRIM(tr.primary_suite_name), '') AS suite_name,
+                {effective_suite} AS suite_name,
                 tc.test_fingerprint,
                 tc.status,
+                tr.id AS run_id,
                 tr.created_at AS run_created_at
             FROM test_cases tc
             JOIN test_runs tr ON tc.test_run_id = tr.id
             WHERE tc.test_fingerprint IS NOT NULL
-              AND NULLIF(TRIM(tr.primary_suite_name), '') IS NOT NULL
-              {auto_where}
-            UNION ALL
-            SELECT
-                NULLIF(TRIM(tc.suite_name), '') AS suite_name,
-                tc.test_fingerprint,
-                tc.status,
-                tr.created_at AS run_created_at
-            FROM test_cases tc
-            JOIN test_runs tr ON tc.test_run_id = tr.id
-            WHERE tc.test_fingerprint IS NOT NULL
-              AND NULLIF(TRIM(tc.suite_name), '') IS NOT NULL
-              AND NULLIF(TRIM(tr.primary_suite_name), '')
-                  IS DISTINCT FROM NULLIF(TRIM(tc.suite_name), '')
               {auto_where}
         ),
         latest_per_test AS (
@@ -918,6 +903,7 @@ async def list_test_suites(
                 suite_name,
                 test_fingerprint,
                 status,
+                run_id,
                 run_created_at
             FROM effective
             WHERE suite_name IS NOT NULL
@@ -929,21 +915,10 @@ async def list_test_suites(
             COUNT(*) FILTER (WHERE status = 'PASSED') AS passed_count,
             COUNT(*) FILTER (WHERE status = 'FAILED') AS failed_count,
             MAX(run_created_at) AS last_run_at,
-            (
-                SELECT tr2.id
-                FROM test_runs tr2
-                WHERE (
-                    NULLIF(TRIM(tr2.primary_suite_name), '') = latest_per_test.suite_name
-                    OR EXISTS (
-                        SELECT 1 FROM test_cases tc2
-                        WHERE tc2.test_run_id = tr2.id
-                          AND tc2.suite_name = latest_per_test.suite_name
-                    )
-                )
-                  {sub_where}
-                ORDER BY tr2.created_at DESC
-                LIMIT 1
-            ) AS last_run_id
+            -- The suite's latest run is the latest of its tests' latest
+            -- runs: same attribution as the counts, so it never names a
+            -- run in which none of the suite's own tests ran.
+            (array_agg(run_id ORDER BY run_created_at DESC, run_id DESC))[1] AS last_run_id
         FROM latest_per_test
         GROUP BY suite_name
     """, auto_params)
@@ -1017,16 +992,17 @@ async def list_test_suites(
         )
         run_aggregate_rows = []
 
-    # Manual managed test cases (suite_name added in migration 0013)
+    # Manual managed test cases (suite_name added in migration 0013). An
+    # authored case is not a run result: it is counted as ``authored_count``
+    # only, never in ``test_count`` (the pass-rate denominator) and its
+    # creation time is never a "last run" (D-59, 2026-11-21: one new case
+    # moved checkout's pass rate from 92.3 to 90.9 and its last run to now).
     manual_where = "AND project_id = :project_id" if project_id else ""
     manual_params: dict = {"project_id": project_id} if project_id else {}
     manual_query = sa_text(f"""
         SELECT
             suite_name,
-            COUNT(*) AS test_count,
-            0 AS passed_count,
-            0 AS failed_count,
-            MAX(created_at) AS last_run_at
+            COUNT(*) AS authored_count
         FROM managed_test_cases
         WHERE suite_name IS NOT NULL AND suite_name != ''
           AND status NOT IN ('deprecated', 'archived')
@@ -1050,14 +1026,15 @@ async def list_test_suites(
         logger.warning("managed_test_cases.suite_name not available, skipping manual suites", error=str(exc))
         manual_rows = []
 
-    # Merge sources by suite_name. Order matters only for first-write
-    # semantics — auto + manual + run-aggregate all use the same merge
-    # rules (sum counts, keep newest last_run_at).
+    # Merge sources by suite_name. The two run sources (per-test rows, and
+    # the run-level fallback for suites without them) give the run
+    # statistics; the manual source gives ``authored_count`` alone.
     merged: dict[str, dict] = {}
     for row in auto_rows:
         merged[row.suite_name] = {
             "suite_name": row.suite_name,
             "test_count": row.test_count,
+            "authored_count": 0,
             "passed_count": row.passed_count,
             "failed_count": row.failed_count,
             "last_run_at": row.last_run_at,
@@ -1072,27 +1049,27 @@ async def list_test_suites(
         merged[row.suite_name] = {
             "suite_name": row.suite_name,
             "test_count": int(row.test_count or 0),
+            "authored_count": 0,
             "passed_count": int(row.passed_count or 0),
             "failed_count": int(row.failed_count or 0),
             "last_run_at": row.last_run_at,
             "last_run_id": row.last_run_id,
         }
     for row in manual_rows:
+        authored = int(row.authored_count or 0)
         if row.suite_name in merged:
-            merged[row.suite_name]["test_count"] += row.test_count
-            if row.last_run_at and (
-                merged[row.suite_name]["last_run_at"] is None
-                or row.last_run_at > merged[row.suite_name]["last_run_at"]
-            ):
-                merged[row.suite_name]["last_run_at"] = row.last_run_at
+            merged[row.suite_name]["authored_count"] += authored
         else:
+            # A manual-only suite: nothing ran, so no test count, no pass
+            # rate and no last run (``None``, never the case's created_at).
             merged[row.suite_name] = {
                 "suite_name": row.suite_name,
-                "test_count": row.test_count,
-                "passed_count": row.passed_count,
-                "failed_count": row.failed_count,
-                "last_run_at": row.last_run_at,
-                "last_run_id": None,  # manual-only suite, no automation run yet
+                "test_count": 0,
+                "authored_count": authored,
+                "passed_count": 0,
+                "failed_count": 0,
+                "last_run_at": None,
+                "last_run_id": None,
             }
 
     # TCL-07: a first-class suite nobody has reported yet (made on /suites or
@@ -1123,6 +1100,7 @@ async def list_test_suites(
             merged[first_class_name] = {
                 "suite_name": first_class_name,
                 "test_count": 0,
+                "authored_count": 0,
                 "passed_count": 0,
                 "failed_count": 0,
                 "last_run_at": None,
@@ -1173,7 +1151,11 @@ async def list_test_suites(
     return [
         {
             "suite_name": s["suite_name"],
+            # Tests that ran (their latest result counts below) ...
             "test_count": s["test_count"],
+            # ... and authored (managed) cases, not Deprecated / Archived:
+            # never part of the run statistics (D-59).
+            "authored_count": s["authored_count"],
             "passed_count": s["passed_count"],
             "failed_count": s["failed_count"],
             "last_run_at": s["last_run_at"].isoformat() if s["last_run_at"] else None,
@@ -1181,6 +1163,8 @@ async def list_test_suites(
             # None, not 0.0, when no test has a pass or fail result: every
             # latest result skipped (a quarantined suite), or the suite never
             # ran. The suites list drew "0.0 %" beside "0 failing" for one.
+            # The denominator is ``test_count``: tests that ran, never
+            # authored cases.
             "pass_rate": (
                 round(s["passed_count"] / s["test_count"] * 100, 1)
                 if s["test_count"] > 0 and (s["passed_count"] + s["failed_count"]) > 0

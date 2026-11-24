@@ -263,7 +263,11 @@ describe('FlakyTestsPage — the page', () => {
 
   it('names the window and agrees in number in the subtitle', async () => {
     renderPage()
-    expect(await screen.findByText('2 flaky tests · 1 quarantine candidate · last 30 days')).toBeInTheDocument()
+    // D-49: the header names both counts -- every row the Detected tab lists (3) and the flaky ones
+    // among them (2) -- so it agrees with the tab label instead of reading 2 beside "Detected 3".
+    expect(
+      await screen.findByText('3 tests flagged · 2 flaky (pass and fail alternately) · 1 quarantine candidate · last 30 days'),
+    ).toBeInTheDocument()
   })
 
   it('carries the counts in the tab labels', async () => {

@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  CONSISTENT_FAILURE_MARK,
   activeNowText,
   flakySubtitle,
+  intermittentFirst,
+  isIntermittent,
   overCapText,
   percentToRate,
   policyDefaultsText,
@@ -26,6 +29,52 @@ describe('flakySubtitle', () => {
     expect(flakySubtitle({ total_flaky: 1, quarantine_candidates: 1 })).toBe(
       '1 flaky test · 1 quarantine candidate · last 30 days',
     )
+  })
+})
+
+describe('the header and the Detected tab agree (D-49)', () => {
+  const entries = Array.from({ length: 28 }, () => ({}))
+
+  it('names every flagged row and the flaky ones among them', () => {
+    const line = flakySubtitle({ total_flaky: 4, quarantine_candidates: 0, entries })
+    expect(line).toBe('28 tests flagged · 4 flaky (pass and fail alternately) · 0 quarantine candidates · last 30 days')
+  })
+
+  it('agrees in number for one row', () => {
+    expect(flakySubtitle({ total_flaky: 1, quarantine_candidates: 1, entries: [{}] })).toBe(
+      '1 test flagged · 1 flaky (pass and fail alternately) · 1 quarantine candidate · last 30 days',
+    )
+  })
+})
+
+describe('isIntermittent mirrors the backend rule behind total_flaky (D-51)', () => {
+  it.each([
+    [['PASSED', 'FAILED', 'PASSED', 'FAILED'], true],
+    [['PASSED', 'FAILED', 'PASSED'], true],
+    [['PASSED', 'BROKEN', 'PASSED'], true],
+    [['PASSED', 'TestStatus.FAILED', 'PASSED'], true],
+    [['FLAKY (manual triage)'], true],
+    [['PASSED', 'FAILED', 'FAILED', 'FAILED'], false], // one change: a regression
+    [['FAILED', 'FAILED'], false],
+    [[], false],
+  ])('%j -> %s', (history, expected) => {
+    expect(isIntermittent(history)).toBe(expected)
+  })
+
+  it('puts the intermittent rows first, each group in its incoming order', () => {
+    const flaky = ['PASSED', 'FAILED', 'PASSED']
+    const steady = ['PASSED', 'FAILED', 'FAILED']
+    const rows = [
+      { id: 'r1', status_history: steady },
+      { id: 'f1', status_history: flaky },
+      { id: 'r2', status_history: steady },
+      { id: 'f2', status_history: flaky },
+    ]
+    expect(intermittentFirst(rows).map((r) => r.id)).toEqual(['f1', 'f2', 'r1', 'r2'])
+  })
+
+  it('names the mark in plain words', () => {
+    expect(CONSISTENT_FAILURE_MARK).toBe('consistent failure: look for a regression')
   })
 })
 

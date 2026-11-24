@@ -26,7 +26,9 @@ from app.core.deps import get_current_active_user, get_db
 from app.core.test_library_vocab import (
     FLAKY_UNMEASURED_NO_SCORES,
     HEALTH_COMPONENTS,
+    HEALTH_MIN_CASES,
     HEALTH_NEEDS_PROJECT_SENTENCE,
+    HEALTH_TAG_GETTING_STARTED,
     LIBRARY_EMPTY_SENTENCE,
     STRATEGY_GAP_KINDS,
 )
@@ -40,9 +42,11 @@ def _js_round(value: float) -> int:
     return int(math.floor(value + 0.5))
 
 
-def _old_page_formula(total, automated, stale, oldest_review_days, retired_in_open):
-    """The deleted synthesis, line for line (TestManagementPage.tsx, W13 base)."""
-    automated_pct = _js_round(automated / total * 100) if total > 0 else 0
+def _old_page_formula(total, automated, stale, oldest_review_days, retired_in_open, target=60):
+    """The deleted synthesis, line for line (TestManagementPage.tsx, W13 base),
+    except automation: D-65 scores it as progress to the target,
+    ``min(100, share / target * 100)``, not the raw share."""
+    automated_pct = min(100, (automated / total * 100) / target * 100) if total > 0 else 0
     stale_score = max(0, 100 - (stale / total) * 400) if total > 0 else 100
     review_score = 100 if oldest_review_days == 0 else max(0, 100 - (oldest_review_days / 14) * 100)
     retired_score = max(0, 100 - (retired_in_open / total) * 400) if total > 0 else 100
@@ -67,7 +71,7 @@ def test_components_and_score_equal_the_old_page_formula(row):
 
     by_key = {c["key"]: c for c in components}
     assert [c["key"] for c in components] == list(HEALTH_COMPONENTS)
-    assert _js_round(by_key["automation"]["value"]) == old_values["automation"]
+    assert by_key["automation"]["value"] == pytest.approx(old_values["automation"])
     for key in ("stale_drafts", "review_freshness", "retired_in_open_plans"):
         assert by_key[key]["value"] == pytest.approx(old_values[key])
     assert health.health_score(components)[0] == old_score
@@ -82,7 +86,8 @@ def test_components_and_score_equal_the_old_page_formula(row):
 def test_the_example_row_reads_as_the_story_says():
     components = health.build_components(_facts(34, 13, 2, 9, 1))
     assert components[0]["detail"] == "13 of 34 cases automated (target 60 %)"
-    assert health.health_score(components) == (58, "At risk")
+    # D-65: automation is 38 % of a 60 % target = 64 (was the raw 38), so 58 -> 67.
+    assert health.health_score(components) == (67, "At risk")
 
 
 def test_an_empty_library_is_not_measured_never_zero():
@@ -106,6 +111,37 @@ def test_the_score_renormalises_over_the_measured_components_only():
         {"key": "b", "weight": 0.25, "measured": False, "value": None},
     ]
     assert health.health_score(components) == (80, "Needs attention")
+
+
+# ── D-65: progress to the target, and a minimum sample ──────────────────────
+
+
+def test_two_manual_cases_are_getting_started_not_at_risk():
+    """D-65: one or two manual cases scored 65 "At risk" for being new."""
+    components = health.build_components(_facts(2, 0, 0, None, 0, review_total=0))
+    score, tag = health.health_score(components, total=2)
+    assert tag == HEALTH_TAG_GETTING_STARTED and tag != "At risk"
+    assert score == 65  # the score stands; only the verdict waits
+
+
+def test_ten_cases_six_automated_at_a_60_target_score_automation_100():
+    components = health.build_components(_facts(10, 6, 0, None, 0, review_total=0, target=60))
+    automation = next(c for c in components if c["key"] == "automation")
+    assert automation["value"] == 100.0
+    assert (automation["numerator"], automation["denominator"]) == (6, 10)
+    assert health.health_score(components, total=10) == (100, "Healthy")
+
+
+def test_progress_is_capped_and_a_zero_target_is_met():
+    assert health.automation_progress(total=10, automated=9, target=60) == 100.0
+    assert health.automation_progress(total=10, automated=3, target=60) == pytest.approx(50.0)
+    assert health.automation_progress(total=10, automated=0, target=0) == 100.0
+
+
+def test_the_minimum_sample_is_a_floor_not_a_rating():
+    components = health.build_components(_facts(HEALTH_MIN_CASES, 0, 0, None, 0, review_total=0))
+    assert health.health_score(components, total=HEALTH_MIN_CASES)[1] == "At risk"
+    assert health.health_score(components, total=HEALTH_MIN_CASES - 1)[1] == HEALTH_TAG_GETTING_STARTED
 
 
 # ── 2. the router over a scripted session ────────────────────────────────────
@@ -215,6 +251,17 @@ async def _get(session, user, params, monkeypatch, accessible):
         return await client.get("/api/v1/test-management/health", params=params)
 
 
+async def test_a_two_case_library_answers_getting_started(monkeypatch, flag):
+    """D-65 through the route: two manual cases are "Getting started", not "At risk"."""
+    project = uuid.uuid4()
+    now = datetime.now(timezone.utc)
+    session = _Session(_answers(now, total=2, automated=0, stale=0, review_total=0, retired_in_open=0,
+                                flaky_scores=0, no_owner_total=0))
+    body = (await _get(session, _user(), {"project_id": str(project)}, monkeypatch, {project})).json()
+    assert body["measured"] is True and body["total_cases"] == 2
+    assert body["tag"] == HEALTH_TAG_GETTING_STARTED and body["score"] == 65
+
+
 async def test_the_answer_its_strategy_gaps_order_and_lists(monkeypatch, flag):
     project = uuid.uuid4()
     now = datetime.now(timezone.utc)
@@ -245,7 +292,7 @@ async def test_the_answer_its_strategy_gaps_order_and_lists(monkeypatch, flag):
     assert body["flaky_active"]["items"][0]["detail"] == "flaky score 0.72 (high confidence)"
     assert body["no_owner"]["items"][0]["detail"] == "unassigned"
     assert body["suite_names"] == ["API", "Checkout"] and body["suite_names_total"] == 2
-    assert body["score"] == 58 and body["tag"] == "At risk"
+    assert body["score"] == 67 and body["tag"] == "At risk"  # D-65: was 58
     assert body["avg_age_days"] == pytest.approx(40.0, abs=0.1)
     # the flag off: no requirement statement and no requirements block
     assert body["requirements"] is None

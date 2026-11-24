@@ -190,6 +190,37 @@ Existing usernames that contain `@` keep working for sign-in.
 | `POST /deep-investigate/{run_id}` in Rules mode | accepted | 422 "requires LLM or Auto mode" |
 | `POST /analyze` for a test with a human correction | returns the correction | the engine's answer, replacing the correction |
 
+### Counts that agree (batch 5)
+
+- **Migration 0260** adds a nullable `proposed_by_user_id` to flaky-test
+  quarantine requests. Existing rows keep it empty: a manual proposal made
+  before the upgrade reads "Proposed manually", a detected one "Detected
+  automatically".
+- **The suite catalogue (`GET /api/v1/test-management/suites`) counts each
+  test under its own suite.** A multi-suite upload used to file every test
+  under the run's largest suite, so that suite's `test_count`, `passed_count`,
+  `failed_count` and `pass_rate` described the whole run. Expect those numbers
+  to drop for the largest suite of mixed uploads. Authored (managed) cases are
+  no longer added to `test_count` or used as `last_run_at`; they are counted in
+  the new `authored_count`. A suite with only authored cases has `test_count`
+  0 and a null pass rate and last run.
+- **Trends and the Home tiles ignore days before a project's first run.** The
+  trend summary gains `first_run_day` and `history_days`. A tile trend is
+  `null` with `trend_direction: "none"` when the previous window is not fully
+  inside the project's history or held fewer than 3 runs.
+- **Value metrics › By team** carries `available` and
+  `insufficient_data_reason`, the same as the Overview headline; hours are
+  still in the body but the page hides them while the headline is withheld.
+- **Library health scores automation against the project's target**
+  (`min(100, share / target × 100)`), so scores rise for libraries near their
+  target. A library with fewer than 10 cases is tagged "Getting started"
+  instead of being rated.
+- **Inbox:** the per-test "×N" count no longer depends on who is looking; it
+  counts the test's failures in the window for every viewer.
+- **Flaky tests › Refresh** also queues a flakiness-score recompute for that
+  project, and a project's first finished run records its first coverage
+  snapshot.
+
 ### Permissions, configuration and admin (batch 4)
 
 - **`.env.example` no longer sets sample integration and SMTP values.** The 17

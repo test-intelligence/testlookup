@@ -10,6 +10,8 @@ import LibraryCaseListRows from '@/pages/test-management/LibraryCaseListRows'
 import {
   componentLine,
   FLAKY_ACTIVE_TITLE,
+  GETTING_STARTED_TAG,
+  GETTING_STARTED_TEXT,
   HEALTH_LOAD_ERROR_TEXT,
   HEALTH_NEEDS_PROJECT_TEXT,
   NO_OWNER_TITLE,
@@ -79,6 +81,8 @@ const TAG_INK: Record<string, string> = {
   Healthy: 'text-[var(--ui-success-ink)]',
   'Needs attention': 'text-[var(--ui-warning-ink)]',
   'At risk': 'text-[var(--ui-danger-ink)]',
+  // D-65: no verdict yet, so no verdict colour.
+  [GETTING_STARTED_TAG]: 'text-[var(--color-text-muted)]',
 }
 
 export interface LibraryHealthCardProps extends HealthSource {
@@ -119,6 +123,11 @@ export function LibraryHealthCard(p: LibraryHealthCardProps) {
               <span className="text-sm text-[var(--color-text-muted)] font-medium">/ 100</span>
               {h.tag && <span className={`text-xs font-semibold ${ink}`}>{h.tag}</span>}
             </div>
+            {h.tag === GETTING_STARTED_TAG && (
+              <p className="text-xs m-0 text-[var(--color-text-muted)]" data-health-getting-started="">
+                {GETTING_STARTED_TEXT}: the library is rated from 10 cases.
+              </p>
+            )}
             <p className="text-sm m-0 text-[var(--color-text-secondary)]">
               {strong(p.totalCases)} case{p.totalCases === 1 ? '' : 's'} · {strong(h.review_queue.total)} awaiting review, {strong(h.stale_drafts)} stale drafts over 30 days, {strong(h.retired_in_open_plans)} deprecated still in active plans.
             </p>

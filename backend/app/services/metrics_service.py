@@ -4,7 +4,7 @@ import logging
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Awaitable, Callable, Optional
+from typing import Any, Awaitable, Callable, Optional, cast
 
 from sqlalchemy import ColumnElement, case, false, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -260,6 +260,60 @@ def pass_rate_delta_pp(cur: dict, prev: dict) -> Optional[float]:
     return round(float(cur["pass_rate"]) - float(prev["pass_rate"]), 1)
 
 
+#: D-25: a relative change ("Up 40% vs prev period") needs a previous window
+#: with at least this many runs; below it the base is too thin to compare.
+MIN_PREVIOUS_RUNS = 3
+#: D-25: what a KPI says when there is no trustworthy previous window.
+NO_EARLIER_PERIOD = "no earlier period to compare"
+
+
+async def first_run_at(
+    db: AsyncSession,
+    project_id: str | uuid.UUID | None,
+    *,
+    allowed_project_ids: Optional[frozenset[uuid.UUID]] = None,
+) -> Optional[datetime]:
+    """D-24 / D-25: the scope's first run on the run clock (``start_time``,
+    else ``created_at``), live projects only, or ``None`` with no run.
+
+    Project-level: no suite or release filter, because "how long has this
+    project existed" is what the minimum-history guards ask."""
+    conditions: list[ColumnElement[bool]] = [
+        TestRun.project_id.in_(select(Project.id).where(Project.is_active.is_(True)))
+    ]
+    if project_id:
+        conditions.append(TestRun.project_id == project_id)
+    elif allowed_project_ids is not None:
+        conditions.append(_member_clause(TestRun.project_id, allowed_project_ids))
+    result = await db.execute(select(func.min(run_time_column())).where(*conditions))
+    value = result.scalar()
+    # Not ``isinstance(value, datetime)``: a test that freezes the clock swaps
+    # ``datetime`` for a subclass, and the driver's real datetime then fails it.
+    if value is None or not hasattr(value, "tzinfo"):
+        return None
+    value = cast(datetime, value)
+    return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+
+
+def previous_window_comparable(
+    first_run: Optional[datetime], prev_period_start: datetime, prev_runs: int
+) -> bool:
+    """D-25: a previous window is a fair base only when it lies wholly inside
+    the project's history (its first run is no later than the window's start)
+    and holds at least ``MIN_PREVIOUS_RUNS`` runs."""
+    if first_run is None:
+        return False
+    return first_run <= prev_period_start and int(prev_runs or 0) >= MIN_PREVIOUS_RUNS
+
+
+def relative_trend(cur_val: Any, prev_val: Any, *, comparable: bool) -> Optional[float]:
+    """The relative change in percent, or ``None`` when there is nothing fair
+    to compare against (``comparable`` false, or a zero base)."""
+    if not comparable or not prev_val:
+        return None
+    return round(((float(cur_val) - float(prev_val)) / float(prev_val)) * 100, 1)
+
+
 async def get_dashboard_summary(
     db: AsyncSession,
     project_id: str | None,
@@ -370,12 +424,23 @@ async def get_dashboard_summary(
         allowed_project_ids=allowed_project_ids,
     )
 
+    # D-25: "Up 2500%" against a previous window holding one partial day of a
+    # new project is not a trend. The previous window must lie wholly inside
+    # the project's history and hold MIN_PREVIOUS_RUNS runs; otherwise the
+    # KPI has no trend and direction "none" ("no earlier period to compare").
+    # ``pass_rate_delta_pp`` keeps its own guard too (both windows non-empty).
+    comparable = previous_window_comparable(
+        await first_run_at(db, project_id, allowed_project_ids=allowed_project_ids),
+        prev_period_start,
+        prev.get("total_runs") or 0,
+    )
+
     def trend(cur_val, prev_val):
-        if prev_val and prev_val != 0:
-            return round(((cur_val - prev_val) / prev_val) * 100, 1)
-        return None
+        return relative_trend(cur_val, prev_val, comparable=comparable)
 
     def direction(t):
+        if not comparable:
+            return "none"
         if t is None:
             return "flat"
         return "up" if t > 0 else "down"
@@ -383,7 +448,9 @@ async def get_dashboard_summary(
     pass_rate = cur["pass_rate"]
     prev_pass_rate = prev["pass_rate"]
     pass_trend = trend(pass_rate, prev_pass_rate)
-    pass_delta_pp = pass_rate_delta_pp(cur, prev)
+    # Review of D-25: the move in points follows the same rule, or Trends prints
+    # "12 pp vs previous 7 days" beside Home's "no earlier period to compare".
+    pass_delta_pp = pass_rate_delta_pp(cur, prev) if comparable else None
 
     # ``total_exec`` stays a RUN count: it is the "is there any evidence"
     # gate below (``if total_exec <= 0``) and the first argument of

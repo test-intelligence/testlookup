@@ -124,7 +124,7 @@ def test_the_body_has_exactly_the_contract_keys():
     assert set(body) == {
         "window_days", "today", "measured", "reason", "days_with_runs", "empty_days", "active_day_share",
         "executions", "pass_rate", "variance", "gap", "last_run_day", "previous_run_day", "untagged_share",
-        "confidence",
+        "confidence", "history_days", "first_run_day",
     }
     assert (body["window_days"], body["today"]) == (7, "2026-09-18")
     assert set(body["executions"]) == {"total", "passed", "failed", "broken", "skipped", "evaluated"}
@@ -164,3 +164,63 @@ def test_rows_outside_the_window_count_in_the_totals_only():
 def test_a_malformed_row_is_read_as_nothing_rather_than_raising():
     body = svc.summarize([{"date": None, "passed": "x"}, {"passed": None}], [{"suite_name": 3}], days=DAYS, today=TODAY)
     assert body["executions"]["total"] == 0 and body["confidence"]["verdict"] == "PENDING"
+
+
+# ── D-24 / S-E-2: days before the first run are not silence ────────────────
+
+
+def _daily(today: date, n: int) -> list[dict]:
+    """A run on each of the last ``n`` days ending ``today``, all passing."""
+    from datetime import timedelta
+
+    return [
+        {"date": (today - timedelta(days=i)).isoformat(), "passed": 20, "failed": 0, "skipped": 0,
+         "broken": 0, "total": 20, "pass_rate": 100.0}
+        for i in range(n)
+    ]
+
+
+def test_a_31_day_old_project_at_90_days_has_no_gap_and_full_coverage():
+    """D-24: a 90-day window over a project whose first run was 30 days ago and
+    that ran every day since: no "59-day silence", full data coverage."""
+    from datetime import timedelta
+
+    first = TODAY - timedelta(days=30)
+    body = svc.summarize(_daily(TODAY, 31), [suite("api", 620)], days=90, today=TODAY, first_run_day=first)
+    assert body["gap"] is None
+    coverage = {d["id"]: d["score"] for d in body["confidence"]["dimensions"]}["data_coverage"]
+    assert coverage == 100.0
+    assert body["history_days"] == 31 and body["first_run_day"] == first.isoformat()
+    # The raw counts over the whole window are unchanged.
+    assert (body["days_with_runs"], body["empty_days"], body["window_days"]) == (31, 59, 90)
+
+
+def test_without_a_first_run_day_the_leading_days_still_read_as_a_gap():
+    """The old reading, kept for a caller that does not know the first run."""
+    body = svc.summarize(_daily(TODAY, 31), [suite("api", 620)], days=90, today=TODAY)
+    assert body["gap"]["silent_days"] == 59 and body["history_days"] == 90
+
+
+def test_a_gap_inside_history_is_still_found():
+    """A silence after the first run is a real gap: days 10..6 ago empty."""
+    from datetime import timedelta
+
+    rows = [r for r in _daily(TODAY, 20) if not (6 <= (TODAY - date.fromisoformat(r["date"])).days <= 10)]
+    body = svc.summarize(rows, [], days=90, today=TODAY, first_run_day=TODAY - timedelta(days=19))
+    gap = body["gap"]
+    assert (gap["silent_days"], gap["start"], gap["end"], gap["ongoing"]) == (
+        5, (TODAY - timedelta(days=10)).isoformat(), (TODAY - timedelta(days=6)).isoformat(), False,
+    )
+    coverage = {d["id"]: d["score"] for d in body["confidence"]["dimensions"]}["data_coverage"]
+    assert coverage == 75.0  # 15 of the 20 days since the first run
+
+
+def test_a_first_run_before_the_window_changes_nothing():
+    from datetime import timedelta
+
+    rows = [day(12, 10), day(18, 5, 5)]
+    plain = svc.summarize(rows, [], days=DAYS, today=TODAY)
+    old = svc.summarize(rows, [], days=DAYS, today=TODAY, first_run_day=TODAY - timedelta(days=400))
+    assert {k: v for k, v in old.items() if k != "first_run_day"} == {
+        k: v for k, v in plain.items() if k != "first_run_day"
+    }

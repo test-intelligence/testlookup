@@ -20,7 +20,7 @@ from app.services.analytics_scope import AnalyticsScope
 PROJECT = uuid.UUID("11111111-1111-1111-1111-111111111111")
 BODY_KEYS = {
     "window_days", "measured", "reason", "rules_configured", "teams",
-    "not_attributable_hours", "headline_hours",
+    "not_attributable_hours", "headline_hours", "available", "insufficient_data_reason",
 }
 
 
@@ -45,7 +45,12 @@ def reads(monkeypatch):
         "component_map": None,
         "legs": {"clustered_failures": 10, "duplicates_absorbed": 7, "runs_unblocked_proxy": 2},
         "tests": [], "defects": [], "members": [], "since": [],
+        # 60 days of history by default: the headline gate is open.
+        "span": (datetime.now(timezone.utc) - timedelta(days=60), datetime.now(timezone.utc)),
     }
+
+    async def run_span(db, project_id, **kwargs):
+        return state["span"]
 
     async def assumptions(db, project_id):
         return vms.EffectiveAssumptions(
@@ -66,6 +71,7 @@ def reads(monkeypatch):
         return read
 
     monkeypatch.setattr(vms, "get_effective_assumptions", assumptions)
+    monkeypatch.setattr(vms, "_run_span", run_span)
     monkeypatch.setattr(svc, "_headline_legs", legs)
     monkeypatch.setattr(svc, "_ownership_inputs", ownership)
     monkeypatch.setattr(svc, "_test_rows", canned("tests"))
@@ -203,3 +209,41 @@ async def test_a_defect_on_a_test_outside_the_window_resolves_from_its_own_row(r
     body = await svc.get_team_value_metrics(object(), _scope())
     (row,) = body["teams"]
     assert (row["team"], row["defects"], row["tests"], row["mttr_hours"]) == ("Payments", 1, 0, None)
+
+
+# ── D-15: the Overview's own gate ──────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_three_days_of_runs_is_not_available_with_the_overview_s_reason(reads):
+    """D-15: a project with 3 days of runs gets the headline's own gate, so the
+    page can say "not estimated yet" instead of "0 h" per team."""
+    now = datetime.now(timezone.utc)
+    reads["span"] = (now - timedelta(days=3), now)
+    body = await svc.get_team_value_metrics(object(), _scope())
+    expected = vms.resolve_availability(reads["span"][0], reads["span"][1], 8.0, 30)
+    assert body["available"] is False
+    assert body["insufficient_data_reason"] == expected[1]
+    assert "fewer than" in body["insufficient_data_reason"]
+
+
+@pytest.mark.asyncio
+async def test_no_runs_and_no_rules_still_carry_the_gate(reads):
+    reads["span"] = (None, None)
+    reads["rules"], reads["component_map"] = [], {}
+    body = await svc.get_team_value_metrics(object(), _scope())
+    assert body["available"] is False and body["insufficient_data_reason"] == "no runs ingested yet"
+
+
+@pytest.mark.asyncio
+async def test_enough_history_and_a_nonzero_total_is_available(reads):
+    body = await svc.get_team_value_metrics(object(), _scope())
+    assert body["available"] is True and body["insufficient_data_reason"] is None
+
+
+@pytest.mark.asyncio
+async def test_a_zero_total_is_not_available_even_with_history(reads):
+    reads["legs"] = {"clustered_failures": 0, "duplicates_absorbed": 0, "runs_unblocked_proxy": 0}
+    body = await svc.get_team_value_metrics(object(), _scope(days=14))
+    assert body["available"] is False
+    assert body["insufficient_data_reason"] == "no automation signal in the last 14 days"

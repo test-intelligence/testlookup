@@ -25,6 +25,8 @@ from app.core.test_library_vocab import (
     HEALTH_COMPONENT_LABELS,
     HEALTH_COMPONENTS,
     HEALTH_LIST_PREVIEW,
+    HEALTH_MIN_CASES,
+    HEALTH_TAG_GETTING_STARTED,
     HEALTH_TAG_THRESHOLDS,
     HEALTH_TAGS,
     HEALTH_WEIGHTS,
@@ -65,10 +67,24 @@ def _plural(count: int, word: str) -> str:
     return f"{count} {word}" if count == 1 else f"{count} {word}s"
 
 
+def automation_progress(*, total: int, automated: int, target: int) -> float:
+    """D-65: the automated share as progress to the project's target, capped at
+    100 (60 % automated against a 60 % target is 100, not 60). A target of 0
+    asks for nothing, so it is met."""
+    if total <= 0:
+        return 0.0
+    share = automated / total * 100
+    if target <= 0:
+        return 100.0
+    return min(100.0, share / target * 100)
+
+
 def component_values(
     *, total: int, automated: int, stale: int, oldest_review_days: Optional[int], retired_in_open: int,
+    target: int = AUTOMATION_TARGET_DEFAULT,
 ) -> dict[str, Optional[float]]:
-    """Today's formulas (the page's old synthesis), the inputs now whole-library.
+    """Today's formulas (the page's old synthesis), the inputs now whole-library;
+    automation is progress to ``target`` (D-65).
 
     ``None`` per component when the library is empty (not measured).
     """
@@ -76,23 +92,29 @@ def component_values(
         return {key: None for key in HEALTH_COMPONENTS}
     oldest = oldest_review_days or 0
     return {
-        "automation": automated / total * 100,
+        "automation": automation_progress(total=total, automated=automated, target=target),
         "stale_drafts": max(0.0, 100 - stale / total * 400),
         "review_freshness": 100.0 if oldest == 0 else max(0.0, 100 - oldest / REVIEW_FRESHNESS_DAYS * 100),
         "retired_in_open_plans": max(0.0, 100 - retired_in_open / total * 400),
     }
 
 
-def health_score(components: Sequence[dict]) -> tuple[Optional[int], Optional[str]]:
+def health_score(
+    components: Sequence[dict], *, total: Optional[int] = None,
+) -> tuple[Optional[int], Optional[str]]:
     """Weighted sum of the MEASURED components, re-normalised over their weights.
 
     ``(None, None)`` when none is measured. Tag thresholds: >= 85 / >= 70 / else.
+    D-65: with ``total`` below ``HEALTH_MIN_CASES`` the score stands but the tag
+    is "Getting started": one or two cases are not a verdict.
     """
     measured = [c for c in components if c.get("measured") and c.get("value") is not None]
     weight = sum(float(c["weight"]) for c in measured)
     if not measured or weight <= 0:
         return None, None
     score = round_half_up(sum(float(c["value"]) * float(c["weight"]) for c in measured) / weight)
+    if total is not None and total < HEALTH_MIN_CASES:
+        return score, HEALTH_TAG_GETTING_STARTED
     healthy, attention = HEALTH_TAG_THRESHOLDS
     tag = HEALTH_TAGS[0] if score >= healthy else HEALTH_TAGS[1] if score >= attention else HEALTH_TAGS[2]
     return score, tag
@@ -124,6 +146,7 @@ def build_components(facts: dict[str, Any]) -> list[dict]:
         stale=facts["stale"],
         oldest_review_days=facts["oldest_review_days"],
         retired_in_open=facts["retired_in_open"],
+        target=int(facts.get("target", AUTOMATION_TARGET_DEFAULT)),
     )
     numerators = {
         "automation": facts["automated"],
@@ -401,7 +424,7 @@ async def library_health(db: AsyncSession, *, project_id: Any, now: datetime, in
     facts["target"] = await _automation_target(db, project_id)
 
     components = build_components(facts)
-    score, tag = health_score(components)
+    score, tag = health_score(components, total=total)
     avg_epoch = agg["avg_created_epoch"]
     older = int(agg["older_than_180"] or 0)
     requirements = None

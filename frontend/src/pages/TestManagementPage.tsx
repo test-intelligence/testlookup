@@ -2526,6 +2526,19 @@ function PlanItemsView({ planId, onMutate, projectId = null, canWrite = false }:
 
 // ─── Link Suite Modal ─────────────────────────────────────────────────────────
 
+// D-61: say what the form links in the words a case's status chip uses. "Active"
+// alone read as false: Approved cases link with the box unticked (RUNNABLE_STATES).
+const LINK_SUITE_DESCRIPTION =
+  "Adds the suite's Approved and Active authored cases to this plan. Tick the box to add its other authored cases too. Deprecated and Archived cases are never added."
+const LINK_SUITE_OTHERS_LABEL = 'Also add cases that are not Approved or Active'
+
+/** D-61: the count is the suite's authored cases (what the form links), never its run tests. */
+function linkSuiteOptionLabel(s: { suite_name: string; authored_count?: number }): string {
+  if (s.authored_count === undefined) return s.suite_name
+  const n = s.authored_count
+  return `${s.suite_name} (${n === 0 ? 'no' : n} authored case${n === 1 ? '' : 's'})`
+}
+
 interface LinkSuiteModalProps {
   planId: string
   projectId: string | null
@@ -2534,7 +2547,7 @@ interface LinkSuiteModalProps {
 }
 
 function LinkSuiteModal({ planId, projectId, onClose, onLinked }: LinkSuiteModalProps) {
-  const [suites, setSuites] = useState<Array<{ suite_name: string; test_count: number }>>([])
+  const [suites, setSuites] = useState<Array<{ suite_name: string; authored_count?: number }>>([])
   const [selectedSuite, setSelectedSuite] = useState('')
   const [linking, setLinking] = useState(false)
   const [loadingSuites, setLoadingSuites] = useState(true)
@@ -2576,7 +2589,7 @@ function LinkSuiteModal({ planId, projectId, onClose, onLinked }: LinkSuiteModal
       const leftOut = includeNotActive ? 0 : notActive.length
       if (toLink.length === 0) {
         toast.error(leftOut > 0
-          ? `No Active test cases in "${selectedSuite}". Tick "Include cases that are not Active" to link the others.`
+          ? `No Approved or Active cases in "${selectedSuite}". Tick "${LINK_SUITE_OTHERS_LABEL}" to add the others.`
           : 'No managed test cases found in this suite to link')
         return
       }
@@ -2589,7 +2602,7 @@ function LinkSuiteModal({ planId, projectId, onClose, onLinked }: LinkSuiteModal
           // skip duplicates
         }
       }
-      toast.success(`Linked ${added} test case${added !== 1 ? 's' : ''} from "${selectedSuite}"${leftOut > 0 ? ` · ${leftOut} not Active left out` : ''}`)
+      toast.success(`Linked ${added} test case${added !== 1 ? 's' : ''} from "${selectedSuite}"${leftOut > 0 ? ` · ${leftOut} not Approved or Active left out` : ''}`)
       onLinked()
     } catch {
       toast.error('Failed to link suite')
@@ -2603,7 +2616,7 @@ function LinkSuiteModal({ planId, projectId, onClose, onLinked }: LinkSuiteModal
     <InlineFormSection
       title="Link Test Suite to Plan"
       titleId="tm-link-suite-title"
-      description="Add a suite's Active managed test cases to this test plan (the others when you tick the box)."
+      description={LINK_SUITE_DESCRIPTION}
       onClose={onClose}
       showClose={false}
       footer={(
@@ -2632,7 +2645,7 @@ function LinkSuiteModal({ planId, projectId, onClose, onLinked }: LinkSuiteModal
             <option value="">— Select a suite —</option>
             {suites.map(s => (
               <option key={s.suite_name} value={s.suite_name}>
-                {s.suite_name} ({s.test_count} cases)
+                {linkSuiteOptionLabel(s)}
               </option>
             ))}
           </select>
@@ -2643,7 +2656,7 @@ function LinkSuiteModal({ planId, projectId, onClose, onLinked }: LinkSuiteModal
               onChange={(e) => setIncludeNotActive(e.target.checked)}
               className="accent-[var(--color-accent)]"
             />
-            Include cases that are not Active
+            {LINK_SUITE_OTHERS_LABEL}
           </label>
         </div>
       )}
@@ -2874,7 +2887,9 @@ function TestPlansTab({ projectId }: TestPlansTabProps) {
 
 interface SuiteItem {
   suite_name: string
+  /** Tests that ran; authored cases are `authored_count` (D-59). */
   test_count: number
+  authored_count?: number
   passed_count: number
   failed_count: number
   last_run_at: string | null
@@ -3325,12 +3340,27 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
                     ? (evaluated > 0 ? (displayPassed / evaluated) * 100 : null)
                     : suite.pass_rate
                   const uniqueCount = suite.test_count
+                  // D-59: authored cases are counted apart from the tests that ran,
+                  // never in the pass rate. A suite of authored cases only has not run.
+                  const authored = suite.authored_count ?? 0
+                  const authoredText = `${authored} authored case${authored === 1 ? '' : 's'}`
+                  if (!hasExecHistory && uniqueCount === 0 && authored > 0) {
+                    return (
+                      <span data-suite-counts="">
+                        {authoredText}
+                        <span className="text-[var(--color-text-faint)]"> · not run yet</span>
+                      </span>
+                    )
+                  }
                   return (
                     <>
-                      <span>
-                        {displayTotal} {hasExecHistory ? 'executions' : 'tests'}
+                      <span data-suite-counts="">
+                        {displayTotal} {hasExecHistory ? 'executions' : (displayTotal === 1 ? 'test' : 'tests')}
                         {hasExecHistory && uniqueCount > 0 && uniqueCount !== displayTotal && (
-                          <span className="text-[var(--color-text-faint)]"> · {uniqueCount} unique</span>
+                          <span className="text-[var(--color-text-faint)]"> · {uniqueCount} test{uniqueCount === 1 ? '' : 's'}</span>
+                        )}
+                        {authored > 0 && (
+                          <span className="text-[var(--color-text-faint)]"> · {authoredText}</span>
                         )}
                       </span>
                       <span className="text-[var(--status-passed)]">{displayPassed} passed</span>

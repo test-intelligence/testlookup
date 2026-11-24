@@ -43,7 +43,7 @@ export const NOT_MEASURED = {
   perf_no_findings: 'No run in the last 7 days was checked for duration regressions.',
   perf_tests_flag_off: 'Per-test duration spikes are off for this project (feature flag perf_regression_detection); suites are still checked.',
   flake_few_runs: 'No suite had 5 runs in both of the last two weeks.',
-  coverage_no_snapshot: 'No coverage snapshot yet: the first is taken at 00:05 UTC.',
+  coverage_no_snapshot: 'No coverage snapshot yet: the first is taken when a run of this project finishes, or at 00:05 UTC.',
   coverage_stale_snapshot: 'The newest coverage snapshot is more than 2 days old.',
   coverage_no_previous: 'There is no coverage snapshot from a week before the newest one.',
   coverage_too_small: 'Fewer than 20 tests were exercised a week ago.',

@@ -176,10 +176,11 @@ async def test_list_test_suites_returns_unique_counts_from_cte(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_list_test_suites_merges_managed_cases_additively(monkeypatch):
-    """A managed_test_cases row for the same suite_name adds to the
-    automation count — those are authored tests catalogued by hand,
-    distinct from automation-derived rows."""
+async def test_list_test_suites_counts_managed_cases_apart(monkeypatch):
+    """A managed_test_cases row for the same suite_name is counted as
+    ``authored_count``, never added to ``test_count``: authored cases have
+    no run result, so adding them dragged the pass rate down (D-59,
+    2026-11-21; this test used to pin the 10 + 3 = 13 sum)."""
     from app.routers.test_management_exports import list_test_suites
 
     project_id = uuid.uuid4()
@@ -188,11 +189,7 @@ async def test_list_test_suites_merges_managed_cases_additively(monkeypatch):
         test_count=10, passed_count=9, failed_count=1,
         last_run_at=None, last_run_id=uuid.uuid4(),
     )]
-    manual_rows = [_row(
-        suite_name="auth-api",
-        test_count=3, passed_count=0, failed_count=0,
-        last_run_at=None,
-    )]
+    manual_rows = [_row(suite_name="auth-api", authored_count=3)]
     db = SimpleNamespace(
         execute=AsyncMock(side_effect=[
             _Result(auto_rows),
@@ -215,8 +212,9 @@ async def test_list_test_suites_merges_managed_cases_additively(monkeypatch):
     )
 
     by_name = {s["suite_name"]: s for s in result}
-    # 10 automation-derived + 3 manually authored = 13.
-    assert by_name["auth-api"]["test_count"] == 13
+    assert by_name["auth-api"]["test_count"] == 10
+    assert by_name["auth-api"]["authored_count"] == 3
+    assert by_name["auth-api"]["pass_rate"] == 90.0
 
 
 @pytest.mark.asyncio
@@ -341,11 +339,7 @@ async def test_list_test_suites_no_pass_rate_without_a_pass_or_fail_result(monke
             last_run_at=None, last_run_id=uuid.uuid4(),
         ),
     ]
-    manual_rows = [_row(
-        suite_name="Never run",
-        test_count=4, passed_count=0, failed_count=0,
-        last_run_at=None,
-    )]
+    manual_rows = [_row(suite_name="Never run", authored_count=4)]
     db = SimpleNamespace(
         execute=AsyncMock(side_effect=[
             _Result(auto_rows),

@@ -7,7 +7,7 @@
  *  - an edited-after-approval case is marked on its row's meta line and in the
  *    pane's subtitle (review on only);
  *  - Plans › Link Suite links the Active (approved / active) manual cases by
- *    default; `Include cases that are not Active` adds the other non-retired
+ *    default; `Also add cases that are not Approved or Active` adds the other non-retired
  *    ones; a deprecated / archived case is never linked; a row without
  *    `lifecycle_status` counts as not Active; the toast names what was left
  *    out; nothing Active says how to link the others;
@@ -236,7 +236,7 @@ async function linkSuite(includeNotActive = false) {
   const form = await screen.findByRole('region', { name: 'Link Test Suite to Plan' })
   const select = await within(form).findByRole('combobox')
   fireEvent.change(select, { target: { value: 'Checkout' } })
-  if (includeNotActive) fireEvent.click(within(form).getByRole('checkbox', { name: 'Include cases that are not Active' }))
+  if (includeNotActive) fireEvent.click(within(form).getByRole('checkbox', { name: 'Also add cases that are not Approved or Active' }))
   fireEvent.click(within(form).getByRole('button', { name: 'Link Suite' }))
 }
 
@@ -260,7 +260,8 @@ describe('/test-management Plans (W28)', () => {
       data: id ? history : undefined, isLoading: false, error: undefined, mutate: vi.fn(),
     } as unknown as ReturnType<typeof useTestCaseHistory>))
     service.listSuites.mockResolvedValue([
-      { suite_name: 'Checkout', test_count: 5, passed_count: 5, failed_count: 0, last_run_at: null, last_run_id: null, pass_rate: 100 },
+      { suite_name: 'Checkout', test_count: 5, authored_count: 3, passed_count: 5, failed_count: 0, last_run_at: null, last_run_id: null, pass_rate: 100 },
+      { suite_name: 'Cart', test_count: 8, authored_count: 0, passed_count: 8, failed_count: 0, last_run_at: null, last_run_id: null, pass_rate: 100 },
     ])
     service.addPlanItem.mockResolvedValue({} as TestPlanItem)
   })
@@ -287,6 +288,19 @@ describe('/test-management Plans (W28)', () => {
     expect(table.querySelector('[data-plan-item-version-row]')).toBeNull()
   })
 
+  it('D-61: the Link Suite form names Approved and Active, and each option counts authored cases, not run tests', async () => {
+    await openPlan()
+    fireEvent.click(screen.getByRole('button', { name: 'Link Suite' }))
+    const form = await screen.findByRole('region', { name: 'Link Test Suite to Plan' })
+    expect(form).toHaveTextContent("Adds the suite's Approved and Active authored cases to this plan.")
+    expect(form).toHaveTextContent('Deprecated and Archived cases are never added.')
+    expect(form).not.toHaveTextContent('(the others when you tick the box)')
+    const select = await within(form).findByRole('combobox')
+    const options = within(select).getAllByRole('option').map((o) => o.textContent)
+    expect(options).toEqual(['— Select a suite —', 'Checkout (3 authored cases)', 'Cart (no authored cases)'])
+    expect(within(form).getByRole('checkbox', { name: 'Also add cases that are not Approved or Active' })).not.toBeChecked()
+  })
+
   it('Link Suite links only the Active cases by default and says how many were left out', async () => {
     service.getSuiteCases.mockResolvedValue({
       items: [
@@ -298,7 +312,7 @@ describe('/test-management Plans (W28)', () => {
     await linkSuite()
     await waitFor(() => expect(toast.success).toHaveBeenCalled())
     expect(service.addPlanItem.mock.calls.map((c) => c[1])).toEqual([{ test_case_id: 'm-active' }, { test_case_id: 'm-approved' }])
-    expect(toast.success).toHaveBeenCalledWith('Linked 2 test cases from "Checkout" · 2 not Active left out')
+    expect(toast.success).toHaveBeenCalledWith('Linked 2 test cases from "Checkout" · 2 not Approved or Active left out')
   })
 
   it('the box adds the non-retired others; a retired case is never linked', async () => {
@@ -328,7 +342,7 @@ describe('/test-management Plans (W28)', () => {
     } as never)
     await linkSuite()
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith(
-      'No Active test cases in "Checkout". Tick "Include cases that are not Active" to link the others.',
+      'No Approved or Active cases in "Checkout". Tick "Also add cases that are not Approved or Active" to add the others.',
     ))
     expect(service.addPlanItem).not.toHaveBeenCalled()
   })

@@ -27,7 +27,10 @@ found is all Unassigned. The third is per RUN, not per test, and is reported
 as ``not_attributable_hours``. So the teams' hours plus that equal
 ``headline_hours``, which is computed here from the SAME legs over the SAME
 ``since`` (``now - days``, the rule ``get_hours_saved_model`` uses), uncached
-and ungated -- the cached model could be ten minutes older than the teams.
+-- the cached model could be ten minutes older than the teams. ``available`` /
+``insufficient_data_reason`` are the headline's own gate
+(``value_metrics_service.resolve_availability``, D-15): when it is closed the
+page shows "not estimated yet", never "0 h".
 
 **Null, never zero.** A team with nothing evaluated has ``pass_rate: None``; a
 team with no resolved defect has ``mttr_hours: None``.
@@ -337,7 +340,12 @@ async def _cluster_member_rows(db: AsyncSession, project_id: uuid.UUID, since: d
 
 async def get_team_value_metrics(db: AsyncSession, scope: AnalyticsScope) -> dict[str, Any]:
     """The by-team body (W08 contract §1.3) for the scope's one project."""
-    from app.services.value_metrics_service import compute_leg_hours, get_effective_assumptions
+    from app.services.value_metrics_service import (
+        _run_span,
+        compute_leg_hours,
+        get_effective_assumptions,
+        resolve_availability,
+    )
 
     if scope.project_id is None:  # pragma: no cover - the route's policy requires one
         raise ValueError("value by team is per project")
@@ -348,6 +356,15 @@ async def get_team_value_metrics(db: AsyncSession, scope: AnalyticsScope) -> dic
 
     assumptions = await get_effective_assumptions(db, project_id)
     legs = compute_leg_hours(await _headline_legs(db, project_id, since), assumptions)
+    # D-15: the Overview's own gate (``resolve_availability`` over the run span
+    # and this window's total), so By team never prints "0 h" where the
+    # Overview withholds the headline. The hours stay in the body (the sum
+    # check holds either way); the page shows them only when ``available``.
+    first_run_at, last_run_at = await _run_span(db, project_id)
+    available, insufficient_reason = resolve_availability(
+        first_run_at, last_run_at, legs["hours_total"], days
+    )
+    gate = {"available": available, "insufficient_data_reason": insufficient_reason}
     rules, component_map = await _ownership_inputs(db, project_id)
     if not rules and not component_map:
         return {
@@ -358,6 +375,7 @@ async def get_team_value_metrics(db: AsyncSession, scope: AnalyticsScope) -> dic
             "teams": [],
             "not_attributable_hours": legs["hours_quarantine"],
             "headline_hours": legs["hours_total"],
+            **gate,
         }
 
     tallies: dict[str, TeamTally] = {}
@@ -419,6 +437,7 @@ async def get_team_value_metrics(db: AsyncSession, scope: AnalyticsScope) -> dic
         "teams": teams,
         "not_attributable_hours": legs["hours_quarantine"],
         "headline_hours": legs["hours_total"],
+        **gate,
     }
 
 

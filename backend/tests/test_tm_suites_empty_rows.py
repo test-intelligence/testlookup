@@ -147,7 +147,7 @@ async def test_a_three_answer_session_degrades_to_todays_list_with_a_warning(qui
     recorder = _RecordingLogger()
     monkeypatch.setattr(mod, "logger", recorder)
     manual = [SimpleNamespace(
-        suite_name="Checkout", test_count=2, passed_count=0, failed_count=0, last_run_at=None,
+        suite_name="Checkout", authored_count=2,
     )]
     three = _session([_Result([]), _Result([]), _Result(manual)])
     four = _session([_Result([]), _Result([]), _Result(manual), _Result([])])

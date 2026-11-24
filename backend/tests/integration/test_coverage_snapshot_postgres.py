@@ -505,7 +505,9 @@ def test_history_before_the_first_snapshot_is_not_measured(world):
     body = _run(_get(HISTORY, [("project_id", str(pid))], headers)).json()
     assert set(body) == HISTORY_KEYS
     assert (body["measured"], body["first_snapshot_day"], body["points"]) == (False, None, [])
-    assert body["reason"] == "No coverage snapshot yet: the first is taken at 00:05 UTC."
+    assert body["reason"] == (
+        "No coverage snapshot yet: the first is taken when a run of this project finishes, or at 00:05 UTC."
+    )
     assert body["window_days"] == 90
     assert body["meta"]["measured"] is False
 

@@ -451,16 +451,18 @@ def test_7_pinned_counts():
     # W36 STRAT-03 (deliberate): + systemic_cluster_epics.created_by, a reference (176 -> 177, FKs 123 -> 124)
     # W38 W31 F-1 (deliberate, 2026-11-07): + subject_erasure_requests.subject_user_id (keep_record) and
     # .decided_by_id (reference), both FKs, neither exported (177 -> 179, FKs 124 -> 126)
-    assert counts == (179, 126, 25, 8, 10, 8, 1, 1), (
+    # Batch 5 D-53 (deliberate, 2026-11-23): + flaky_quarantine_requests.proposed_by_user_id, a reference,
+    # exported like approved_by_user_id (179 -> 180, FKs 126 -> 127)
+    assert counts == (180, 127, 25, 8, 10, 8, 1, 1), (
         f"(locations, postgres_fk, postgres_other, objects, mongo, redis, chroma, logs) = {counts}: a location was "
         "added or moved — classify it in subject_data_inventory.py and update this pin deliberately"
     )
     erase = collections.Counter(location.erase for location in locations)
     assert (erase["delete"], erase["pseudonymise"] + erase["reference"], erase["keep_audit"], erase["keep_record"],
-            erase["no_personal_data"], erase["out_of_scope"]) == (21, 107, 24, 8, 13, 6), erase   # W38: +1 ref, +1 keep_record
-    assert (erase["pseudonymise"], erase["reference"]) == (11, 96), erase
+            erase["no_personal_data"], erase["out_of_scope"]) == (21, 108, 24, 8, 13, 6), erase   # W38: +1 ref, +1 keep_record; D-53 +1 ref
+    assert (erase["pseudonymise"], erase["reference"]) == (11, 97), erase
     exported = sum(1 for location in locations if location.export_as != "none")
-    assert (exported, len(locations) - exported) == (123, 56)   # W38: the two request columns are not exported
+    assert (exported, len(locations) - exported) == (124, 56)   # W38: the two request columns are not exported; D-53 +1
 
 
 # ── (8) fail-open, and the module stays pure data ────────────────────────────
@@ -480,7 +482,7 @@ def test_8_lookups_and_purity():
     deletes = inv.postgres_locations(erase="delete")
     assert deletes and all(location.store == "postgres" and location.erase == "delete" for location in deletes)
     exported = inv.postgres_locations(export=True)
-    assert all(location.export_as != "none" for location in exported) and len(exported) == 123
+    assert all(location.export_as != "none" for location in exported) and len(exported) == 124
     tree = ast.parse(INVENTORY_PY.read_text(encoding="utf-8"))
     modules = [alias.name for node in ast.walk(tree) if isinstance(node, ast.Import) for alias in node.names]
     modules += [node.module or "" for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)]

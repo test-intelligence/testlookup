@@ -204,7 +204,7 @@ serves, but the sidebar polls independently of the page state, so a
 dedicated endpoint keeps the badge fresh without fetching 25 rows on
 every poll.
 
-Source: [backend/app/routers/my_failures.py:387](../../../backend/app/routers/my_failures.py#L387).
+Source: [backend/app/routers/my_failures.py:401](../../../backend/app/routers/my_failures.py#L401).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -373,7 +373,7 @@ Returns the updated ``MyFailureItem`` so the frontend can drop the
 new row into the (now-correct) owner's view without re-fetching the
 whole list. The caller's own list shrinks by one on the next poll.
 
-Source: [backend/app/routers/my_failures.py:512](../../../backend/app/routers/my_failures.py#L512).
+Source: [backend/app/routers/my_failures.py:526](../../../backend/app/routers/my_failures.py#L526).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -479,7 +479,7 @@ Same authorisation contract as the PUT: caller must be QA_LEAD or
 ADMIN on the project. Returning 403 here (instead of an empty
 payload) keeps the UI honest about WHY the picker is unavailable.
 
-Source: [backend/app/routers/my_failures.py:489](../../../backend/app/routers/my_failures.py#L489).
+Source: [backend/app/routers/my_failures.py:503](../../../backend/app/routers/my_failures.py#L503).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -589,7 +589,7 @@ The row drops off ``GET /assigned-failures`` (and the count badge)
 on the next poll once status moves off PENDING_REVIEW — that's the
 primary mechanism for "resolving" an inbox item.
 
-Source: [backend/app/routers/my_failures.py:596](../../../backend/app/routers/my_failures.py#L596).
+Source: [backend/app/routers/my_failures.py:610](../../../backend/app/routers/my_failures.py#L610).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 

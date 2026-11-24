@@ -7,6 +7,10 @@
  *   Not attributable to a team: {h} h (runs unblocked by quarantine are counted per run)
  *   Total {headline} h — the headline for these {N} days
  *
+ * D-15: when the Overview withholds its headline (`available: false`), Hours
+ * saved reads "—" and the two totals give way to the Overview's own sentence
+ * and reason: never "0 h".
+ *
  * "Not measured" is never 0: a team with nothing evaluated has no pass rate
  * ("—"), a team with no resolved defect no MTTR ("—").
  *
@@ -27,6 +31,8 @@ export const BY_TEAM_UNAVAILABLE = 'Value by team is not available'
 export const BY_TEAM_PICK_PROJECT = 'Pick a project to see value by team'
 export const NO_RULES_TITLE = 'No ownership rules yet'
 export const NO_RULES_ASK = 'Ask a QA lead to set up ownership rules.'
+/** D-15: the Overview's own sentence when the headline is withheld. */
+export const BY_TEAM_NOT_ESTIMATED = 'Not enough data yet to estimate engineering hours saved.'
 
 const MESSAGE = 'rounded-xl border px-4 py-6 text-center text-sm text-[var(--color-text-muted)]'
 const NUM = 'px-2 py-1.5 text-right tabular-nums'
@@ -91,6 +97,11 @@ export default function ValueMetricsByTeam({ projectId, days, canEditOwnership }
   }
 
   const rows = orderTeams(answer.teams)
+  // D-15: the Overview's own gate. Closed, no hours figure is printed.
+  const estimated = answer.available !== false
+  const notEstimatedTitle = answer.insufficient_data_reason
+    ? `Not estimated yet: ${answer.insufficient_data_reason}`
+    : 'Not estimated yet'
   return (
     <section
       aria-label="Value by team"
@@ -147,9 +158,14 @@ export default function ValueMetricsByTeam({ projectId, days, canEditOwnership }
                   </td>
                   <td
                     className={NUM}
-                    title={`Triage ${hours(row.hours.triage)} · duplicates absorbed ${hours(row.hours.dedup)}`}
+                    data-hours-saved={estimated ? 'estimated' : 'not-estimated'}
+                    title={
+                      estimated
+                        ? `Triage ${hours(row.hours.triage)} · duplicates absorbed ${hours(row.hours.dedup)}`
+                        : notEstimatedTitle
+                    }
                   >
-                    {hours(row.hours_saved)}
+                    {estimated ? hours(row.hours_saved) : '—'}
                   </td>
                 </tr>
               )
@@ -157,14 +173,21 @@ export default function ValueMetricsByTeam({ projectId, days, canEditOwnership }
           </tbody>
         </table>
       )}
-      <div data-value-by-team-totals="" className="mt-3 flex flex-col gap-0.5 text-xs text-[var(--color-text-secondary)]">
-        <span>
-          Not attributable to a team: {hours(answer.not_attributable_hours)} (runs unblocked by quarantine are counted per run)
-        </span>
-        <span>
-          Total {hours(answer.headline_hours)} — the headline for these {answer.window_days || days} days
-        </span>
-      </div>
+      {estimated ? (
+        <div data-value-by-team-totals="" className="mt-3 flex flex-col gap-0.5 text-xs text-[var(--color-text-secondary)]">
+          <span>
+            Not attributable to a team: {hours(answer.not_attributable_hours)} (runs unblocked by quarantine are counted per run)
+          </span>
+          <span>
+            Total {hours(answer.headline_hours)} — the headline for these {answer.window_days || days} days
+          </span>
+        </div>
+      ) : (
+        <div data-value-by-team-totals="not-estimated" className="mt-3 flex flex-col gap-0.5 text-xs text-[var(--color-text-secondary)]">
+          <span className="font-semibold text-[var(--color-text)]">{BY_TEAM_NOT_ESTIMATED}</span>
+          {answer.insufficient_data_reason ? <span>{answer.insufficient_data_reason}</span> : null}
+        </div>
+      )}
     </section>
   )
 }

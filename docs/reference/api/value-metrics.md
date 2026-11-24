@@ -356,13 +356,14 @@ W08 TRND-08 -- value metrics by owning team, for one project.
 One row per team (``Unassigned`` last): tests, executions, the evaluated
 pass rate, flaky tests, defects and MTTR, and the hours saved attributed
 from the headline's own legs, plus ``not_attributable_hours`` (runs
-unblocked by quarantine) and ``headline_hours``. ``rules_configured:
+unblocked by quarantine) and ``headline_hours``, with the Overview's own
+gate as ``available`` / ``insufficient_data_reason`` (D-15). ``rules_configured:
 false`` / ``measured: false`` when the project has no ownership rules and
 no component map. ``release_id`` / ``suite_name`` are accepted, authorised
 and declared in ``meta.ignored_filters``: these are project-level counts
 over time, as on the Overview.
 
-Source: [backend/app/routers/value_metrics.py:131](../../../backend/app/routers/value_metrics.py#L131).
+Source: [backend/app/routers/value_metrics.py:137](../../../backend/app/routers/value_metrics.py#L137).
 
 Dependency chain: `OAuth2PasswordBearer`, `analytics_scope.<locals>.dependency`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -516,7 +517,7 @@ revision refused them, when the unpinned export spanned every tenant). A
 caller with no project at all is still refused: there is nothing to
 aggregate. An admin who names none exports every project.
 
-Source: [backend/app/routers/value_metrics.py:167](../../../backend/app/routers/value_metrics.py#L167).
+Source: [backend/app/routers/value_metrics.py:174](../../../backend/app/routers/value_metrics.py#L174).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 

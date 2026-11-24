@@ -21,7 +21,17 @@ export const NOT_MEASURED_TEXT = 'not measured'
 export const FLAKY_ACTIVE_TITLE = 'Flaky and active'
 export const NO_OWNER_TITLE = 'No owner'
 
-const TAG_STATE: Record<string, BannerState> = { Healthy: 'ok', 'Needs attention': 'warn', 'At risk': 'fail' }
+/**
+ * D-65: the server's fourth tag (`HEALTH_TAG_GETTING_STARTED`): fewer than
+ * ten cases is too small a library to rate, so no verdict yet.
+ */
+export const GETTING_STARTED_TAG = 'Getting started'
+/** = the server's `HEALTH_GETTING_STARTED_SENTENCE`, without its full stop. */
+export const GETTING_STARTED_TEXT = 'Not enough cases to rate yet'
+
+const TAG_STATE: Record<string, BannerState> = {
+  Healthy: 'ok', 'Needs attention': 'warn', 'At risk': 'fail', [GETTING_STARTED_TAG]: 'pending',
+}
 
 export interface HealthBanner {
   state: BannerState
@@ -47,10 +57,15 @@ export function healthComponent(health: LibraryHealth | undefined, key: string):
   return health?.components.find((c) => c.key === key)
 }
 
-/** The automated share as the banner and the Automated stat print it ("33%"), or `not measured`. */
+/**
+ * The automated share as the banner and the Automated stat print it ("33%"), or `not measured`.
+ * D-65: the component's `value` is progress to the target, so the share is its numerator over its
+ * denominator (automated of total cases), never the score.
+ */
 export function automatedPctText(health: LibraryHealth | undefined): string {
   const c = healthComponent(health, 'automation')
-  return c?.measured && c.value != null ? `${Math.round(c.value)}%` : NOT_MEASURED_TEXT
+  if (!c?.measured || c.numerator == null || !c.denominator) return NOT_MEASURED_TEXT
+  return `${Math.round((c.numerator / c.denominator) * 100)}%`
 }
 
 /**
@@ -65,6 +80,15 @@ export function bannerFor({ projectId, health, error }: HealthReadState): Health
   }
   if (!health.measured || health.score == null || !health.tag) {
     return { state: 'pending', title: LIBRARY_EMPTY_TITLE, factsFrom: null }
+  }
+  if (health.tag === GETTING_STARTED_TAG) {
+    // D-65: the facts are real; the verdict waits for a bigger library.
+    return {
+      state: 'pending',
+      pillLabel: GETTING_STARTED_TAG.toUpperCase(),
+      title: `Library health: ${GETTING_STARTED_TEXT.toLowerCase()}`,
+      factsFrom: health,
+    }
   }
   return {
     state: TAG_STATE[health.tag] ?? 'pending',

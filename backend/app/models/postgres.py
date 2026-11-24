@@ -7604,6 +7604,12 @@ class FlakyQuarantineRequest(Base):
     )
     last_failure_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     proposed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    # D-53 (migration 0260): the person who proposed it; NULL = detected
+    # automatically (or proposed before 0260). SET NULL keeps the row when the
+    # user is deleted.
+    proposed_by_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True,
+    )
     approved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     approved_by_user_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), nullable=True,

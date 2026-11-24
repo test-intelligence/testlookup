@@ -1407,6 +1407,26 @@ describe('TrendsPage W08', () => {
       expect(scoreToggle()).toHaveTextContent('Score not available')
     })
 
+    it('D-24: a project younger than the window counts days since its first run, never "schedule may be paused"', async () => {
+      // Six days old, a run every day, a 14-day window: 6 / 14 would read 43 % "schedule may be paused".
+      trendSummary.override = await summaryOf({ days_with_runs: 6, empty_days: 8, history_days: 6, first_run_day: await dayBack(5) })
+      await renderPage('/trends', [0, 1, 2, 3, 4, 5])
+      const kpis = screen.getByRole('region', { name: 'Trend metrics' })
+      const tile = within(kpis).getByText('Days with runs').closest('[data-metric-card]') as HTMLElement
+      expect(tile).toHaveTextContent('6 / 6')
+      expect(tile).toHaveTextContent('days since the first run (window 14)')
+      expect(tile.textContent).not.toMatch(/schedule may be paused/)
+    })
+
+    it('D-24: without history_days (an older server) the tile keeps the window reading', async () => {
+      trendSummary.override = await summaryOf({ days_with_runs: 6, empty_days: 8 })
+      await renderPage('/trends', [0, 1, 2, 3, 4, 5])
+      const kpis = screen.getByRole('region', { name: 'Trend metrics' })
+      const tile = within(kpis).getByText('Days with runs').closest('[data-metric-card]') as HTMLElement
+      expect(tile).toHaveTextContent('6 / 14')
+      expect(tile).toHaveTextContent('schedule may be paused')
+    })
+
     it('the callout, its Silent days and its dates are the server’s gap; with no cadence, no expected-run claim', async () => {
       const { utcDayIso, formatDayIso } = await import('@/utils/calendarDay')
       const start = await dayBack(8)

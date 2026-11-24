@@ -32,7 +32,7 @@ exports[`AppLayout at 1024 px and above: the shell origin/main shipped > /overvi
             <path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z">
           <span class="truncate">
             "Inbox"
-          <span aria-label="3 assigned failures" class="rounded-full text-2xs font-medium tabular-nums ml-auto px-1.5 py-0.5" data-nav-badge="" style="background: color-mix(in srgb, var(--status-failed) 18%, transparent); color: var(--status-failed); border: 1px solid color-mix(in srgb, var(--status-failed) 30%, transparent);">
+          <span class="rounded-full text-2xs font-medium tabular-nums ml-auto px-1.5 py-0.5" data-nav-badge="" style="background: color-mix(in srgb, var(--status-failed) 18%, transparent); color: var(--status-failed); border: 1px solid color-mix(in srgb, var(--status-failed) 30%, transparent);" title="3 assigned failures, all projects, 30 days">
             "3"
       <div class="mt-0.5">
         <div class="eyebrow px-3 pb-1 pt-4 uppercase text-[var(--color-text-muted)]" data-nav-section="INVESTIGATE">
@@ -220,7 +220,7 @@ exports[`AppLayout at 1024 px and above: the shell origin/main shipped > /settin
             <path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z">
           <span class="truncate">
             "Inbox"
-          <span aria-label="3 assigned failures" class="rounded-full text-2xs font-medium tabular-nums ml-auto px-1.5 py-0.5" data-nav-badge="" style="background: color-mix(in srgb, var(--status-failed) 18%, transparent); color: var(--status-failed); border: 1px solid color-mix(in srgb, var(--status-failed) 30%, transparent);">
+          <span class="rounded-full text-2xs font-medium tabular-nums ml-auto px-1.5 py-0.5" data-nav-badge="" style="background: color-mix(in srgb, var(--status-failed) 18%, transparent); color: var(--status-failed); border: 1px solid color-mix(in srgb, var(--status-failed) 30%, transparent);" title="3 assigned failures, all projects, 30 days">
             "3"
       <div class="mt-0.5">
         <div class="eyebrow px-3 pb-1 pt-4 uppercase text-[var(--color-text-muted)]" data-nav-section="INVESTIGATE">
@@ -550,7 +550,7 @@ exports[`AppLayout at 1024 px and above: the shell origin/main shipped > /trends
             <path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z">
           <span class="truncate">
             "Inbox"
-          <span aria-label="3 assigned failures" class="rounded-full text-2xs font-medium tabular-nums ml-auto px-1.5 py-0.5" data-nav-badge="" style="background: color-mix(in srgb, var(--status-failed) 18%, transparent); color: var(--status-failed); border: 1px solid color-mix(in srgb, var(--status-failed) 30%, transparent);">
+          <span class="rounded-full text-2xs font-medium tabular-nums ml-auto px-1.5 py-0.5" data-nav-badge="" style="background: color-mix(in srgb, var(--status-failed) 18%, transparent); color: var(--status-failed); border: 1px solid color-mix(in srgb, var(--status-failed) 30%, transparent);" title="3 assigned failures, all projects, 30 days">
             "3"
       <div class="mt-0.5">
         <div class="eyebrow px-3 pb-1 pt-4 uppercase text-[var(--color-text-muted)]" data-nav-section="INVESTIGATE">

@@ -291,6 +291,11 @@ function QuarantineRow({
       <tr className="border-t border-[var(--color-border)]" data-testid="quarantine-row" data-quarantine-id={row.id}>
         <td className="px-3 py-2 text-[var(--color-text)] font-mono text-xs truncate max-w-[240px]">
           {row.test_name || row.test_fingerprint.slice(0, 16)}
+          {view === 'proposals' && (
+            <span data-quarantine-proposer="" className="block font-sans text-2xs text-[var(--color-text-muted)] truncate">
+              {proposerLine(row)}
+            </span>
+          )}
         </td>
         <td className="px-3 py-2 text-xs text-[var(--color-text-muted)] truncate max-w-[200px]">
           {row.suite_name || '—'}
@@ -344,10 +349,10 @@ function QuarantineRow({
           </span>
         </td>
         <td className="px-3 py-2 text-right text-xs text-[var(--color-text)]">
-          {row.flip_rate != null ? `${(row.flip_rate * 100).toFixed(0)}%` : '—'}
+          {row.flip_rate != null ? `${(row.flip_rate * 100).toFixed(0)}%` : <NotMeasured />}
         </td>
         <td className="px-3 py-2 text-right text-xs text-[var(--color-text-muted)]">
-          {row.flip_window_size ?? '—'}
+          {row.flip_window_size ?? <NotMeasured />}
         </td>
         <td className="px-3 py-2 text-center">
           <div className="inline-flex flex-col items-center gap-1">
@@ -508,6 +513,27 @@ function QuarantineRow({
         </tr>
       )}
     </>
+  )
+}
+
+/**
+ * D-53: who asked for the quarantine, on the Proposed tab. A null proposer on a
+ * manual row is a proposal made before the proposer was recorded: it was a
+ * person, so it never reads "Detected automatically".
+ */
+function proposerLine(row: Pick<FlakyQuarantineRead, 'proposed_by_name' | 'detection_method'>): string {
+  if (row.proposed_by_name) return `Proposed by ${row.proposed_by_name}`
+  return row.detection_method === 'manual' ? 'Proposed manually' : 'Detected automatically'
+}
+
+/** D-52: a flip figure nobody measured reads so, with the reason, never a bare dash. */
+const NOT_MEASURED_FLIP_TITLE = 'No pass or fail result of this test was recorded when it was proposed'
+
+function NotMeasured() {
+  return (
+    <span data-not-measured="" className="text-[var(--color-text-muted)]" title={NOT_MEASURED_FLIP_TITLE}>
+      not measured
+    </span>
   )
 }
 

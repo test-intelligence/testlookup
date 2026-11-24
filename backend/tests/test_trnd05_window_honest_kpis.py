@@ -69,6 +69,10 @@ def _wire_summary(monkeypatch: pytest.MonkeyPatch, *, cur: dict, prev: dict):
     monkeypatch.setattr(metrics_service, "_period_stats", _period_stats)
     monkeypatch.setattr(metrics_service, "_count_flaky_tests", AsyncMock(return_value=0))
     monkeypatch.setattr(metrics_service, "resolve_readiness_policy", AsyncMock(return_value=None))
+    # D-25: a project with a long history, so the previous window is a fair base.
+    monkeypatch.setattr(
+        metrics_service, "first_run_at", AsyncMock(return_value=datetime(2020, 1, 1, tzinfo=timezone.utc))
+    )
     result = MagicMock()
     result.scalar.return_value = 0
     return SimpleNamespace(execute=AsyncMock(return_value=result))

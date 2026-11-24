@@ -159,7 +159,7 @@ export function scoreCell(brief: FlakyScoreBrief | null): { text: string; band: 
     }
   }
   if (brief.status === 'pending') {
-    return { text: 'not scored yet', band: null, title: 'Scores are computed nightly' }
+    return { text: 'not scored yet', band: null, title: 'Scores are computed nightly, or press Refresh' }
   }
   return { text: '—', band: null, title: 'Score not available' }
 }
@@ -225,7 +225,12 @@ export function insufficientLine(brief: FlakyScoreBrief): string {
 export const INSUFFICIENT_NOTE =
   'A new test is not a stable test: below the evidence floor there is no score, rather than a zero that would read as stability.'
 
-/** `Not scored yet: the score is computed nightly from the last 30 days.` */
-export function pendingLine(brief: FlakyScoreBrief): string {
-  return `Not scored yet: the score is computed nightly from the last ${plural(brief.window_days, 'day')}.`
+/**
+ * D-50: the score is written nightly AND when someone presses Refresh on the
+ * Flaky tests page (which queues this project's recompute), so the line names both.
+ */
+export const PENDING_LINE = 'Not scored yet: scores are computed nightly, or press Refresh.'
+
+export function pendingLine(_brief?: FlakyScoreBrief): string {
+  return PENDING_LINE
 }

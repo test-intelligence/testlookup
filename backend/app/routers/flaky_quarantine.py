@@ -73,14 +73,22 @@ async def _with_owner_names(db: AsyncSession, rows) -> list[FlakyQuarantineRead]
 
     payloads = [FlakyQuarantineRead.model_validate(r) for r in rows]
     owner_ids = {p.owner_user_id for p in payloads if p.owner_user_id}
-    if owner_ids:
+    # D-53: the proposer rides the same ONE batched lookup.
+    proposer_ids = {p.proposed_by_user_id for p in payloads if p.proposed_by_user_id}
+    if owner_ids or proposer_ids:
         result = await db.execute(
-            _select(User.id, User.username).where(User.id.in_(owner_ids))
+            _select(User.id, User.username, User.full_name).where(
+                User.id.in_(owner_ids | proposer_ids)
+            )
         )
-        names = {r.id: r.username for r in result.all()}
+        users = {r.id: r for r in result.all()}
         for p in payloads:
-            if p.owner_user_id:
-                p.owner_name = names.get(p.owner_user_id)
+            owner = users.get(p.owner_user_id) if p.owner_user_id else None
+            if owner is not None:
+                p.owner_name = owner.username
+            proposer = users.get(p.proposed_by_user_id) if p.proposed_by_user_id else None
+            if proposer is not None:
+                p.proposed_by_name = proposer.full_name or proposer.username
 
     defect_ids = {p.defect_id for p in payloads if p.defect_id}
     if defect_ids:
@@ -255,7 +263,8 @@ async def create_proposal(
                 "the 'flaky_auto_quarantine' feature flag."
             ),
         )
-    return row
+    # D-53: the same serialisation as the list, so the reply names the proposer.
+    return (await _with_owner_names(db, [row]))[0]
 
 
 @router.post("/{request_id}/approve", response_model=FlakyQuarantineRead)

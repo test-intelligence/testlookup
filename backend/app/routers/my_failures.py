@@ -216,11 +216,19 @@ async def list_my_assigned_failures(
     # DEFECT_CREATED / WONT_FIX`` rows are off the inbox by design;
     # they remain accessible from the per-run detail page where the
     # status badge surfaces the resolution.
-    base_filters = [
+    #
+    # D-38: two lists. ``occurrence_filters`` holds only the axes every viewer
+    # shares (window, live project, release, suite, project); the per-test
+    # "failed N times" count below uses it, so the lead's team view and the
+    # assignee's own inbox read the same N for the same test. ``base_filters``
+    # adds the viewer's scope (triage status, assignee) for the rows and totals.
+    occurrence_filters = [
         TestCase.status.in_(_ACTIONABLE_STATUSES),
-        TestCase.triage_status == TriageStatus.PENDING_REVIEW.value,
         TestCase.created_at >= period_start,
         _live_projects_only(),
+    ]
+    base_filters = [
+        TestCase.triage_status == TriageStatus.PENDING_REVIEW.value,
     ]
     if effective_scope == "mine":
         base_filters.append(TestCase.assigned_to_user_id == current_user.id)
@@ -228,18 +236,19 @@ async def list_my_assigned_failures(
     # the list query use — so the badge and the table cannot end up scoped
     # differently, which is the "one response, two scopes" defect this epic
     # produced twice elsewhere.
-    base_filters.extend(release_predicate(release_id))
+    occurrence_filters.extend(release_predicate(release_id))
     # The suite axis, same list for the same reason: a failure row is in a
     # suite by its EFFECTIVE suite (a live-stream run's label, else the row's
     # own), the rule every report figure uses. Nothing when none is asked.
-    base_filters.extend(_suite_predicate(suites))
+    occurrence_filters.extend(_suite_predicate(suites))
 
     if scoped_project_id is not None:
-        base_filters.append(TestRun.project_id == scoped_project_id)
+        occurrence_filters.append(TestRun.project_id == scoped_project_id)
     elif allowed_project_ids is not None:
         # No project named: bound to the caller's memberships. An EMPTY set is
         # meaningful — a user who belongs to nothing must match nothing.
-        base_filters.append(TestRun.project_id.in_(list(allowed_project_ids)))
+        occurrence_filters.append(TestRun.project_id.in_(list(allowed_project_ids)))
+    base_filters.extend(occurrence_filters)
 
     # Total count for pagination + badge.
     count_stmt = (
@@ -299,7 +308,9 @@ async def list_my_assigned_failures(
     # Per-test failure count inside the same window. Grouped by the natural
     # identity (project + suite + class + test name) so the same test across
     # runs collapses to a single bucket. Single query for the whole page →
-    # no N+1.
+    # no N+1. D-38: counted with ``occurrence_filters`` (no assignee, no
+    # triage status), so it reads "failed N times in the last {days}" for
+    # every viewer, not "pending rows of this test in my view".
     count_by_key: dict[tuple, int] = {}
     if rows:
         count_stmt = (
@@ -311,7 +322,10 @@ async def list_my_assigned_failures(
                 func.count(TestCase.id).label("n"),
             )
             .join(TestRun, TestRun.id == TestCase.test_run_id)
-            .where(*base_filters)
+            .where(*occurrence_filters)
+            # Only the tests on this page: the scope above no longer carries
+            # the assignee, so bound the grouping to what is rendered.
+            .where(TestCase.test_name.in_({r.test_name for r in rows}))
             .group_by(
                 TestRun.project_id,
                 TestCase.suite_name,

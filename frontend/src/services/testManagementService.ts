@@ -224,7 +224,11 @@ export const testManagementService = {
   // Test Suites
   listSuites: (projectId: string | null): Promise<Array<{
     suite_name: string
+    /** Tests that ran (each counted once, by its latest result): the pass-rate denominator. */
     test_count: number
+    /** D-59: authored (managed) cases, not Deprecated / Archived. Never part of the run
+     *  statistics. Optional: an older server answers without it. */
+    authored_count?: number
     passed_count: number
     failed_count: number
     last_run_at: string | null

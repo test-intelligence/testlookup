@@ -150,6 +150,14 @@ export interface TeamValueMetrics {
   not_attributable_hours: number
   /** The window headline over the same days (teams + not attributable sum to it). */
   headline_hours: number
+  /**
+   * D-15: the Overview's own gate on the headline. `false` means hours are not
+   * estimated yet (`insufficient_data_reason` says why): never print "0 h".
+   * A server from before D-15 omits it; that reads as `true` (the guard
+   * below always sets both).
+   */
+  available?: boolean
+  insufficient_data_reason?: string | null
   meta?: EnvelopeMeta
 }
 
@@ -228,6 +236,9 @@ export function parseTeamValueMetrics(raw: unknown): TeamValueMetrics | null {
     teams,
     not_attributable_hours: raw.not_attributable_hours,
     headline_hours: raw.headline_hours,
+    available: raw.available !== false,
+    insufficient_data_reason:
+      typeof raw.insufficient_data_reason === 'string' ? raw.insufficient_data_reason : null,
     meta: isRecord(raw.meta) ? (raw.meta as unknown as EnvelopeMeta) : undefined,
   }
 }

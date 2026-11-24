@@ -391,7 +391,9 @@ test('L6 a plan › Link Suite: the suites read on open; Cancel sends nothing; C
   await link()
   let form = opened(page, 'Link Test Suite to Plan')
   await expect(form).toBeVisible()
-  await expect(form.getByRole('combobox').locator('option')).toHaveText(['— Select a suite —', 'Checkout (4 cases)', 'Auth (4 cases)'])
+  // D-61: an option counts the suite's authored cases (what the form links), never its run tests. This
+  // fixture's catalogue rows carry no `authored_count` (as from a server before batch 5): the bare name.
+  await expect(form.getByRole('combobox').locator('option')).toHaveText(['— Select a suite —', 'Checkout', 'Auth'])
   await networkQuiet(page, api)
   // `LinkSuiteModal` reads the list in a plain effect: React StrictMode (the dev server) runs it twice.
   expect(requestsTo(api, SUITES)).toEqual([`GET ${SUITES}?project_id=${P}`, `GET ${SUITES}?project_id=${P}`])

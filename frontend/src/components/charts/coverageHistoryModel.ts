@@ -2,8 +2,9 @@
  * W08 TRND-07: the pure model behind the Coverage History chart.
  *
  * The axis is every UTC day of the window the snapshots can cover: a snapshot
- * describes a FINISHED day, so the newest possible one is yesterday, and the
- * read asks `snapshot_day >= today - days`. A day with no snapshot is a GAP in
+ * describes a FINISHED day, so the newest is yesterday, and the read asks
+ * `snapshot_day >= today - days`. The one exception (D-34) is a project's first
+ * snapshot, taken for today when its first run finishes: today is then drawn too. A day with no snapshot is a GAP in
  * both series (`null`), never 0: the beat may not have run that night.
  *
  * Two series:
@@ -70,7 +71,12 @@ export function buildCoverageHistoryModel({
   notes?: readonly NoteInput[]
 }): CoverageHistoryModel {
   const byDay = new Map(points.map((point) => [point.day.slice(0, 10), point]))
-  const axis = historyAxis(days, todayIso)
+  // D-34: a project's FIRST snapshot is taken for today when its first run
+  // finishes (rewritten by that night's job). Draw that day too, so the line
+  // starts now rather than reading "measured" with nothing on the axis.
+  const today = todayIso.slice(0, 10)
+  const base = historyAxis(days, todayIso)
+  const axis = base.length > 0 && byDay.has(today) ? [...base, today] : base
   let stored = 0
   let largest = 0
   const rows = axis.map<CoverageHistoryRow>((x) => {

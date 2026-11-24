@@ -26,7 +26,7 @@ Uses ``tests/integration/defect_w06_world.py``. Requires
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, time, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 
 import pytest
 
@@ -101,8 +101,15 @@ async def _parity(w, **params) -> dict:
     summary = await _get(w, "/api/v1/analytics/trend-summary", **params)
     meta = summary.pop("meta")
     assert meta["scope"]["projects"][0]["id"] == str(w.X)
-    expected = summarize(trends["data"], coverage["suites"], days=14, today=utc_today())
+    # D-24: the third input is the project's first run (13 days ago here, the
+    # window's first day, so no day of the window is "before the first run").
+    first_run_day = date.fromisoformat(summary["first_run_day"])
+    assert first_run_day == utc_today() - timedelta(days=max(ACTIVE_DAYS_AGO))
+    expected = summarize(
+        trends["data"], coverage["suites"], days=14, today=utc_today(), first_run_day=first_run_day,
+    )
     assert summary == expected
+    assert summary["history_days"] == 14
     return summary
 
 

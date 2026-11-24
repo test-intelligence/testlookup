@@ -18397,6 +18397,29 @@
             ],
             "title": "Proposed At"
           },
+          "proposed_by_name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Proposed By Name"
+          },
+          "proposed_by_user_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Proposed By User Id"
+          },
           "quarantine_duration_days": {
             "title": "Quarantine Duration Days",
             "type": "integer"
@@ -107893,7 +107916,7 @@
     },
     "/api/v1/value-metrics/by-team": {
       "get": {
-        "description": "W08 TRND-08 -- value metrics by owning team, for one project.\n\nOne row per team (``Unassigned`` last): tests, executions, the evaluated\npass rate, flaky tests, defects and MTTR, and the hours saved attributed\nfrom the headline's own legs, plus ``not_attributable_hours`` (runs\nunblocked by quarantine) and ``headline_hours``. ``rules_configured:\nfalse`` / ``measured: false`` when the project has no ownership rules and\nno component map. ``release_id`` / ``suite_name`` are accepted, authorised\nand declared in ``meta.ignored_filters``: these are project-level counts\nover time, as on the Overview.",
+        "description": "W08 TRND-08 -- value metrics by owning team, for one project.\n\nOne row per team (``Unassigned`` last): tests, executions, the evaluated\npass rate, flaky tests, defects and MTTR, and the hours saved attributed\nfrom the headline's own legs, plus ``not_attributable_hours`` (runs\nunblocked by quarantine) and ``headline_hours``, with the Overview's own\ngate as ``available`` / ``insufficient_data_reason`` (D-15). ``rules_configured:\nfalse`` / ``measured: false`` when the project has no ownership rules and\nno component map. ``release_id`` / ``suite_name`` are accepted, authorised\nand declared in ``meta.ignored_filters``: these are project-level counts\nover time, as on the Overview.",
         "operationId": "get_metrics_by_team_api_v1_value_metrics_by_team_get",
         "parameters": [
           {
