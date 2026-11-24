@@ -350,7 +350,7 @@
                 }
               ]
             },
-            "description": "The project's review queue, newest first. ``?state=pending_review`` for the open queue."
+            "description": "The project's review queue, newest first. ``?state=pending_review`` for the open queue.\n\nThe body stays a bare list cut at ``limit``; the number of reviews\nmatching the filter is the ``X-Total-Count`` header."
           }
         },
         {
