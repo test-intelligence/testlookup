@@ -15,7 +15,8 @@ const strategies = vi.hoisted(() => ({ data: [] as unknown[] }))
 vi.mock('@/hooks/useTestManagement', () => ({
   useStrategies: () => ({ data: strategies.data, isLoading: false, mutate: vi.fn() }),
 }))
-vi.mock('@/services/testManagementService', () => ({
+vi.mock('@/services/testManagementService', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/services/testManagementService')>(),
   testManagementService: {
     updateStrategy: vi.fn(),
     aiGenerateStrategyAsync: vi.fn(),

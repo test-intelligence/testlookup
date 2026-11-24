@@ -14,7 +14,8 @@ const hoisted = vi.hoisted(() => ({
   error: vi.fn(),
 }))
 
-vi.mock('@/services/testManagementService', () => ({
+vi.mock('@/services/testManagementService', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/services/testManagementService')>(),
   testManagementService: { addComment: hoisted.addComment },
 }))
 vi.mock('@/hooks/useUserManagement', () => ({ useProjectMembers: hoisted.useProjectMembers }))

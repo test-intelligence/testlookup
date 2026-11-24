@@ -27,7 +27,8 @@ import { useSuiteDetail } from '@/hooks/useMetrics'
 
 const mockGetSuiteTrend = vi.fn()
 
-vi.mock('@/services/testManagementService', () => ({
+vi.mock('@/services/testManagementService', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/services/testManagementService')>(),
   testManagementService: {
     getSuiteTrend: (...args: unknown[]) => mockGetSuiteTrend(...args),
   },

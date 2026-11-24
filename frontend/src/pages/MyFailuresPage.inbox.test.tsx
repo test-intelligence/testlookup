@@ -36,7 +36,8 @@ vi.mock('@/services/flakyQuarantineService', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/services/flakyQuarantineService')>(), flakyQuarantineService: quarantine }))
 
 const cases = vi.hoisted(() => ({ listCases: vi.fn(), transitionCase: vi.fn(), reviewAction: vi.fn() }))
-vi.mock('@/services/testManagementService', () => ({ testManagementService: cases }))
+vi.mock('@/services/testManagementService', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/services/testManagementService')>(), testManagementService: cases }))
 
 const defects = vi.hoisted(() => ({ listPendingDefects: vi.fn(), reviewDefect: vi.fn() }))
 vi.mock('@/services/defectPromotionService', () => ({ defectPromotionService: defects }))

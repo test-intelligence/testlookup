@@ -10,7 +10,8 @@ vi.mock('@/hooks/useTestManagement', () => ({
   useAllowedTestCaseTransitions: vi.fn(),
 }))
 
-vi.mock('@/services/testManagementService', () => ({
+vi.mock('@/services/testManagementService', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/services/testManagementService')>(),
   testManagementService: { transitionCase: vi.fn() },
 }))
 

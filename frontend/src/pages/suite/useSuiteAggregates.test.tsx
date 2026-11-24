@@ -11,7 +11,8 @@ import { useProjectStore } from '@/store/projectStore'
 import { useSuiteAggregates } from './useSuiteAggregates'
 
 const listSuites = vi.fn()
-vi.mock('@/services/testManagementService', () => ({
+vi.mock('@/services/testManagementService', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/services/testManagementService')>(),
   testManagementService: { listSuites: (...args: unknown[]) => listSuites(...args) },
 }))
 
