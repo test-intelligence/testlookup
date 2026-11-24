@@ -2,7 +2,7 @@
 status filters, and the number of matches on the two bare-list routes."""
 from __future__ import annotations
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
 
 import pytest
@@ -122,6 +122,14 @@ async def test_quarantine_list_states_how_many_requests_match(client, auth_as, m
     assert count.await_args.kwargs == {"project_ids": None, "status_filter": "PROPOSED", "live_only": True}
 
 
+def _no_rows(count):
+    """One ``db.execute`` answer: no rows for a list read, ``count`` for a count read."""
+    result = MagicMock()
+    result.scalars.return_value.all.return_value = []
+    result.scalar.return_value = count
+    return result
+
+
 def _where(statement) -> str:
     sql = str(statement.compile(compile_kwargs={"literal_binds": True}))
     return sql.split("WHERE", 1)[1].split("ORDER BY")[0].strip()
@@ -145,10 +153,7 @@ async def test_the_quarantine_count_uses_the_lists_filters(filters):
     class Session:
         async def execute(self, statement):
             statements.append(statement)
-            result = AsyncMock()
-            result.scalars = lambda: type("Rows", (), {"all": lambda self: []})()
-            result.scalar = lambda: 7
-            return result
+            return _no_rows(count=7)
 
     assert await flaky_quarantine_service.list_requests(Session(), limit=5, **filters) == []
     assert await flaky_quarantine_service.count_requests(Session(), **filters) == 7
@@ -170,10 +175,7 @@ async def test_review_queue_states_how_many_reviews_match(matches, header):
     class Session:
         async def execute(self, statement):
             statements.append(str(statement.compile(compile_kwargs={"literal_binds": True})))
-            result = AsyncMock()
-            result.scalars = lambda: type("Rows", (), {"all": lambda self: []})()
-            result.scalar = lambda: matches
-            return result
+            return _no_rows(count=matches)
 
     response = Response()
     rows = await reviews.list_reviews(
