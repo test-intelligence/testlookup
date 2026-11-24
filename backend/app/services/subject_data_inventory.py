@@ -274,6 +274,7 @@ _D_WORK: tuple[Location, ...] = (
     _ref("releases", "created_by_id", "Releases they created"),
     _ref("test_suite_owners", "owner_user_id", "Suites they own", open_item=True),
     _ref("flaky_quarantine_requests", "owner_user_id", "Quarantined tests they own", open_item=True),
+    _ref("flaky_quarantine_requests", "proposed_by_user_id", "Quarantines they proposed"),
     _ref("flaky_quarantine_requests", "approved_by_user_id", "Quarantines they approved"),
     _ref("flaky_quarantine_requests", "rejected_by_user_id", "Quarantines they rejected"),
     _ref("knowledge_sources", "owner_id", "Knowledge sources they own", open_item=True),
