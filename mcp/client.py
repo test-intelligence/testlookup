@@ -9,6 +9,7 @@ Handles JWT authentication automatically:
 
 from __future__ import annotations
 
+import contextvars
 import ipaddress
 import logging
 import re
@@ -382,7 +383,29 @@ async def get(path: ApiPath, params: Optional[dict] = None) -> Any:
         resp = await client.get(path, params=_clean_params(params), headers=headers)
 
     resp.raise_for_status()
+    _last_total.set(_header_total(resp))
     return resp.json()
+
+
+#: ``X-Total-Count`` of this task's most recent ``get`` (a bare-list route's
+#: number of matches), or ``None`` when the answer carried none.
+_last_total: contextvars.ContextVar[Optional[int]] = contextvars.ContextVar("testlookup_last_total", default=None)
+
+
+def _header_total(resp: httpx.Response) -> Optional[int]:
+    raw = resp.headers.get("X-Total-Count")
+    return int(raw) if raw is not None and raw.isdigit() else None
+
+
+async def get_with_total(path: ApiPath, params: Optional[dict] = None) -> tuple[Any, Optional[int]]:
+    """``get``, plus the ``X-Total-Count`` the route sent (``None`` when it sent none).
+
+    For routes whose body is a bare list cut at a limit: the header is how
+    many rows matched, so a tool can say "50 of 120" instead of counting its page.
+    """
+    _last_total.set(None)
+    body = await get(path, params)
+    return body, _last_total.get()
 
 
 async def post(

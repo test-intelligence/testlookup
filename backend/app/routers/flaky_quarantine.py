@@ -110,10 +110,15 @@ async def list_quarantine_requests(
     status_filter: Optional[str] = None,
     live_only: bool = False,
     limit: int = 200,
+    response: Response = None,  # type: ignore[assignment]  # injected; absent on a direct call
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
     """List quarantine requests visible to the caller.
+
+    The body stays a bare list, newest first, cut at ``limit`` (at most 500).
+    The number of requests matching the filters is the ``X-Total-Count``
+    header, so a caller can tell a full page from the whole list.
 
     Non-admin callers see only projects they're members of. Admins see
     everything. The ``status_filter`` parameter accepts any value from
@@ -145,6 +150,11 @@ async def list_quarantine_requests(
         live_only=live_only,
         limit=min(max(1, limit), 500),
     )
+    if response is not None:
+        total = await svc.count_requests(
+            db, project_ids=project_ids, status_filter=status_filter, live_only=live_only,
+        )
+        response.headers["X-Total-Count"] = str(max(total, len(rows)))
     return await _with_owner_names(db, rows)
 
 

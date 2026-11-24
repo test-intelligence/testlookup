@@ -317,7 +317,7 @@ workbook is a file, so `testlookup cases export` writes it (see the [CLI](../cli
 
 | Tool | Parameters | Description |
 |------|-----------|-------------|
-| `list_quarantine_requests` | `project_id?`, `status?`, `live_only?`, `limit?` | Review queue with flip rates, across the projects you can read unless `project_id` is given |
+| `list_quarantine_requests` | `project_id?`, `status?`, `live_only?`, `limit?` | Review queue with flip rates, across the projects you can read unless `project_id` is given; says "showing N of total" when the list is cut |
 | `get_quarantine_stats` | `project_id?` | Count per status |
 | `approve_quarantine` | `request_id`, `notes?`, `quarantine_duration_days?` | Approve and activate a quarantine |
 | `reject_quarantine` | `request_id`, `notes?` | Reject a proposal |
