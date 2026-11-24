@@ -186,6 +186,51 @@ Existing usernames that contain `@` keep working for sign-in.
 | `POST /deep-investigate/{run_id}` in Rules mode | accepted | 422 "requires LLM or Auto mode" |
 | `POST /analyze` for a test with a human correction | returns the correction | the engine's answer, replacing the correction |
 
+### Permissions, configuration and admin (batch 4)
+
+- **`.env.example` no longer sets sample integration and SMTP values.** The 17
+  placeholder lines are commented out. Known sample values (for example a
+  `your-...` token or an `example.com` address) now read as "not configured"
+  wherever the app decides whether an integration or SMTP is set up, so a new
+  install no longer shows "Password saved." or "A webhook is set". If you
+  copied the sample file unchanged, those integrations now show as off; set
+  real values to turn them on. A release install's generated `.env` carries an
+  installer banner instead of "DO NOT use this file in production".
+- **The Compose front end proxies `/api-docs` and `/health/`** to the API, so
+  `http://localhost:3000/api-docs` works. `/metrics` is still not proxied.
+- **Lists in "All Projects"** (test plans, strategies, gate policies) show the
+  rows of every project you belong to; they were empty for everyone but
+  admins. Naming a project you are not a member of is still a 403.
+- **QA engineers can open Releases, read-only.** A QA engineer opens the
+  Releases page and a release, with no write controls; the Gate policies tab
+  stays QA lead only. Viewers and testers are still sent to the overview, and
+  a release notification stays plain text for them.
+- **An admin's default QA lead password reset re-enables the account**
+  (after a restore, for example). A project QA lead's reset of a turned-off
+  account is a 409 and changes nothing, so it cannot undo an admin's
+  deactivation. Any reset on an archived project is a 409. The answer adds
+  `is_active`.
+- **A claim correction on a decision report needs QA_ENGINEER** in the run's
+  project (403 below it). Rating a report stays open to every member.
+- **Integration health and AI configuration speak plainly.** Probe errors read
+  "Can't reach the host..." instead of errno text, the detail goes to the
+  server log, and the model status has a new `not_used` code when a provider is
+  not used. The Ollama probe is skipped when nothing uses Ollama.
+
+| Call | Now | Before |
+|---|---|---|
+| `PATCH` a test plan's `status` | 200 (one of the five statuses, else 422) | 500 |
+| `POST /onboarding/{project}/skip`, `/restore` | QA_LEAD | any member |
+| `POST /onboarding/{project}/complete` (steps other than `view_intelligence`) | QA_ENGINEER | any member |
+| `POST /projects/{project_id}/fix-outcomes` | QA_ENGINEER | any member |
+| Deep investigation or admin maintenance, queue unreachable | 503 with a plain sentence | 500 with the exception text |
+| Legacy Jira issue create, Jira error | 502 with a plain sentence | 500 with the exception text |
+
+A run's release change and a suite move now write `run.release_changed` and
+`suite.cases_moved` entries to the Activity log. The audit dashboard shows a
+live account's current name on every row; the name stored at the time is kept
+as `actor_name_recorded`.
+
 ### Results, history and run names (batch 3)
 
 - **Charts, dashboard windows and the Runs list window use a run's execution

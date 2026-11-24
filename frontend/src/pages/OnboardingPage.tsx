@@ -13,6 +13,7 @@ import WorkflowTimeline from '@/components/workflow/WorkflowTimeline'
 import Disclosure from '@/components/ui/Disclosure'
 import { buildOnboardingWorkflow } from '@/components/workflow/workflowPresets'
 import { formatDay } from '@/utils/formatters'
+import { usePermissions } from '@/hooks/usePermissions'
 
 const STEP_ICONS: Record<string, React.ElementType> = {
   create_project: FlaskConical,
@@ -117,6 +118,9 @@ export default function OnboardingPage() {
   const projectId = activeProjectId === ALL_PROJECTS_ID ? null : activeProjectId
   const { status, isLoading: loading, mutate } = useOnboardingStatus(projectId)
   const workflow = buildOnboardingWorkflow(status)
+  // Skip and Restore change the whole team's checklist: the server takes them
+  // from a QA lead only (S-D-7), so lower roles get no button that would fail.
+  const { isQaLead } = usePermissions()
 
   if (!projectId && !isAllProjects) {
     return (
@@ -138,11 +142,10 @@ export default function OnboardingPage() {
 
   const steps = status?.steps ?? []
   const progressPct = status?.progress_pct ?? 0
-  // The backend folds skipped steps into completed_count / progress_pct
-  // (see onboarding_service._build_status: `status in ("completed", "skipped")`),
-  // so the bar can read 100% with steps a self-hoster only skipped, never did.
-  // Derive the true breakdown from the step statuses so the card is legible
-  // about what was actually done vs. skipped vs. still pending.
+  // progress_pct is the share of the steps NOT skipped that are done
+  // (onboarding_service._summarise, D-127), so it reads 100% once every open
+  // step is done. The breakdown line says how many were done and how many only
+  // skipped, derived from the step statuses (an older server counted skips as done).
   const doneCount = steps.filter(s => s.status === 'completed').length
   const skippedCount = steps.filter(s => s.status === 'skipped').length
   const totalCount = status?.total_count ?? steps.length
@@ -201,9 +204,8 @@ export default function OnboardingPage() {
           assistive tech instead of an anonymous styled div. aria-valuenow tracks
           the visible fill (progressPct), and aria-valuetext carries the same
           done-vs-skipped nuance the sighted breakdown line below shows — the
-          backend folds skipped steps into progressPct, so the bar can read 100%
-          with steps only skipped, and a screen-reader user deserves that
-          distinction too, not a bare "100%".
+          bar reads 100% once every step not skipped is done, and a
+          screen-reader user deserves that distinction too, not a bare "100%".
         */}
         <div
           className="w-full h-2 bg-[var(--color-bg-secondary)] rounded-full overflow-hidden"
@@ -253,7 +255,7 @@ export default function OnboardingPage() {
           <StepCard
             key={step.key}
             step={step}
-            canSkip={!isAllProjects && !!projectId}
+            canSkip={!isAllProjects && !!projectId && isQaLead}
             onSkip={() => handleSkip(step.key)}
             onRestore={() => handleRestore(step.key)}
           />

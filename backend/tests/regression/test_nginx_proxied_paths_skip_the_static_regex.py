@@ -27,6 +27,9 @@ SERVER_CONFIGS = (
     "k8s/overlays/openshift-artifactory/frontend-nginx-configmap.yaml:default.conf",
 )
 PROXIED_PREFIXES = ("/api/", "/api/v1/project-data-downloads/", "/ws/", "/webhooks/")
+#: D-116 / D-35: the Compose front end also proxies the API reference and the
+#: health reads (the Kubernetes Ingress routes them itself).
+EXTRA_PREFIXES = {"frontend/nginx.conf.template": ("/api-docs", "/health/")}
 
 
 def select(locations: dict[str, list], path: str) -> str:
@@ -58,7 +61,8 @@ def test_every_proxied_prefix_is_marked_final(name: str) -> None:
     for server in _servers(parse(CONFIGS[name])):
         locations = _locations(server)
         proxied = {key for key, children in locations.items() if _proxies(children)}
-        assert proxied == {f"^~ {prefix}" for prefix in PROXIED_PREFIXES}, (name, sorted(proxied))
+        expected = (*PROXIED_PREFIXES, *EXTRA_PREFIXES.get(name, ()))
+        assert proxied == {f"^~ {prefix}" for prefix in expected}, (name, sorted(proxied))
 
 
 @pytest.mark.parametrize("name", SERVER_CONFIGS)

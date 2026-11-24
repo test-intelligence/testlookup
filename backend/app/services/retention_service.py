@@ -518,6 +518,16 @@ def _resolve(row: Any, inst: Any) -> _Resolution:
     return _Resolution(values=values, sources=sources, inherit_values=inherit_values)
 
 
+def _row_customises(row: Any) -> bool:
+    """D-75: a row is a customisation only when it sets a value. A project
+    import writes an all-inherit row (every inheritable field NULL) carrying
+    only ``purge_paused_until``, which read as "Customized" on a project nobody
+    configured."""
+    if row is None:
+        return False
+    return any(getattr(row, field, None) is not None for field in (*INHERITABLE_FIELDS, *CAP_FIELDS))
+
+
 def _effective_from(row: Any, inst: Any, *, now: datetime) -> EffectiveRetentionPolicy:
     resolution = _resolve(row, inst)
     paused = getattr(row, "purge_paused_until", None) if row is not None else None
@@ -527,7 +537,7 @@ def _effective_from(row: Any, inst: Any, *, now: datetime) -> EffectiveRetention
         **resolution.values,
         ai_versions_per_run=_stored_cap(row, "ai_versions_per_run"),
         ai_versions_per_test=_stored_cap(row, "ai_versions_per_test"),
-        source="custom" if row is not None else "default",
+        source="custom" if _row_customises(row) else "default",
         purge_paused_until=paused,
         field_sources=tuple(resolution.sources.items()),
         inherit_values=tuple(resolution.inherit_values.items()),

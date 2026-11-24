@@ -9,6 +9,7 @@ const mockPermissions = {
   isAdmin: true,
   isQaLead: true,
   isQaEngineer: true,
+  canReadReleases: true,
   canManageUsers: true,
   canManageProjectMembers: true,
   canGenerateApiKeys: true,
@@ -66,6 +67,7 @@ describe('Sidebar (UX redesign P1): flat items from navConfig', () => {
   beforeEach(() => {
     mockPermissions.role = 'ADMIN'
     mockPermissions.canAccessManagement = true
+    mockPermissions.canReadReleases = true
     mockFlags.byKey = {}
     mockAI.config = undefined
     mockCounts.inbox = 0
@@ -73,12 +75,25 @@ describe('Sidebar (UX redesign P1): flat items from navConfig', () => {
     window.localStorage.removeItem(SIDEBAR_COLLAPSED_KEY)
   })
 
-  it('a viewer sees 10 items (11 with Ask AI), no Releases and no Admin', () => {
+  it('a viewer sees 10 items (11 with Ask AI): no Releases (D-118: QA engineer and above), no Admin', () => {
     mockPermissions.role = 'VIEWER'
     mockPermissions.canAccessManagement = false
+    mockPermissions.canReadReleases = false
     renderAt('/overview')
     expect(navIds()).toEqual([
       'home', 'inbox', 'runs', 'failures', 'flaky', 'trends', 'suites', 'test-cases', 'reports', 'release-gate',
+    ])
+    expect(screen.queryByRole('link', { name: /Admin/ })).not.toBeInTheDocument()
+  })
+
+  it('a QA engineer sees Releases to read (D-118), and no Admin', () => {
+    mockPermissions.role = 'QA_ENGINEER'
+    mockPermissions.canAccessManagement = false
+    mockPermissions.canReadReleases = true
+    renderAt('/overview')
+    expect(navIds()).toEqual([
+      'home', 'inbox', 'runs', 'failures', 'flaky', 'trends', 'suites', 'test-cases', 'reports', 'release-gate',
+      'releases',
     ])
     expect(screen.queryByRole('link', { name: /Admin/ })).not.toBeInTheDocument()
   })

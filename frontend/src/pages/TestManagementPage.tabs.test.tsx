@@ -71,6 +71,11 @@ vi.mock('@/hooks/useTestLibrary', async () => {
   const mocks = await import('@/test/testLibraryMocks')
   return mocks.testLibraryHookMocks({ health: mocks.LIBRARY_HEALTH_FIXTURE })
 })
+const EMPTY_PLANS = { items: [] as unknown[], total: 0, page: 1, size: 10, pages: 0 }
+const plansMock = vi.hoisted(() => ({
+  data: { items: [] as unknown[], total: 0, page: 1, size: 10, pages: 0 },
+  items: [] as unknown[],
+}))
 vi.mock('@/hooks/useTestManagement', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/hooks/useTestManagement')>(),
   useTestCases: () => ({
@@ -80,7 +85,8 @@ vi.mock('@/hooks/useTestManagement', async (importOriginal) => ({
     mutate: vi.fn(),
   }),
   useAuditLog: () => ({ data: { items: [], total: 0, page: 1, size: 5, pages: 0 } }),
-  useTestPlans: () => ({ data: { items: [], total: 0, page: 1, size: 10, pages: 0 }, isLoading: false, mutate: vi.fn() }),
+  useTestPlans: () => ({ data: plansMock.data, isLoading: false, mutate: vi.fn() }),
+  usePlanItems: () => ({ data: plansMock.items, isLoading: false, mutate: vi.fn() }),
   useUsers: () => ({ data: [] }),
 }))
 
@@ -389,5 +395,78 @@ describe('Test Cases — New Test Case assignee', () => {
       title: 'Refund is idempotent',
       assignee_id: 'u-zoe',
     })
+  })
+})
+
+/**
+ * D-57: the plan floors on the API (`test_management_plans.py`) are TESTER for
+ * every write and QA_ENGINEER for the AI plan. A Viewer is offered none of
+ * them: no AI Create Plan, no New Plan, no status select (a pill instead), no
+ * Link Suite and no execution buttons on an expanded plan.
+ */
+describe('Plans tab controls follow the role (D-57)', () => {
+  const PLAN = {
+    id: 'plan-1', project_id: 'project-1', name: 'Release 4 regression', description: null, objective: null,
+    status: 'draft', planned_start_date: null, planned_end_date: null, actual_start_date: null, actual_end_date: null,
+    created_by_id: null, assigned_to_id: null, ai_generated: false, total_cases: 1, executed_cases: 0,
+    passed_cases: 0, failed_cases: 0, blocked_cases: 0, tags: null,
+    created_at: '2026-09-01T00:00:00Z', updated_at: '2026-09-01T00:00:00Z',
+  }
+  const ITEM = {
+    id: 'item-1', plan_id: 'plan-1', test_case_id: 'case-0001-aaaa', order_index: 0, priority_override: null,
+    execution_status: 'not_run', executed_by_id: null, executed_at: null, execution_notes: null,
+    actual_duration_minutes: null, created_at: '2026-09-01T00:00:00Z', executed_case_version: null,
+  }
+  const signInAs = (role: string) => useAuthStore.setState({ user: { id: role, role } as never })
+
+  afterEach(() => {
+    plansMock.data = { ...EMPTY_PLANS }
+    plansMock.items = []
+  })
+
+  it('a VIEWER sees the empty list with no AI Create Plan and no New Plan', () => {
+    signInAs('VIEWER')
+    renderAt('/test-management?tab=plans')
+    expect(screen.getByText('No test plans')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /AI Create Plan/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: /New Plan/ })).toBeNull()
+  })
+
+  it('a TESTER sees New Plan but not AI Create Plan', () => {
+    signInAs('TESTER')
+    renderAt('/test-management?tab=plans')
+    expect(screen.getAllByRole('button', { name: /New Plan/ }).length).toBeGreaterThan(0)
+    expect(screen.queryByRole('button', { name: /AI Create Plan/ })).toBeNull()
+  })
+
+  it('a QA_ENGINEER sees both', () => {
+    signInAs('QA_ENGINEER')
+    renderAt('/test-management?tab=plans')
+    expect(screen.getByRole('button', { name: /AI Create Plan/ })).toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: /New Plan/ }).length).toBeGreaterThan(0)
+  })
+
+  it('a VIEWER reads a plan status as text and an expanded plan with no Link Suite or execution buttons', () => {
+    signInAs('VIEWER')
+    plansMock.data = { items: [PLAN], total: 1, page: 1, size: 10, pages: 1 }
+    plansMock.items = [ITEM]
+    renderAt('/test-management?tab=plans')
+    expect(screen.getByTestId('plan-status-readonly')).toHaveTextContent('draft')
+    expect(screen.queryByRole('combobox')).toBeNull()
+    fireEvent.click(screen.getByText('Release 4 regression'))
+    expect(screen.getByText('not run')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Link Suite/ })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'passed' })).toBeNull()
+  })
+
+  it('a TESTER gets the status select, Link Suite and the execution buttons (the control)', () => {
+    signInAs('TESTER')
+    plansMock.data = { items: [PLAN], total: 1, page: 1, size: 10, pages: 1 }
+    plansMock.items = [ITEM]
+    renderAt('/test-management?tab=plans')
+    expect(screen.queryByTestId('plan-status-readonly')).toBeNull()
+    fireEvent.click(screen.getByText('Release 4 regression'))
+    expect(screen.getByRole('button', { name: /Link Suite/ })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'passed' })).toBeInTheDocument()
   })
 })

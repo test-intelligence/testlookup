@@ -17,6 +17,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { FailureClusterIntel, Provenance, RunModeSummary, ScoringModel } from '@/services/runIntelligenceService'
 import { releaseCouncilService, type ReleaseCouncilDecision } from '@/services/releaseCouncilService'
 import { useAuthStore } from '@/store/authStore'
+import { resetReportsInTab } from '@/utils/reportOnce'
 
 // ── Mocks ────────────────────────────────────────────────────────────────────
 
@@ -334,6 +335,7 @@ describe('RunIntelligencePage', () => {
     // promise the page attaches `.catch()` to, so resolve by default.
     mockCompleteStep.mockReset()
     mockCompleteStep.mockResolvedValue(undefined)
+    resetReportsInTab()
     mockProjectState.activeProjectId = 'proj-1'
     aiModeState.current = undefined
   })
@@ -357,6 +359,20 @@ describe('RunIntelligencePage', () => {
       // Background bookkeeping: quiet on refusal (the read-only demo answers 403).
       expect(mockCompleteStep).toHaveBeenCalledWith('proj-1', 'view_intelligence', { suppressToast: true })
       expect(mockCompleteStep).toHaveBeenCalledTimes(1)
+    })
+
+    it('sends the step once per project per tab, not on every open (D-32)', () => {
+      mockHooks({ intelligence: structuredClone(MOCK_INTELLIGENCE) })
+      const first = renderPage()
+      first.unmount()
+      renderPage().unmount()
+      expect(mockCompleteStep).toHaveBeenCalledTimes(1)
+
+      // Another project is its own report.
+      mockProjectState.activeProjectId = 'proj-2'
+      renderPage()
+      expect(mockCompleteStep).toHaveBeenCalledTimes(2)
+      expect(mockCompleteStep).toHaveBeenLastCalledWith('proj-2', 'view_intelligence', { suppressToast: true })
     })
 
     it('does not complete the step in All Projects mode (no real project id)', () => {
@@ -977,6 +993,7 @@ describe('RunIntelligenceBody — the page template (P4)', () => {
   beforeEach(() => {
     mockCompleteStep.mockReset()
     mockCompleteStep.mockResolvedValue(undefined)
+    resetReportsInTab()
     mockProjectState.activeProjectId = 'proj-1'
     aiModeState.current = undefined
   })
@@ -1295,6 +1312,7 @@ describe('RunIntelligenceBody — Hold / Approve with conditions / Override (GAT
   beforeEach(() => {
     mockCompleteStep.mockReset()
     mockCompleteStep.mockResolvedValue(undefined)
+    resetReportsInTab()
     mockProjectState.activeProjectId = 'proj-1'
     aiModeState.current = undefined
   })
@@ -1490,6 +1508,7 @@ describe('RunIntelligenceBody — File defect opens inside its failure block, on
     // Self-contained (a `-t` filtered run skips the other describes' setup).
     mockCompleteStep.mockReset()
     mockCompleteStep.mockResolvedValue(undefined)
+    resetReportsInTab()
     mockProjectState.activeProjectId = 'proj-1'
     useAuthStore.setState({ user: { id: 'u', role: 'QA_ENGINEER' } as never })
     defectPromotion.getCandidate.mockReset()

@@ -98,7 +98,10 @@ async def trigger_placeholder_backfill(
             actor_user_id=str(current_user.id),
             error=str(exc),
         )
-        raise HTTPException(status_code=500, detail=f"Failed to queue task: {exc}")
+        raise HTTPException(
+            status_code=503,
+            detail="The task queue is unavailable, so the task was not queued. Check that the worker and Redis are running.",
+        ) from exc
 
 
 @router.post(
@@ -144,7 +147,10 @@ async def trigger_unassigned_failures_backfill(
             actor_user_id=str(current_user.id),
             error=str(exc),
         )
-        raise HTTPException(status_code=500, detail=f"Failed to queue task: {exc}")
+        raise HTTPException(
+            status_code=503,
+            detail="The task queue is unavailable, so the task was not queued. Check that the worker and Redis are running.",
+        ) from exc
 
 
 @router.post(
@@ -180,7 +186,10 @@ async def trigger_drain_active_sessions(
             actor_user_id=str(current_user.id),
             error=str(exc),
         )
-        raise HTTPException(status_code=500, detail=f"Failed to queue task: {exc}")
+        raise HTTPException(
+            status_code=503,
+            detail="The task queue is unavailable, so the task was not queued. Check that the worker and Redis are running.",
+        ) from exc
 
 
 @router.get(

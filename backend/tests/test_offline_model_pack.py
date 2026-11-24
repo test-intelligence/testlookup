@@ -247,7 +247,10 @@ async def test_unreachable_ollama_still_returns_chain_with_rules(monkeypatch):
     llm = _entry(status, "llm")
     assert llm["available"] is False
     assert "unreachable" in llm["reason"]
-    assert "(unreachable)" in llm["reason"]
+    # D-23: the sentence for the code, never the raw code or the internal address.
+    assert svc.PROBE_SENTENCES["unreachable"] in llm["reason"]
+    assert "(unreachable)" not in llm["reason"]
+    assert _BASE_CFG.get("base_url", "http://") not in llm["reason"]
     # An unreachable daemon must NOT be reported as a missing model, and
     # must not hand out a pull recipe that cannot possibly work yet.
     assert "ollama pull" not in llm["reason"].lower()
@@ -323,7 +326,7 @@ async def test_cloud_provider_blocked_by_offline_mode(monkeypatch):
     status = await svc.build_model_status(cfg)
 
     assert status["ollama_reachable"] is False
-    assert "not probed" in status["ollama_error"]
+    assert status["ollama_error"] == "not_used"  # D-23: a code the page turns into a sentence
     assert status["required"] == []          # nothing is required *from Ollama*
     llm = _entry(status, "llm")
     assert llm["available"] is False

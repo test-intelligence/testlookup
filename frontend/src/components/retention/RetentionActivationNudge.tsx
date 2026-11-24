@@ -104,7 +104,8 @@ export default function RetentionActivationNudge({
         <ShieldQuestion className="h-4 w-4 mt-0.5 text-[var(--color-accent)] shrink-0" />
         <div className="flex-1">
           <h2 className="text-sm font-semibold text-[var(--color-text)]">
-            Retention is configured but not running
+            {/* D-75: shown whenever retention is off, configured or not. */}
+            Retention is off
           </h2>
           <p className="mt-1 text-xs text-[var(--color-text-muted)]">
             {projectName} keeps every run, artifact and log indefinitely. Turning

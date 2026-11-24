@@ -47,9 +47,10 @@ describe('navConfig (UX redesign P1)', () => {
     expect(new Set(ids).size).toBe(ids.length)
   })
 
-  it('11 places for a viewer, 13 for a QA lead or admin (with Ask AI; from 31)', () => {
+  it('11 places for a viewer or tester, 12 for a QA engineer (Releases, read-only: D-118), 13 for a QA lead or admin (with Ask AI; from 31)', () => {
     expect(visibleNavItems({ canAccessManagement: false, chatEnabled: true })).toHaveLength(11)
-    expect(visibleNavItems({ canAccessManagement: true, chatEnabled: true }).length + 1).toBe(13)
+    expect(visibleNavItems({ canAccessManagement: false, canReadReleases: true, chatEnabled: true })).toHaveLength(12)
+    expect(visibleNavItems({ canAccessManagement: true, canReadReleases: true, chatEnabled: true }).length + 1).toBe(13)
   })
 
   it('the longest owned prefix wins', () => {

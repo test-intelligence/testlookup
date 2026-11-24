@@ -147,7 +147,7 @@ make quickstart
 
 `make quickstart` writes a development `.env` with random secrets, builds and starts the stack, loads demo projects and uploads the sample reports from `samples/junit/`. It builds every image from source, so allow 10 minutes or more the first time (CI's own build of the three app images takes about 9 minutes). Because it runs in development mode, the login page shows **Quick Login** buttons that need no password; choose **Admin**. To add local models, run `make dev-llm` instead. `make dev-llm` waits for Ollama and pulls the pinned models: `qwen2.5:7b-instruct` (default, Apache-2.0), `qwen2.5:14b-instruct-q5_K_M` and `nomic-embed-text:v1.5`. Download time and inference speed depend on your hardware.
 
-Both options serve the dashboard at [localhost:3000](http://localhost:3000), the in-app guide at `/docs` and the API reference at [localhost:8000/api-docs](http://localhost:8000/api-docs). A step-by-step first run, from sign-in to your own report: [GETTING_STARTED.md](GETTING_STARTED.md).
+Both options serve the dashboard at [localhost:3000](http://localhost:3000), the in-app guide at `/docs` and the API reference at [localhost:3000/api-docs](http://localhost:3000/api-docs). A step-by-step first run, from sign-in to your own report: [GETTING_STARTED.md](GETTING_STARTED.md).
 
 ### Beyond one machine: Kubernetes and OpenShift
 

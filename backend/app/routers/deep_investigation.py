@@ -209,7 +209,15 @@ async def trigger_deep_investigation(
         task = run_agent_pipeline.apply_async(kwargs=kwargs, queue="ai_analysis")
     except Exception as exc:
         logger.error("Failed to queue deep pipeline for run %s: %s", run_id, type(exc).__name__)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+        # S-D-5: the broker's error text names hosts, ports and errno values;
+        # it belongs in the log, not in a QA engineer's toast.
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "The analysis queue is unavailable, so the investigation was not "
+                "started. Check that the worker and Redis are running."
+            ),
+        ) from exc
 
     # Attempt mode (this handler never commits): a dispatch was issued.
     await record_activity(

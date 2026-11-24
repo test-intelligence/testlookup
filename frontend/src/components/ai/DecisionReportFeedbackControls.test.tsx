@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DecisionClaim, DecisionReportVersion } from '@/services/runIntelligenceService'
 import DecisionReportFeedbackControls from './DecisionReportFeedbackControls'
 import { submitDecisionReportFeedback } from '@/services/runIntelligenceService'
+import { useAuthStore } from '@/store/authStore'
 
 vi.mock('@/services/runIntelligenceService', async importOriginal => {
   const actual = await importOriginal<typeof import('@/services/runIntelligenceService')>()
@@ -29,11 +30,20 @@ const claims: DecisionClaim[] = [{
 }]
 
 beforeEach(() => {
+  useAuthStore.setState({ user: { id: 'u1', role: 'QA_ENGINEER' } as never })
   submit.mockReset()
   submit.mockResolvedValue({ feedback_id: 'feedback-1', status: 'recorded', report_id: 'report-1', report_version: 2 })
 })
 
 describe('DecisionReportFeedbackControls', () => {
+  it('offers a viewer the rating but not "Correct a claim"', () => {
+    useAuthStore.setState({ user: { id: 'u2', role: 'VIEWER' } as never })
+    render(<MemoryRouter><DecisionReportFeedbackControls runId="run-1" reportVersion={reportVersion} claims={claims} /></MemoryRouter>)
+    expect(screen.getByRole('button', { name: 'Useful' })).toBeTruthy()
+    expect(screen.queryByText('Correct a claim:')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'claim-1' })).toBeNull()
+  })
+
   it('records utility feedback against the immutable report version', async () => {
     render(<MemoryRouter><DecisionReportFeedbackControls runId="run-1" reportVersion={reportVersion} claims={claims} /></MemoryRouter>)
     fireEvent.click(screen.getByRole('button', { name: 'Useful' }))

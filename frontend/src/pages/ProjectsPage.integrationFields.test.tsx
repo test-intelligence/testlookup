@@ -39,6 +39,9 @@ vi.mock('@/hooks/usePermissions', () => ({
 const toastMock = vi.hoisted(() => Object.assign(vi.fn(), { success: vi.fn(), error: vi.fn() }))
 vi.mock('react-hot-toast', () => ({ default: toastMock }))
 
+// D-81: the New Project form reads offline mode; online here.
+vi.mock('@/hooks/useAIConfig', () => ({ useAIConfig: () => ({ data: { ai_offline_mode: false } }) }))
+
 import ProjectsPage from './ProjectsPage'
 import { projectsService } from '@/services/projectsService'
 import { OCP_NAMESPACE_HELP, SPLUNK_INDEX_HELP } from './projectIntegrationFields'

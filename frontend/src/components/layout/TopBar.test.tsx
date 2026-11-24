@@ -429,19 +429,26 @@ describe('TopBar', () => {
       expect(screen.queryByRole('button', { name: 'Mark all read' })).toBeNull()
     })
 
-    it('a release entry is a link for a QA lead and text for a viewer', () => {
+    it('a release entry is a link for a QA lead', () => {
       mocked.history.logs = [entry('g2', 'Quality gate failed: 2026.10 — test_pay (checkout-e2e) is FAILED', `/releases/${REL}`)]
       mocked.authState.user.role = 'QA_LEAD'
       openBell()
       expect(screen.getByRole('link', { name: /Quality gate failed: 2026\.10/ }).getAttribute('href')).toBe(`/releases/${REL}`)
     })
 
-    it('...and for a viewer the same entry is text', () => {
+    it('...and for a QA engineer, who reads releases (D-118)', () => {
+      mocked.history.logs = [entry('g2', 'Quality gate failed: 2026.10 — test_pay (checkout-e2e) is FAILED', `/releases/${REL}`)]
+      mocked.authState.user.role = 'QA_ENGINEER'
+      openBell()
+      expect(screen.getByRole('link', { name: /Quality gate failed: 2026\.10/ }).getAttribute('href')).toBe(`/releases/${REL}`)
+    })
+
+    it('...but for a viewer the release entry stays text (D-118)', () => {
       mocked.history.logs = [entry('g2', 'Quality gate failed: 2026.10 — test_pay (checkout-e2e) is FAILED', `/releases/${REL}`)]
       mocked.authState.user.role = 'VIEWER'
       openBell()
+      expect(screen.queryByRole('link', { name: /Quality gate failed: 2026\.10/ })).toBeNull()
       expect(screen.getByText(/Quality gate failed: 2026\.10/)).toBeInTheDocument()
-      expect(screen.queryByRole('link', { name: /Quality gate failed/ })).toBeNull()
     })
 
     it.each([

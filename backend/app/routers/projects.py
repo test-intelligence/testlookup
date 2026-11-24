@@ -2,7 +2,7 @@
 import uuid
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import and_, case, false, func, not_, null, select
 from sqlalchemy.orm import aliased
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -490,6 +490,7 @@ async def reset_project_data(
 )
 async def reset_default_qa_lead_password_endpoint(
     project_id: uuid.UUID,
+    response: Response,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
@@ -515,7 +516,29 @@ async def reset_default_qa_lead_password_endpoint(
 
     try:
         # Looked up on the module at call time so a test can replace it.
-        user, password = await default_qa_lead_service.reset_default_qa_lead_password(db, project)
+        user, password = await default_qa_lead_service.reset_default_qa_lead_password(
+            db, project,
+            may_reactivate=(
+                _role_value(current_user) == UserRole.ADMIN.value
+                and _api_key_bound_project(current_user) is None
+            ),
+        )
+    except default_qa_lead_service.DefaultQaLeadProjectArchived as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "This project is archived, so its shared QA-lead account stays "
+                "turned off. Restore the project first, then reset the password."
+            ),
+        ) from exc
+    except default_qa_lead_service.DefaultQaLeadTurnedOff as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "This project's shared QA-lead account is turned off. Only an "
+                "admin can turn it back on, by resetting its password here."
+            ),
+        ) from exc
     except default_qa_lead_service.DefaultQaLeadIsPersonalAccount as exc:
         raise HTTPException(
             status_code=409,
@@ -532,6 +555,8 @@ async def reset_default_qa_lead_password_endpoint(
         target_user_id=user.id, project_id=project.id,
     )
     await db.commit()
+    # D-82: the body carries a one-time password; no cache may keep it.
+    response.headers["Cache-Control"] = "no-store"
     return {
         "user_id": str(user.id),
         "email": user.email,
@@ -539,4 +564,6 @@ async def reset_default_qa_lead_password_endpoint(
         "password": password,
         "project_id": str(project.id),
         "actor_id": str(current_user.id),
+        # S-D-3: the reset re-enables the shared account (archive turned it off).
+        "is_active": bool(getattr(user, "is_active", True)),
     }

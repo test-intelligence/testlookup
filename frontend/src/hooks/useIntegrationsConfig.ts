@@ -9,9 +9,11 @@ import { appSettingsService, type IntegrationsConfigRead } from '@/services/appS
  * viewer gets a 403 here. Callers must treat "we could not read it" as its own
  * state — not as "connected" and not as "disconnected".
  */
-export function useIntegrationsConfig() {
+export function useIntegrationsConfig(enabled = true) {
+  // D-40: a caller below QA lead passes `false`, so no request is made and no
+  // refusal toast ("Requires at least QA_LEAD role") appears on its page.
   const { data, error, isLoading } = useSWR<IntegrationsConfigRead>(
-    'settings/integrations',
+    enabled ? 'settings/integrations' : null,
     () => appSettingsService.getIntegrationsConfig(),
     { revalidateOnFocus: false },
   )

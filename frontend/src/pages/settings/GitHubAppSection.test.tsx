@@ -99,4 +99,14 @@ describe('GitHubAppAdminCard', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save GitHub App' }))
     await waitFor(() => expect(app.putSettings).toHaveBeenCalledWith({ app_id: '4242', slug: 'acme-app', private_key: null, webhook_secret: null }))
   })
+
+  // D-80: a PEM header as the placeholder made the empty field look filled in.
+  it('the empty private-key field shows plain hint text, not a PEM header', async () => {
+    app.getSettings.mockResolvedValue({ app_id: '', slug: '', private_key_set: false, webhook_secret_set: false, configured: false })
+    const { container } = render(<GitHubAppAdminCard />)
+    await screen.findByTestId('github-app-status')
+    const placeholder = container.querySelector('textarea')?.getAttribute('placeholder')
+    expect(placeholder).toBe('Paste the contents of the .pem file')
+    expect(placeholder).not.toMatch(/BEGIN|-----/)
+  })
 })

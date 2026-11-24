@@ -10,7 +10,7 @@ Create Jira Defect
 
 Create a Jira Bug ticket from AI triage analysis output.
 
-Source: [backend/app/routers/integrations.py:30](../../../backend/app/routers/integrations.py#L30).
+Source: [backend/app/routers/integrations.py:32](../../../backend/app/routers/integrations.py#L32).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -24,7 +24,7 @@ Direct handler error branches (dependency/service errors can add others):
 
 ```python
 HTTPException(status_code=404, detail='Test case not found')
-HTTPException(status_code=500, detail=f'Jira API error: {str(e)}')
+HTTPException(status_code=502, detail='Jira did not create the issue. Check the Jira settings and try again; the server log has the details.')
 HTTPException(status_code=503, detail=LEGACY_JIRA_REASON_TEXT[unavailable])
 HTTPException(status_code=503, detail=str(e))
 ```

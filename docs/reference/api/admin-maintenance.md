@@ -17,7 +17,7 @@ the signal to purge that collection could not be seen. Instance admins
 only: the counts span tenants. A cache that cannot be read is a 503, never
 a page of zeros.
 
-Source: [backend/app/routers/admin_maintenance.py:240](../../../backend/app/routers/admin_maintenance.py#L240).
+Source: [backend/app/routers/admin_maintenance.py:249](../../../backend/app/routers/admin_maintenance.py#L249).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -123,7 +123,7 @@ max_runs_per_project: int=500, current_user: User=Depends(get_current_active_use
 Direct handler error branches (dependency/service errors can add others):
 
 ```python
-HTTPException(status_code=500, detail=f'Failed to queue task: {exc}')
+HTTPException(status_code=503, detail='The task queue is unavailable, so the task was not queued. Check that the worker and Redis are running.')
 ```
 
 ### Declared wire contract
@@ -213,7 +213,7 @@ next 15-minute beat tick.
 Idempotent — only writes to NULL rows, only provisions missing
 leads, never over-writes a manual reassignment.
 
-Source: [backend/app/routers/admin_maintenance.py:104](../../../backend/app/routers/admin_maintenance.py#L104).
+Source: [backend/app/routers/admin_maintenance.py:107](../../../backend/app/routers/admin_maintenance.py#L107).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -226,7 +226,7 @@ max_runs_per_project: int=200, current_user: User=Depends(get_current_active_use
 Direct handler error branches (dependency/service errors can add others):
 
 ```python
-HTTPException(status_code=500, detail=f'Failed to queue task: {exc}')
+HTTPException(status_code=503, detail='The task queue is unavailable, so the task was not queued. Check that the worker and Redis are running.')
 ```
 
 ### Declared wire contract
@@ -312,7 +312,7 @@ failed, but never what. Instance admins only -- the entries are
 cross-tenant (run and project ids, error text, sanitized event payloads).
 A store that cannot be read is a 503, never an empty list.
 
-Source: [backend/app/routers/admin_maintenance.py:186](../../../backend/app/routers/admin_maintenance.py#L186).
+Source: [backend/app/routers/admin_maintenance.py:195](../../../backend/app/routers/admin_maintenance.py#L195).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -411,7 +411,7 @@ Normally runs every 30s. Useful when an operator wants to confirm
 the drain is functional after a deploy without waiting for the
 next tick.
 
-Source: [backend/app/routers/admin_maintenance.py:150](../../../backend/app/routers/admin_maintenance.py#L150).
+Source: [backend/app/routers/admin_maintenance.py:156](../../../backend/app/routers/admin_maintenance.py#L156).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -424,7 +424,7 @@ current_user: User=Depends(get_current_active_user)
 Direct handler error branches (dependency/service errors can add others):
 
 ```python
-HTTPException(status_code=500, detail=f'Failed to queue task: {exc}')
+HTTPException(status_code=503, detail='The task queue is unavailable, so the task was not queued. Check that the worker and Redis are running.')
 ```
 
 ### Declared wire contract
@@ -507,7 +507,7 @@ Requeue a stranded N27 intent only after its pipeline is marked failed: a
 pipeline left ``running`` refuses the retry until the stale-pipeline reaper
 (every 10 minutes, after 30) has failed it.
 
-Source: [backend/app/routers/admin_maintenance.py:333](../../../backend/app/routers/admin_maintenance.py#L333).
+Source: [backend/app/routers/admin_maintenance.py:342](../../../backend/app/routers/admin_maintenance.py#L342).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -611,7 +611,7 @@ source changes) — best effort, a Redis error is logged by TYPE and never
 fails the POST. The body is ignored. Reversible until F-W25-2: turning the
 flag back ON at /settings/feature-flags resumes legacy reads and writes.
 
-Source: [backend/app/routers/admin_maintenance.py:607](../../../backend/app/routers/admin_maintenance.py#L607).
+Source: [backend/app/routers/admin_maintenance.py:616](../../../backend/app/routers/admin_maintenance.py#L616).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -700,7 +700,7 @@ ENDS at ``cutover.cut_over_at`` (the 14 UTC days ending on that date, runs
 started before it), so the evidence stays readable and the dates after the
 cutover never read as missed days. Before it the answer is today's.
 
-Source: [backend/app/routers/admin_maintenance.py:469](../../../backend/app/routers/admin_maintenance.py#L469).
+Source: [backend/app/routers/admin_maintenance.py:478](../../../backend/app/routers/admin_maintenance.py#L478).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -777,7 +777,7 @@ than ``RUN_STALE_MINUTES`` ago is still running (read before enqueueing;
 the runner's unique claim is the real guard). 503 when the broker refuses
 the task — its exception TYPE is logged, never echoed.
 
-Source: [backend/app/routers/admin_maintenance.py:566](../../../backend/app/routers/admin_maintenance.py#L566).
+Source: [backend/app/routers/admin_maintenance.py:575](../../../backend/app/routers/admin_maintenance.py#L575).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -860,7 +860,7 @@ One comparison: its counts per reason, the projects with differences and the sam
 
 Project names are resolved at read time (None for a project deleted since).
 
-Source: [backend/app/routers/admin_maintenance.py:507](../../../backend/app/routers/admin_maintenance.py#L507).
+Source: [backend/app/routers/admin_maintenance.py:516](../../../backend/app/routers/admin_maintenance.py#L516).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 

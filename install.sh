@@ -214,7 +214,7 @@ TestLookup is starting. Give it a minute for migrations + health checks, then:
 
   Dashboard : http://localhost:3000
   User docs : http://localhost:3000/docs
-  API ref   : http://localhost:8000/api-docs
+  API ref   : http://localhost:3000/api-docs
 
 First sign-in (created on a new install only; you will be asked to change it):
   Username  : admin

@@ -164,7 +164,7 @@ export function GitHubAppAdminCard() {
           <KeyRound className="h-3 w-3" /> Private key (PEM){data?.private_key_set ? ' — (set); paste a new one to replace it' : ''}
         </span>
         <textarea className={`${input} font-mono h-24`} value={privateKey} onChange={(e) => setPrivateKey(e.target.value)}
-          placeholder="-----BEGIN RSA PRIVATE KEY-----" />
+          placeholder="Paste the contents of the .pem file" />
       </label>
       <label className="text-xs block">
         <span className="text-[var(--color-text-muted)]">Webhook secret{data?.webhook_secret_set ? ' — (set)' : ''}</span>

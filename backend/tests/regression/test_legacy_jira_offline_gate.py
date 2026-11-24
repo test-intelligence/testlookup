@@ -202,8 +202,10 @@ async def test_a_5xx_is_not_re_posted(fake, monkeypatch):
     fake.faults.append({"method": "POST", "path": "/rest/api/3/issue", "status": 500, "times": 3})
     response, _ = await _post(monkeypatch, fake)
 
-    assert response.status_code == 500
-    assert response.json()["detail"].startswith("Jira API error")
+    # S-D-5: a plain sentence; Jira's own reply stays in the server log.
+    assert response.status_code == 502
+    assert response.json()["detail"].startswith("Jira did not create the issue.")
+    assert "500" not in response.json()["detail"]
     assert fake.jira_token not in response.text
     assert len(_creates(fake)) == 1, "a create that may have succeeded must not be sent again"
 

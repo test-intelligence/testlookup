@@ -237,6 +237,10 @@ _SPECS: tuple[ActivityEventSpec, ...] = (
     _spec("run.ingest_failed", "runs", "run", "Ingestion failed for {entity_label}: {error}", "attempt"),
     _spec("run.deleted", "runs", "run", "{entity_label} was deleted", "attempt"),
     _spec("run.release_attached", "runs", "run", "{entity_label} was attached to release {release_name}"),
+    # S-D-6: routers/runs.py set_run_release (POST /runs/{id}/release) on the
+    # request session (outcome: commits with the re-attribution). context:
+    # release_name (new), from_release (the previous primary, or "no release").
+    _spec("run.release_changed", "runs", "run", "{entity_label} moved from {from_release} to release {release_name}"),
     _spec("run.live_started", "runs", "run", "Live run {entity_label} started"),
     _spec("run.live_finalized", "runs", "run", "Live run {entity_label} finalized"),
     _spec("run.live_recovered", "runs", "run", "Live run {entity_label} was recovered", "attempt"),
@@ -476,6 +480,11 @@ _SPECS: tuple[ActivityEventSpec, ...] = (
     # requirement_traceability_service add_link / remove_link (context:
     # requirement_key, link_type).
     _spec("suite.updated", "test_management", "suite", "Suite {entity_label} changed: {changed}"),
+    # D-56 / S-D-6: routers/suites.py link_canonical_to_suite and
+    # bulk_link_canonicals_to_suite, one row per request on the request session
+    # (outcome). Entity = the TARGET suite. context: count, from_suites (the
+    # previous suite names, comma-joined), tests (up to 5 test names).
+    _spec("suite.cases_moved", "test_management", "suite", "{count} test(s) moved to suite {entity_label} from {from_suites}"),
     _spec("test_case.imported", "test_management", "test_library", "Imported {count} test cases from {entity_label}"),
     _spec("test_case.requirement_linked", "test_management", "test_case",
           "Test case {entity_label} linked to {requirement_key}"),

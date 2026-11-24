@@ -25,6 +25,8 @@ export interface DefaultQaLeadResetResponse {
   password: string
   project_id: string
   actor_id: string
+  /** The reset re-enables the shared account (archive turns it off). */
+  is_active?: boolean
 }
 
 export interface ProjectRestoreResult {
@@ -50,9 +52,10 @@ export const projectsService = {
     postData<ProjectResetResponse, ProjectResetRequest>(`/api/v1/projects/${id}/reset`, body),
   /**
    * Reset the password of the project's auto-provisioned default QA-lead
-   * account. Any user with project access can call this — the account is
-   * shared, not personal — and the new password is returned in the body
-   * for the caller to hand off.
+   * account. A QA lead of the project (or an admin) can call this; it also
+   * turns the account back on after a restore, and is refused (409) while the
+   * project is archived. The new password is returned in the body for the
+   * caller to hand off.
    */
   resetDefaultQaLeadPassword: (id: string) =>
     postData<DefaultQaLeadResetResponse, Record<string, never>>(

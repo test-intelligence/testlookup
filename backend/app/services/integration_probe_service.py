@@ -65,6 +65,77 @@ NOT_PROBED_MESSAGE = "Not probed yet. Probe now, or wait for the 15-minute check
 _PROVIDER_LABEL = {"github": "GitHub", "gitlab": "GitLab"}
 _PROBE_TIMEOUT = 10.0
 
+# ── Plain-English failure sentences (D-77) ───────────────────────────────────
+#
+# A probe used to store ``str(exc)[:300]`` as its message, so the health page
+# showed resolver and socket text ("[Errno -3] Temporary failure in name
+# resolution") and, in some exceptions, internal host names. The page shows
+# one of these sentences; the raw exception goes to the server log only.
+
+PROBE_FAILURE_SENTENCES = {
+    "dns": "Can't reach the host: its name does not resolve. Check the address, or that the service is running.",
+    "refused": "Can't reach the host: the connection was refused. Check the address and port, or that the service is running.",
+    "timeout": "Can't reach the host: no answer within the time limit.",
+    "tls": "Can't connect securely to the host: the certificate or TLS settings were not accepted.",
+    "auth": "The host refused the user name or password.",
+    "unreachable": "Can't reach the host. The server log has the details.",
+}
+
+_DNS_MARKERS = (
+    "name resolution", "name or service not known", "nodename nor servname", "getaddrinfo failed",
+    "no address associated", "name does not resolve",
+)
+_REFUSED_MARKERS = ("connection refused", "actively refused", "connect call failed", "all connection attempts failed")
+_TLS_MARKERS = ("ssl", "certificate", "tls")
+_AUTH_MARKERS = ("authentication", "auth failed", "login", "username and password")
+
+
+def _exception_chain_text(exc: BaseException) -> str:
+    parts: list[str] = []
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen and len(parts) < 5:
+        seen.add(id(current))
+        parts.append(f"{type(current).__name__} {current}")
+        current = current.__cause__ or current.__context__
+    return " | ".join(parts).lower()
+
+
+def probe_failure_kind(exc: BaseException) -> str:
+    """One of ``PROBE_FAILURE_SENTENCES``' keys for a probe's exception."""
+    import socket
+
+    import httpx
+
+    chain: list[BaseException] = []
+    current: BaseException | None = exc
+    while current is not None and current not in chain and len(chain) < 5:
+        chain.append(current)
+        current = current.__cause__ or current.__context__
+    if any(isinstance(e, socket.gaierror) for e in chain):
+        return "dns"
+    if any(isinstance(e, (httpx.TimeoutException, asyncio.TimeoutError, TimeoutError)) for e in chain):
+        return "timeout"
+    text = _exception_chain_text(exc)
+    if any(marker in text for marker in _DNS_MARKERS):
+        return "dns"
+    if any(isinstance(e, ConnectionRefusedError) for e in chain) or any(m in text for m in _REFUSED_MARKERS):
+        return "refused"
+    if "timed out" in text or "timeout" in text:
+        return "timeout"
+    if any(marker in text for marker in _AUTH_MARKERS):
+        return "auth"
+    if any(marker in text for marker in _TLS_MARKERS):
+        return "tls"
+    return "unreachable"
+
+
+def probe_failure_sentence(provider: str, exc: BaseException) -> str:
+    """The sentence a health card shows for ``exc``; the raw text is logged here."""
+    kind = probe_failure_kind(exc)
+    logger.warning("integration probe %s failed (%s): %s: %s", provider, kind, type(exc).__name__, exc)
+    return PROBE_FAILURE_SENTENCES[kind]
+
 
 @dataclass
 class ProbeResult:
@@ -160,7 +231,7 @@ async def probe_jira(config: dict | None = None) -> ProbeResult:
     except httpx.TimeoutException:
         return ProbeResult("jira", "timeout", int((time.monotonic() - start) * 1000), "Connection timed out")
     except Exception as exc:
-        return ProbeResult("jira", "down", 0, str(exc)[:300])
+        return ProbeResult("jira", "down", 0, probe_failure_sentence("jira", exc))
 
 
 async def probe_splunk(config: dict | None = None) -> ProbeResult:
@@ -198,7 +269,7 @@ async def probe_splunk(config: dict | None = None) -> ProbeResult:
     except httpx.TimeoutException:
         return ProbeResult("splunk", "timeout", int((time.monotonic() - start) * 1000), "Timed out")
     except Exception as exc:
-        return ProbeResult("splunk", "down", 0, str(exc)[:300])
+        return ProbeResult("splunk", "down", 0, probe_failure_sentence("splunk", exc))
 
 
 async def probe_github(config: dict | None = None) -> ProbeResult:
@@ -232,7 +303,7 @@ async def probe_github(config: dict | None = None) -> ProbeResult:
             return ProbeResult("github", "auth_error", ms, f"HTTP {resp.status_code}", False)
         return ProbeResult("github", "degraded", ms, f"HTTP {resp.status_code}")
     except Exception as exc:
-        return ProbeResult("github", "down", 0, str(exc)[:300])
+        return ProbeResult("github", "down", 0, probe_failure_sentence("github", exc))
 
 
 async def probe_ocp(config: dict | None = None) -> ProbeResult:
@@ -272,7 +343,7 @@ async def probe_ocp(config: dict | None = None) -> ProbeResult:
             return ProbeResult("ocp", "auth_error", ms, f"HTTP {resp.status_code}", False)
         return ProbeResult("ocp", "degraded", ms, f"HTTP {resp.status_code}")
     except Exception as exc:
-        return ProbeResult("ocp", "down", 0, str(exc)[:300])
+        return ProbeResult("ocp", "down", 0, probe_failure_sentence("ocp", exc))
 
 
 async def probe_slack(config: dict | None = None) -> ProbeResult:
@@ -309,7 +380,7 @@ async def probe_slack(config: dict | None = None) -> ProbeResult:
             return ProbeResult("slack", "auth_error", ms, data.get("error", "unknown"), False)
         return ProbeResult("slack", "down", 0, "No bot token or webhook URL configured")
     except Exception as exc:
-        return ProbeResult("slack", "down", 0, str(exc)[:300])
+        return ProbeResult("slack", "down", 0, probe_failure_sentence("slack", exc))
 
 
 async def probe_teams(config: dict | None = None) -> ProbeResult:
@@ -365,8 +436,8 @@ async def probe_smtp() -> ProbeResult:
         return ProbeResult("smtp", "healthy", ms, "SMTP connection successful", auth_valid, True)
     except Exception as exc:
         ms = int((time.monotonic() - start) * 1000)
-        msg = str(exc)[:300]
-        if "auth" in msg.lower() or "login" in msg.lower():
+        msg = probe_failure_sentence("smtp", exc)
+        if msg == PROBE_FAILURE_SENTENCES["auth"]:
             return ProbeResult("smtp", "auth_error", ms, msg, False)
         return ProbeResult("smtp", "down", ms, msg)
 
@@ -377,6 +448,11 @@ async def probe_ollama() -> ProbeResult:
 
     if not settings.AI_OFFLINE_MODE:
         return ProbeResult("ollama", "skipped", message="AI_OFFLINE_MODE=false — using cloud LLM")
+    # D-77: offline mode with another local provider (LM Studio, vLLM, ...) never
+    # calls Ollama, so a failing probe would only add to a failure count.
+    providers = {str(getattr(settings, name, "") or "").strip().lower() for name in ("LLM_PROVIDER", "EMBEDDING_PROVIDER")}
+    if "ollama" not in providers:
+        return ProbeResult("ollama", "skipped", message="Not used: neither the model nor the embeddings run on Ollama.")
 
 
     start = time.monotonic()
@@ -389,7 +465,7 @@ async def probe_ollama() -> ProbeResult:
             return ProbeResult("ollama", "healthy", ms, f"Models: {', '.join(models[:5])}", True, True)
         return ProbeResult("ollama", "degraded", ms, f"HTTP {resp.status_code}")
     except Exception as exc:
-        return ProbeResult("ollama", "down", 0, str(exc)[:300])
+        return ProbeResult("ollama", "down", 0, probe_failure_sentence("ollama", exc))
 
 
 async def probe_chromadb() -> ProbeResult:
@@ -409,7 +485,7 @@ async def probe_chromadb() -> ProbeResult:
             return ProbeResult("chromadb", "healthy", ms, "ChromaDB heartbeat OK", True, True)
         return ProbeResult("chromadb", "degraded", ms, f"HTTP {resp.status_code}")
     except Exception as exc:
-        return ProbeResult("chromadb", "down", 0, str(exc)[:300])
+        return ProbeResult("chromadb", "down", 0, probe_failure_sentence("chromadb", exc))
 
 
 async def probe_prometheus(config: dict | None = None) -> ProbeResult:
@@ -628,7 +704,7 @@ def _exception_outcome(target: _ProjectProbeTarget, exc: BaseException, ms: int,
     if isinstance(exc, httpx.TimeoutException):
         return _project_result(target, "timeout", ms, "Timed out", base=base)
     # The exception text, never a header: the token is not in the URL.
-    return _project_result(target, "down", 0, f"{type(exc).__name__}: {str(exc)[:200]}", base=base)
+    return _project_result(target, "down", 0, probe_failure_sentence(target.provider, exc), base=base)
 
 
 async def probe_github_project(res: "GitHubTargetResolution",

@@ -11,7 +11,8 @@ import {
   X,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
-import CreateJiraIssueModal from '@/components/defects/CreateJiraIssueModal'
+import CreateJiraIssueModal, { jiraUnavailableCopy } from '@/components/defects/CreateJiraIssueModal'
+import { useAIConfig } from '@/hooks/useAIConfig'
 import LoadingSpinner from '@/components/ui/LoadingSpinner'
 import EmptyState from '@/components/ui/EmptyState'
 import { InlineRowSection } from '@/components/ui/inPage/InlineRowSection'
@@ -94,6 +95,12 @@ export function QuarantineBody({
     return requests.filter((r) => allowed.has(r.status))
   }, [requests, view])
 
+  // D-43: offline mode is known before any form opens, from the setting every
+  // role may read (the shell already holds it, so this adds no request). It is
+  // deployment-wide, so it holds for every row, in every project.
+  const { data: aiMode } = useAIConfig()
+  const fileJira = fileJiraOffer(aiMode?.ai_offline_mode === true)
+
   return (
     <section
       data-primary={primary ? '' : undefined}
@@ -156,6 +163,7 @@ export function QuarantineBody({
                     view={view}
                     canAct={hasQaLeadAccess}
                     canFileJira={isQaEngineer}
+                    fileJira={fileJira}
                     onFileJira={(r) => jiraSlot.open(`${r.id}:jira`)}
                     // The counts beside the table are a SEPARATE SWR key and are
                     // on screen at the same time, so approving a row updated the
@@ -185,6 +193,34 @@ export function QuarantineBody({
 
 // ── Rows ───────────────────────────────────────────────────────────────────
 
+interface FileJiraOffer {
+  label: string
+  title: string
+  disabled: boolean
+}
+
+const DEFAULT_FILE_JIRA: FileJiraOffer = {
+  label: 'File Jira',
+  title: 'File a pre-filled Jira issue for this flaky test',
+  disabled: false,
+}
+
+/**
+ * D-43: in offline mode the row does not offer "File Jira": it reads "File
+ * defect", and its tooltip says why. The form then reads the project's own
+ * availability and either sends the defect to the webhook receiver or says why
+ * it cannot. Online: as before (the form still gates a Jira that is turned off
+ * or not set up).
+ */
+function fileJiraOffer(offline: boolean): FileJiraOffer {
+  if (!offline) return DEFAULT_FILE_JIRA
+  return {
+    label: 'File defect',
+    title: `${jiraUnavailableCopy('offline_mode')} The form sends the defect to your webhook receiver when one is set.`,
+    disabled: false,
+  }
+}
+
 type Decision = 'approve' | 'reject' | 'release'
 
 const DECISION: Record<Decision, { notesLabel: string; confirm: string; success: string }> = {
@@ -198,6 +234,7 @@ function QuarantineRow({
   view,
   canAct,
   canFileJira,
+  fileJira = DEFAULT_FILE_JIRA,
   onFileJira,
   onRefresh,
   below,
@@ -207,6 +244,8 @@ function QuarantineRow({
   canAct: boolean
   /** QA_ENGINEER+ — matches the backend guard on the one-click endpoint. */
   canFileJira: boolean
+  /** D-43: the action's label, tooltip and whether it can be used, from the Jira availability probe. */
+  fileJira?: FileJiraOffer
   onFileJira: (row: FlakyQuarantineRead) => void
   onRefresh: () => Promise<unknown>
   /** W27 PAN-04: this row's open form from the table (File Jira), in a full-width row under it. */
@@ -410,12 +449,12 @@ function QuarantineRow({
             // the backend dedups against open defects for the fingerprint.
             <button
               type="button"
-              disabled={busy}
+              disabled={busy || fileJira.disabled}
               onClick={() => onFileJira(row)}
-              title="File a pre-filled Jira issue for this flaky test"
-              className="text-xs text-[var(--color-accent)] hover:underline inline-flex items-center gap-0.5 ml-2"
+              title={fileJira.title}
+              className="text-xs text-[var(--color-accent)] hover:underline inline-flex items-center gap-0.5 ml-2 disabled:opacity-50 disabled:cursor-not-allowed disabled:no-underline"
             >
-              <Bug className="h-3 w-3" /> File Jira
+              <Bug className="h-3 w-3" /> {fileJira.label}
             </button>
           )}
           {view === 'history' && row.reviewer_notes && (

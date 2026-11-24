@@ -120,6 +120,15 @@ const PHASE_STATUS_COLOR: Record<string, string> = {
  */
 const ADMIN_REQUIRED = 'Admin role required'
 
+/** A phase's status as text, for a reader who cannot change it (the select's labels). */
+const PHASE_STATUS_LABELS: Record<string, string> = {
+  pending: 'Pending',
+  in_progress: 'In Progress',
+  completed: 'Completed',
+  skipped: 'Skipped',
+  failed: 'Failed',
+}
+
 /** The list route's URL key for the release open in the pane (W27 PAN-02; see the page). */
 const RELEASE_PANE_PARAM = 'open'
 
@@ -784,6 +793,8 @@ function ReleaseDetailPanel({ releaseId, onEvaluate, evaluating = false, slot, i
             Record incidents and rollbacks so weekly drift checks can compare release decisions with production outcomes.
           </p>
         </div>
+        {/* D-118: every role reads a release; recording an outcome is QA lead (POST /outcomes). */}
+        {isQaLead && (<>
         <label className="block text-xs text-[var(--color-text-secondary)]" htmlFor={`release-outcome-reason-${releaseId}`}>
           Reason
         </label>
@@ -816,6 +827,7 @@ function ReleaseDetailPanel({ releaseId, onEvaluate, evaluating = false, slot, i
             {markingOutcome === 'rollback' ? 'Recording…' : 'Record rollback'}
           </button>
         </div>
+        </>)}
         {(detail.outcomes ?? []).length > 0 && (
           <ul className="divide-y divide-[var(--color-border)] border-t border-[var(--color-border)]">
             {(detail.outcomes ?? []).map(outcome => (
@@ -929,6 +941,11 @@ function ReleaseDetailPanel({ releaseId, onEvaluate, evaluating = false, slot, i
                         {recordingPhaseId === phase.id ? 'Recording…' : 'Record gate verdict'}
                       </button>
                     )}
+                    {!isQaLead ? (
+                      <span className="text-xs text-[var(--color-text-muted)]" data-testid="phase-status-readonly">
+                        {PHASE_STATUS_LABELS[phase.status] ?? phase.status}
+                      </span>
+                    ) : (
                     <select
                       value={phase.status}
                       onChange={e => void updatePhaseStatus(phase, e.target.value)}
@@ -941,6 +958,8 @@ function ReleaseDetailPanel({ releaseId, onEvaluate, evaluating = false, slot, i
                       <option value="skipped">Skipped</option>
                       <option value="failed">Failed</option>
                     </select>
+                    )}
+                    {isQaLead && (
                     <button
                       onClick={() => setConfirmingPhase(phase.id)}
                       disabled={!isAdmin}
@@ -950,6 +969,7 @@ function ReleaseDetailPanel({ releaseId, onEvaluate, evaluating = false, slot, i
                     >
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>
+                    )}
                   </div>
                 </div>
                 {confirmingPhase === phase.id && (
@@ -976,11 +996,13 @@ function ReleaseDetailPanel({ releaseId, onEvaluate, evaluating = false, slot, i
               </Fragment>
             )
           })}
-          <AddPhaseRow
-            releaseId={releaseId}
-            existingPhaseNames={(detail.phases ?? []).map((p: ReleasePhase) => p.name)}
-            onSaved={() => refetch()}
-          />
+          {isQaLead && (
+            <AddPhaseRow
+              releaseId={releaseId}
+              existingPhaseNames={(detail.phases ?? []).map((p: ReleasePhase) => p.name)}
+              onSaved={() => refetch()}
+            />
+          )}
         </div>
       </div>
 
@@ -988,12 +1010,14 @@ function ReleaseDetailPanel({ releaseId, onEvaluate, evaluating = false, slot, i
       <div className="card">
         <div className="flex items-center justify-between mb-3">
           <h3 className="text-sm font-semibold text-[var(--color-text)]">Linked Test Runs ({detail.linked_runs?.length ?? 0})</h3>
-          <button
-            onClick={() => formSlot.open(linkKey)}
-            className="flex items-center gap-1.5 text-xs text-[var(--color-text)] hover:text-[var(--color-text-secondary)] transition-colors"
-          >
-            <Plus className="h-3.5 w-3.5" /> Link Run
-          </button>
+          {isQaLead && (
+            <button
+              onClick={() => formSlot.open(linkKey)}
+              className="flex items-center gap-1.5 text-xs text-[var(--color-text)] hover:text-[var(--color-text-secondary)] transition-colors"
+            >
+              <Plus className="h-3.5 w-3.5" /> Link Run
+            </button>
+          )}
         </div>
         {formSlot.openKey === linkKey && (
           <div className="mb-3">
@@ -1053,6 +1077,7 @@ function ReleaseDetailPanel({ releaseId, onEvaluate, evaluating = false, slot, i
                       <RunRate run={run} />
                     </td>
                     <td className="td text-right">
+                      {isQaLead && (
                       <button
                         onClick={() => unlinkRun(run.id)}
                         disabled={!isAdmin}
@@ -1062,6 +1087,7 @@ function ReleaseDetailPanel({ releaseId, onEvaluate, evaluating = false, slot, i
                       >
                         <Trash2 className="h-3.5 w-3.5" />
                       </button>
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -1609,6 +1635,7 @@ export default function ReleasesPage() {
           <>
             {confirmingDelete === paneRelease.id && <div className="mb-2">{deleteStrip(paneRelease.id)}</div>}
             <div className="flex items-center gap-2" data-release-panel-actions="">
+              {isQaLead && (<>
               <button
                 type="button"
                 onClick={() => openEdit(paneRelease.source)}
@@ -1625,6 +1652,7 @@ export default function ReleasesPage() {
               >
                 <Trash2 className="h-3.5 w-3.5" aria-hidden="true" /> Delete
               </button>
+              </>)}
               <Link
                 to={`/releases/${paneRelease.id}`}
                 onClick={(event) => {
@@ -1735,7 +1763,7 @@ export default function ReleasesPage() {
                   <RefreshCw className="h-4 w-4" aria-hidden="true" /> Sync releases
                 </button>
               )}
-              {!isAllProjects && (
+              {!isAllProjects && isQaLead && (
                 <button
                   onClick={openNew}
                   className="btn-primary inline-flex items-center gap-1.5"
@@ -1886,6 +1914,7 @@ export default function ReleasesPage() {
                           {r.source.description && (
                             <p className="text-sm text-[var(--color-text-muted)] mb-3">{r.source.description}</p>
                           )}
+                          {isQaLead && (
                           <div className="flex justify-end gap-2 mb-3">
                             <button
                               onClick={() => openEdit(r.source)}
@@ -1902,6 +1931,7 @@ export default function ReleasesPage() {
                               Delete
                             </button>
                           </div>
+                          )}
                           {confirmingDelete === r.id && <div className="mb-3">{deleteStrip(r.id)}</div>}
                           {/* Edit opens at the top of the release, under its actions. */}
                           {editFormFor(r.id) && <div className="mb-3">{editFormFor(r.id)}</div>}

@@ -317,9 +317,12 @@ describe('SuiteCasesPage bulk move', () => {
       await screen.findByRole('heading', { name: /Move 2 test cases/i }),
     ).toBeInTheDocument()
 
-    // Submit moves everything to the default candidate (suite-b is the
-    // first non-self target the modal pre-selects).
-    fireEvent.click(screen.getByRole('button', { name: /^Move 2$/ }))
+    // D-56: nothing is pre-selected; the user picks the target and the
+    // button names it.
+    const bulk = screen.getByRole('region', { name: 'Move 2 test cases' })
+    expect(within(bulk).getByRole('button', { name: /^Move 2$/ })).toBeDisabled()
+    fireEvent.change(within(bulk).getByLabelText('Target suite'), { target: { value: 'suite-b' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Move 2 to Regression Suite' }))
 
     await waitFor(() => {
       expect(suitesService.bulkLinkCanonicals).toHaveBeenCalledWith(
@@ -336,8 +339,24 @@ describe('SuiteCasesPage bulk move', () => {
     const row = screen.getByRole('link', { name: 'test_logout' }).closest('tr') as HTMLElement
     fireEvent.click(within(row).getByRole('button', { name: /Move/ }))
     const dialog = await screen.findByRole('region', { name: 'Move test case' })
-    fireEvent.click(within(dialog).getByRole('button', { name: /^Move$/ }))
+    fireEvent.change(within(dialog).getByLabelText('Target suite'), { target: { value: 'suite-b' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Move to Regression Suite' }))
     await waitFor(() => expect(suitesService.linkCanonicalToSuite).toHaveBeenCalledWith('c2', 'suite-b'))
+  })
+
+  it('D-56: a Move form that just opened cannot be submitted by Enter alone', async () => {
+    const { suitesService } = await import('@/services/suitesService')
+    renderPage()
+    const row = screen.getByRole('link', { name: 'test_logout' }).closest('tr') as HTMLElement
+    fireEvent.click(within(row).getByRole('button', { name: /Move/ }))
+    const dialog = await screen.findByRole('region', { name: 'Move test case' })
+    const select = within(dialog).getByLabelText('Target suite') as HTMLSelectElement
+    expect(select.value).toBe('')
+    expect(within(dialog).getByRole('option', { name: 'Choose a suite' })).toBeDisabled()
+    // Enter in the select submits the form natively.
+    fireEvent.submit(select.closest('form') as HTMLFormElement)
+    expect(suitesService.linkCanonicalToSuite).not.toHaveBeenCalled()
+    expect(within(dialog).getByRole('button', { name: /^Move$/ })).toBeDisabled()
   })
 
   it('the bulk bar belongs to the Tests tab: another tab hides it, Tests brings it back', () => {

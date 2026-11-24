@@ -225,6 +225,12 @@ def test_the_release_env_keeps_the_secure_defaults(tmp_path: Path):
     assert len(env["INITIAL_ADMIN_PASSWORD"]) >= 16
     bad = [k for k in _REQUIRED if k not in env or _is_placeholder(env[k])]
     assert not bad, f"missing/placeholder secrets: {bad}"
+    # S-D-9: the release install runs production from this file, so its banner
+    # must not tell the operator not to use it in production.
+    text = (tmp_path / ".env").read_text(encoding="utf-8")
+    assert "DO NOT use this file in production" not in text
+    assert "LOCAL / DEMO" not in text
+    assert text.startswith("# ----") and "keep it private" in text
 
 
 def test_the_release_stack_creates_the_first_admin_once():

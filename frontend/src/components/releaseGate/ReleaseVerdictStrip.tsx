@@ -13,6 +13,7 @@ import { Link } from 'react-router-dom'
 import { Shield } from 'lucide-react'
 
 import { useReleases } from '@/hooks/useReleases'
+import { usePermissions } from '@/hooks/usePermissions'
 import { decisionLabel } from '@/components/ui/statusVocabulary'
 import { decidedAgo } from '@/services/digestService'
 import type { ReleaseGateDetail } from '@/types/releases'
@@ -39,6 +40,8 @@ export function gateWords(gate: ReleaseGateDetail | null): string {
 
 export default function ReleaseVerdictStrip({ releaseId, gate, error }: ReleaseVerdictStripProps) {
   const { data: releases } = useReleases(undefined, { cached: true })
+  // D-118: the release page opens for a QA engineer and above.
+  const { canReadReleases } = usePermissions()
   const name = releases?.items?.find((release) => release.id === releaseId)?.name ?? null
   const scope = name ? `Release ${name} (top bar)` : 'The top-bar release'
   const verdict = error ? GATE_LOAD_ERROR : gate === undefined ? null : `release gate: ${gateWords(gate)}`
@@ -49,9 +52,11 @@ export default function ReleaseVerdictStrip({ releaseId, gate, error }: ReleaseV
         <span className="font-medium text-[var(--color-text)]">{scope}</span>
         {verdict && <> · {verdict}</>}
       </span>
-      <Link to={`/releases/${releaseId}#gate`} className="font-medium text-[var(--color-accent)] hover:underline">
-        Open release →
-      </Link>
+      {canReadReleases && (
+        <Link to={`/releases/${releaseId}#gate`} className="font-medium text-[var(--color-accent)] hover:underline">
+          Open release →
+        </Link>
+      )}
     </div>
   )
 }

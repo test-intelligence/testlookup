@@ -81,9 +81,10 @@ async def test_trigger_drain_active_live_sessions_queues_celery_task():
 
 
 @pytest.mark.asyncio
-async def test_dispatch_failure_returns_500_not_silent_success():
+async def test_dispatch_failure_returns_503_not_silent_success():
     """A broken Celery broker must not produce ``queued=True`` —
-    operators need the failure surfaced loud."""
+    operators need the failure surfaced loud. S-D-5: as a plain sentence;
+    the broker's own text stays in the log."""
     from app.routers.admin_maintenance import trigger_placeholder_backfill
     from fastapi import HTTPException
 
@@ -93,5 +94,6 @@ async def test_dispatch_failure_returns_500_not_silent_success():
             await trigger_placeholder_backfill(
                 max_runs_per_project=500, current_user=_admin(),
             )
-    assert exc.value.status_code == 500
-    assert "broker down" in exc.value.detail
+    assert exc.value.status_code == 503
+    assert "broker down" not in exc.value.detail
+    assert "task queue is unavailable" in exc.value.detail

@@ -203,7 +203,10 @@ describe('CreateJiraIssueModal', () => {
     expect(jiraRadio).toBeDisabled()
     expect(jiraRadio).toHaveAttribute('title', jiraUnavailableCopy('offline_mode'))
     expect(screen.getByRole('radio', { name: 'Webhook event' })).toHaveAttribute('aria-checked', 'true')
-    expect(screen.getAllByText(/AI_OFFLINE_MODE is on/).length).toBeGreaterThan(0)
+    expect(screen.getAllByText(/Offline mode is on, so nothing is sent to Jira/).length).toBeGreaterThan(0)
+    // D-48: plain words, not the environment variable's name.
+    expect(jiraUnavailableCopy('offline_mode')).not.toContain('AI_OFFLINE_MODE')
+    expect(jiraUnavailableCopy('jira_http_503')).toBe('Jira is unavailable right now.')
 
     fireEvent.click(screen.getByRole('button', { name: 'Emit webhook event' }))
     await waitFor(() => expect(defectJiraService.create).toHaveBeenCalledTimes(1))

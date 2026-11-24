@@ -304,6 +304,32 @@ async def update_transition_policy(
     )
 
 
+#: The dispatcher's plain refusals (``manager._dispatch_to_channel``), safe to
+#: show as they are. Anything else it returns is an exception's text.
+_PLAIN_TEST_FAILURES = frozenset({
+    "No email address available",
+    "SMTP is not configured — no email was sent",
+    "No Slack webhook URL configured",
+    "No Teams webhook URL configured",
+})
+
+
+def notification_test_failure_sentence(error: str | None) -> str:
+    """S-D-5: the sentence a failed test notification shows the user."""
+    if error in _PLAIN_TEST_FAILURES:
+        return f"Test notification failed: {error}."
+    if (error or "").startswith("AI_OFFLINE_MODE"):
+        return (
+            "Test notification failed: offline mode is on and this destination is "
+            "not on the allowed list, so nothing was sent. Ask an administrator "
+            "which destinations are allowed."
+        )
+    return (
+        "Test notification failed: the message could not be delivered. Check the "
+        "address or webhook URL and try again; the server log has the details."
+    )
+
+
 @router.post("/test")
 async def send_test(
     payload: TestNotificationRequest,
@@ -323,9 +349,16 @@ async def send_test(
     )
 
     if status_str == "failed":
+        # S-D-5: the dispatcher's own sentences ("No Slack webhook URL
+        # configured") are for the user; an exception's text (an SMTP reply, a
+        # socket errno, an internal host) is for the log only.
+        logger.warning(
+            "test_notification_failed channel=%s user_id=%s error=%s",
+            payload.channel, current_user.id, error,
+        )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Test notification failed: {error}",
+            detail=notification_test_failure_sentence(error),
         )
 
     return {"status": "sent", "channel": payload.channel}

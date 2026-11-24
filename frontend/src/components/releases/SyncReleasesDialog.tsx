@@ -24,6 +24,11 @@ import type { InlineSlot } from '@/components/ui/inPage/useInlineSlot'
 import { releasesService } from '@/services/releasesService'
 import { gitlabIntegrationService } from '@/services/gitlabIntegrationService'
 import { extractErrorMessage } from '@/services/apiErrors'
+import { useAIConfig } from '@/hooks/useAIConfig'
+
+/** D-114: said before Sync is pressed, not only in the 503 after it. */
+export const SYNC_OFFLINE_COPY =
+  'Offline mode is on, so releases cannot be synced from GitHub, GitLab or Jira. An administrator can turn offline mode off in Settings › AI.'
 
 export interface SyncReleasesDialogProps {
   projectId: string
@@ -50,6 +55,9 @@ export default function SyncReleasesDialog({ projectId, onClose, onDone, slot }:
   const [failure, setFailure] = useState<SyncFailure | null>(null)
   // W19 INT-05: GitLab is offered only when the project has a GitLab integration (a 404 = none).
   const [hasGitLab, setHasGitLab] = useState(false)
+  // Every role may read the effective offline ceiling (GET /settings/ai/mode).
+  const { data: aiMode } = useAIConfig()
+  const offline = aiMode?.ai_offline_mode === true
   useEffect(() => {
     let live = true
     gitlabIntegrationService.get(projectId).then(() => { if (live) setHasGitLab(true) }).catch(() => { if (live) setHasGitLab(false) })
@@ -104,7 +112,8 @@ export default function SyncReleasesDialog({ projectId, onClose, onDone, slot }:
           <button
             type="button"
             onClick={() => void sync()}
-            disabled={busy}
+            disabled={busy || offline}
+            title={offline ? SYNC_OFFLINE_COPY : undefined}
             className="btn-primary flex items-center gap-2"
           >
             {busy && <LoadingSpinner size="sm" />}
@@ -117,6 +126,11 @@ export default function SyncReleasesDialog({ projectId, onClose, onDone, slot }:
         <p className="text-sm text-[var(--color-text-muted)] mb-4">
           Pulls release names and links from the source. Phases, gate policy and run attribution stay in TestLookup.
         </p>
+        {offline && (
+          <p data-sync-offline="" className="mb-4 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-secondary)] px-3 py-2 text-sm text-[var(--color-text)]">
+            {SYNC_OFFLINE_COPY}
+          </p>
+        )}
         <fieldset className="space-y-2" disabled={busy}>
           <legend className="sr-only">Source</legend>
           <label className="flex items-center gap-2 text-sm text-[var(--color-text)]">

@@ -25,6 +25,7 @@ from app.models.postgres import (
     TestCase,
     TestCaseAuditLog,
     TestRun,
+    User,
 )
 
 from app.services.redaction_service import redact_dict, redact_value  # noqa: F401
@@ -199,7 +200,46 @@ async def query_unified_audit(
     # Newest first across the sources; equal times in a fixed order (source, then row id).
     collected.sort(key=lambda entry: entry[:3], reverse=True)
     start = (page - 1) * page_size
-    return {"total": total, "items": [entry[3] for entry in collected[start:start + page_size]]}
+    items = [entry[3] for entry in collected[start:start + page_size]]
+    await _name_actors_consistently(db, items)
+    return {"total": total, "items": items}
+
+
+async def _name_actors_consistently(db: AsyncSession, items: list[dict]) -> None:
+    """D-78: one person reads the same on every row.
+
+    Each audit writer snapshots a different attribute (``username`` for access,
+    ``username or full_name`` for settings, ``full_name or username`` for test
+    management), so one person read "priya.nair" on one row and "Priya Nair"
+    on the next. A live account's rows now show its current ``full_name or
+    username``. The stored snapshot is kept beside it as
+    ``actor_name_recorded``, and an erased or deleted account keeps the stored
+    name (the compliance purpose this view is kept for; see
+    ``tests/test_erased_actor_projection.py``).
+    """
+    ids: set[uuid.UUID] = set()
+    for item in items:
+        item.setdefault("actor_name_recorded", item.get("actor_name"))
+        raw = item.get("actor_id")
+        if raw:
+            try:
+                ids.add(uuid.UUID(str(raw)))
+            except ValueError:
+                continue
+    if not ids:
+        return
+    rows = (
+        await db.execute(
+            select(User.id, User.full_name, User.username).where(
+                User.id.in_(ids), User.erased_at.is_(None)
+            )
+        )
+    ).all()
+    names = {str(row[0]): (row[1] or row[2]) for row in rows if (row[1] or row[2])}
+    for item in items:
+        current = names.get(str(item.get("actor_id") or ""))
+        if current:
+            item["actor_name"] = current
 
 
 # ── Tenant-scoped observability ──────────────────────────────────────────────

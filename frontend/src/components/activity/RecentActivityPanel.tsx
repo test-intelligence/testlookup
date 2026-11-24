@@ -3,6 +3,7 @@ import { Activity as ActivityIcon } from 'lucide-react'
 import ActivityRow from '@/components/activity/ActivityRow'
 import ScopedLink from '@/components/ui/ScopedLink'
 import { useActivityFeed } from '@/hooks/useActivityFeed'
+import { usePermissions } from '@/hooks/usePermissions'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 
 /**
@@ -15,6 +16,7 @@ import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
  */
 export default function RecentActivityPanel({ days = 30 }: { days?: number }) {
   const activeProjectId = useProjectStore(s => s.activeProjectId)
+  const { canAccessManagement } = usePermissions()
   const isAllProjects =
     activeProjectId === ALL_PROJECTS_ID || activeProjectId === null
 
@@ -57,12 +59,16 @@ export default function RecentActivityPanel({ days = 30 }: { days?: number }) {
             renders when a project is pinned, but relying on that would make
             the guarantee depend on reading this component rather than on the
             registry every other link already asks. */}
-        <ScopedLink
-          to="/activity"
-          className="text-2xs text-[var(--color-accent)] hover:underline"
-        >
-          View all
-        </ScopedLink>
+        {/* S-D-8: /activity is a QA lead's page (a management route); anyone
+            else would be sent home with no word, so they get no link. */}
+        {canAccessManagement && (
+          <ScopedLink
+            to="/activity"
+            className="text-2xs text-[var(--color-accent)] hover:underline"
+          >
+            View all
+          </ScopedLink>
+        )}
       </div>
 
       <div className="mt-3">

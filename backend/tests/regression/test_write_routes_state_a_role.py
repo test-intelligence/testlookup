@@ -66,11 +66,8 @@ NO_ROLE_MINIMUM: frozenset[tuple[str, str]] = frozenset({
     ("POST", "/api/v1/onboarding/track"),
     ("POST", "/api/v1/onboarding/{project_id}/complete"),
     ("POST", "/api/v1/onboarding/{project_id}/detect"),
-    ("POST", "/api/v1/onboarding/{project_id}/restore"),
-    ("POST", "/api/v1/onboarding/{project_id}/skip"),
     ("POST", "/api/v1/project-data-jobs/{data_job_id}/download-ticket"),
     ("POST", "/api/v1/projects/{project_id}/attribution-rules/preview"),
-    ("POST", "/api/v1/projects/{project_id}/fix-outcomes"),
     ("POST", "/api/v1/projects/{project_id}/ownership/source-roots/preview"),
     ("POST", "/api/v1/projects/{project_id}/workflows/{workflow_id}/validate"),
     ("DELETE", "/api/v1/reports/share-links/{link_id}"),
@@ -131,7 +128,7 @@ def test_every_write_route_states_a_role_or_is_reviewed():
 
 
 def test_the_reviewed_list_only_shrinks():
-    assert len(NO_ROLE_MINIMUM) <= 52, "NO_ROLE_MINIMUM grew. Give the new route a role instead."
+    assert len(NO_ROLE_MINIMUM) <= 49, "NO_ROLE_MINIMUM grew. Give the new route a role instead."
 
 
 def test_the_scan_sees_a_route_without_a_role_and_passes_one_with_it():

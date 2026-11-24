@@ -24,7 +24,7 @@ import { expect, test, type Page } from '@playwright/test'
 import { answerConfirm, opened } from '../lib/inPage'
 import { openProductionPage } from '../lib/production-pages'
 import { assertHermetic, networkQuiet, openRollout, requestsTo } from '../lib/rollout'
-import { NOW, PROJECT_ID, SECOND_SUITE_ID, SUITE, SUITE_ID } from '../visual/production/fixtures'
+import { NOW, PROJECT_ID, SUITE, SUITE_ID } from '../visual/production/fixtures'
 import { LEGACY_SUITE_ID, LEGACY_SUITE_NAME, suitesInPageWorld } from '../visual/production/fixtures-in-page-b'
 import { ADMIN, QA_ENGINEER, VIEWER } from '../visual/production/fixtures-releases'
 
@@ -161,8 +161,10 @@ test('L18 a row\'s Move: Cancel sends nothing; a target suite → the link POST,
   await expect(form).toBeVisible()
   await expect(form.getByText('AuthSpec :: token refresh')).toBeVisible()
   const target = form.getByLabel('Target suite')
-  await expect(target, 'the first other suite is preselected').toHaveValue(SECOND_SUITE_ID)
-  await expect(target.locator('option')).toHaveText(['All Tests (default)', LEGACY_SUITE_NAME])
+  // D-56: no suite is chosen for the reader, so Enter alone cannot move a case.
+  await expect(target, 'no target is preselected').toHaveValue('')
+  await expect(target.locator('option')).toHaveText(['Choose a suite', 'All Tests (default)', LEGACY_SUITE_NAME])
+  await expect(form.getByRole('button', { name: 'Move', exact: true })).toBeDisabled()
   await form.getByRole('button', { name: 'Cancel' }).click()
   await expect(form).toHaveCount(0)
   await networkQuiet(page, api)
@@ -173,7 +175,7 @@ test('L18 a row\'s Move: Cancel sends nothing; a target suite → the link POST,
   await move()
   form = opened(page, 'Move test case')
   await form.getByLabel('Target suite').selectOption(LEGACY_SUITE_ID)
-  await form.getByRole('button', { name: 'Move', exact: true }).click()
+  await form.getByRole('button', { name: `Move to ${LEGACY_SUITE_NAME}`, exact: true }).click()
   await expect(form).toHaveCount(0)
   await expect(page.getByText(`Moved "token refresh" to ${LEGACY_SUITE_NAME}`, { exact: true })).toBeVisible()
   await networkQuiet(page, api)
@@ -197,7 +199,7 @@ test('L19 two selected → the bar\'s Move: Cancel sends nothing; Move 2 → the
   let form = opened(page, 'Move 2 test cases')
   await expect(form).toBeVisible()
   await expect(form.getByText('All selected cases will be moved to the target suite within the same project.')).toBeVisible()
-  await expect(form.getByLabel('Target suite')).toHaveValue(SECOND_SUITE_ID)
+  await expect(form.getByLabel('Target suite'), 'D-56: no target is preselected').toHaveValue('')
   await form.getByRole('button', { name: 'Cancel' }).click()
   await expect(form).toHaveCount(0)
   await expect(bar, 'Cancel keeps the selection').toContainText('2 selected')
@@ -208,7 +210,7 @@ test('L19 two selected → the bar\'s Move: Cancel sends nothing; Move 2 → the
   await bar.getByRole('button', { name: 'Move', exact: true }).click()
   form = opened(page, 'Move 2 test cases')
   await form.getByLabel('Target suite').selectOption(LEGACY_SUITE_ID)
-  await form.getByRole('button', { name: 'Move 2', exact: true }).click()
+  await form.getByRole('button', { name: `Move 2 to ${LEGACY_SUITE_NAME}`, exact: true }).click()
   await expect(form).toHaveCount(0)
   await expect(page.getByText(`Moved 2 of 2 to ${LEGACY_SUITE_NAME}`, { exact: true })).toBeVisible()
   await expect(bar, 'the selection is cleared').toHaveCount(0)

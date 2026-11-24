@@ -15,8 +15,8 @@
  *    (AI_OFFLINE_MODE)`) as three typed, editable rows; a renamed row and **Create 3 phases** send ONE bulk request
  *    whose phases are the edited rows and whose `source` is the draft's; the phases are listed, toast
  *    `Created 3 phases from the draft.`;
- *  - a QA ENGINEER never reaches the controls: `/releases` is a management route and sends them to `/overview`, and
- *    nothing of it is asked or written;
+ *  - a QA ENGINEER reads `/releases` (D-118) with the callout's text and none of its controls, and nothing is
+ *    written;
  *  - `#main-content` never scrolls sideways; the callout row's numbers are printed (`INPAGE`).
  *
  * Harness: `tests/lib/rollout.ts` (fail closed, pinned clock). Fixtures: `fixtures-release-planning.ts`.
@@ -24,9 +24,8 @@
 import { expect, test, type Locator, type Page } from '@playwright/test'
 import { expectNoOverlay, watchNativeDialogs } from '../lib/inPage'
 import { boxOf, expectMainFits, inPageLine } from '../lib/inPageGeometry'
-import { assertHermetic, freezeClock, mockApi, seedSession, stillMotion, watchPageErrors } from '../lib/production-pages'
+import { assertHermetic } from '../lib/production-pages'
 import { networkQuiet, openRollout, requestsTo } from '../lib/rollout'
-import { NOW, OVERVIEW_ON, PROJECT_ID } from '../visual/production/fixtures'
 import {
   CLONE_SHIFT_DAYS,
   CLONE_FIRST_START,
@@ -192,19 +191,15 @@ for (const width of [1280, 1440]) {
   })
 }
 
-test('a QA ENGINEER never reaches the planning controls: /releases sends them to /overview, nothing of it is asked', async ({ page }) => {
+test('a QA ENGINEER reads the planning release with no planning control (D-118), nothing is written', async ({ page }) => {
   const world = releasePlanningWorld()
-  const errors = watchPageErrors(page)
-  await seedSession(page, { theme: 'signal', user: QA_ENGINEER, projectId: PROJECT_ID })
-  await freezeClock(page, NOW)
-  await stillMotion(page)
-  const api = await mockApi(page, QA_ENGINEER, [...world.handlers.filter(([, , verb]) => verb && verb !== 'GET'), ...OVERVIEW_ON])
   await page.setViewportSize({ width: 1280, height: 1000 })
-  await page.goto('/releases')
-  await expect(page).toHaveURL(/\/overview(\?|$)/)
-  await expect(page.getByRole('heading', { level: 1, name: 'Dashboard' })).toBeVisible({ timeout: 20_000 })
-  for (const name of PLAN_BUTTONS) await expect(page.getByRole('button', { name, exact: true })).toHaveCount(0)
+  const { api, errors } = await openRollout(page, '/releases', { handlers: world.handlers, ready, user: QA_ENGINEER })
   await networkQuiet(page, api)
+  const planned = card(page, '2026.12')
+  // The callout's text stays (it says what is missing); its two buttons are a QA lead's.
+  await expect(planned.getByText('No phases scoped yet')).toBeVisible()
+  for (const name of PLAN_BUTTONS) await expect(page.getByRole('button', { name, exact: true })).toHaveCount(0)
   expect(world.writes).toEqual([])
   expect(world.drafts).toEqual([])
   assertHermetic(api, errors)

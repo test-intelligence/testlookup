@@ -134,6 +134,15 @@ async function submitPassword() {
   fireEvent.click(screen.getByRole('button', { name: /log in/i }))
 }
 
+describe('LoginPage — the empty password field (D-130)', () => {
+  it('does not use bullets as its placeholder, so an empty field does not look filled in', () => {
+    renderPage()
+    const field = screen.getByLabelText(/^password$/i)
+    expect(field).toHaveValue('')
+    expect(field.getAttribute('placeholder') ?? '').not.toMatch(/[•*]/)
+  })
+})
+
 describe('LoginPage — three-way login response routing', () => {
   beforeEach(() => {
     vi.clearAllMocks()

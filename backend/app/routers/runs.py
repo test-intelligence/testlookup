@@ -759,7 +759,11 @@ async def set_run_release(
 
     from app.services.release_linker import auto_link_release
 
-    from app.models.postgres import LinkSource, ReleaseTestRunLink
+    from app.models.postgres import LinkSource, Release, ReleaseTestRunLink
+
+    # S-D-6: remember which release the run counted for before, so the
+    # activity row can say "moved from A to B".
+    previous_release_id = getattr(run, "primary_release_id", None)
 
     release, created = await auto_link_release(
         db=db,
@@ -801,6 +805,31 @@ async def set_run_release(
     from app.services.release_linker import sync_primary_release
 
     await sync_primary_release(db, run.id)
+    # S-D-6: re-attributing a run changes what every release-scoped analytic
+    # reads, so it must leave a trace of who did it (outcome mode: the row
+    # commits with the change or not at all).
+    if previous_release_id != release.id:
+        from_release = "no release"
+        if previous_release_id is not None:
+            previous_name = (
+                await db.execute(select(Release.name).where(Release.id == previous_release_id))
+            ).scalar_one_or_none()
+            if previous_name:
+                from_release = f"release {previous_name}"
+        from app.services.activity.service import ActorRef, record as record_activity
+
+        await record_activity(
+            db,
+            project_id=run.project_id,
+            event_type="run.release_changed",
+            actor=ActorRef.from_user(current_user),
+            entity_id=run.id,
+            entity_label=f"Build {getattr(run, 'build_number', None) or str(run.id)[:8]}",
+            release_id=release.id,
+            before={"release_id": str(previous_release_id) if previous_release_id else None},
+            after={"release_id": str(release.id)},
+            context={"release_name": release.name, "from_release": from_release},
+        )
     await db.commit()
     # VIZ-212: release-scoped analytics just re-attributed this run.
     from app.services.cache_service import bump_analytics_epoch

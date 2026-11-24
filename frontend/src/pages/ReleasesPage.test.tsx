@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import ReleasesPage from './ReleasesPage'
 import { releasesService } from '@/services/releasesService'
@@ -54,6 +54,9 @@ vi.mock('@/store/projectStore', () => ({
   useProjectStore: vi.fn((selector: (state: typeof projectStoreState) => unknown) =>
     selector(projectStoreState)),
 }))
+
+const signInAsLead = () => useAuthStore.setState({ user: { id: 'lead', role: 'QA_LEAD' } as never })
+afterEach(() => useAuthStore.setState({ user: null }))
 
 describe('ReleasesPage', () => {
   beforeEach(() => {
@@ -271,6 +274,8 @@ describe('ReleasesPage', () => {
   })
 
   it('records a reasoned incident from the release side panel', async () => {
+    // D-118: every role opens the page; its write controls are a QA lead's.
+    signInAsLead()
     const { useRelease, useReleases } = await import('@/hooks/useReleases')
     const { useRuns } = await import('@/hooks/useRuns')
     const refetch = vi.fn()
@@ -483,6 +488,8 @@ describe('ReleasesPage — the release detail in a side panel (P5)', () => {
   })
 
   it('links to the full page and offers Edit and Delete in its footer', () => {
+    // D-118: every role opens the page; its write controls are a QA lead's.
+    signInAsLead()
     renderAt('/releases')
     fireEvent.click(card(/^Checkout 2\.5 2\.5\.0/))
     const panel = screen.getByRole('complementary', { name: 'Checkout 2.5 2.5.0' })
@@ -502,6 +509,8 @@ describe('ReleasesPage — the release detail in a side panel (P5)', () => {
   })
 
   it('renders the detail as the page itself on /releases/:releaseId, with no panel', () => {
+    // D-118: every role opens the page; its write controls are a QA lead's.
+    signInAsLead()
     const { container } = renderAt('/releases/release-1')
     expect(screen.queryByRole('complementary')).not.toBeInTheDocument()
     const primary = container.querySelector('[data-primary]') as HTMLElement
@@ -514,6 +523,8 @@ describe('ReleasesPage — the release detail in a side panel (P5)', () => {
   })
 
   it('has a compact header with its help topic, the List | Calendar toggle, New release and the ⋯ menu', () => {
+    // D-118: every role opens the page; its write controls are a QA lead's.
+    signInAsLead()
     const { container } = renderAt('/releases')
     const header = container.querySelector('[data-page-header]') as HTMLElement
     expect(header).toHaveAttribute('data-compact', 'true')
@@ -523,9 +534,9 @@ describe('ReleasesPage — the release detail in a side panel (P5)', () => {
     expect(within(header).getByRole('button', { name: 'List' })).toHaveAttribute('aria-pressed', 'true')
     expect(within(header).getByRole('button', { name: 'Calendar' })).toHaveAttribute('aria-pressed', 'false')
     expect(screen.queryByText('(planned)')).not.toBeInTheDocument()
-    // help + List + Calendar + New release + ⋯ (Sync releases is a QA lead's)
+    // help + List + Calendar + Sync releases + New release + ⋯ (a QA lead's header)
     expect(within(header).getAllByRole('button').map(b => b.getAttribute('aria-label') ?? b.textContent?.trim()))
-      .toEqual(['Help: Releases', 'List', 'Calendar', 'New release', 'More actions'])
+      .toEqual(['Help: Releases', 'List', 'Calendar', 'Sync releases', 'New release', 'More actions'])
   })
 
   it('says a planned release with no phases is scoped from its detail; a QA lead may copy or draft its phases', () => {

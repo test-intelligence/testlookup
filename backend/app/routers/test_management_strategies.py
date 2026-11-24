@@ -54,16 +54,15 @@ async def list_strategies(
     # project skipped it entirely — the guard fired only where there was
     # nothing to guard. Third recurrence of the class (F-033 digests, F-040
     # chat). ``resolve_project_scope`` 403s a non-admin naming a project they
-    # do not belong to; the empty return below preserves today's behaviour for
-    # a non-admin who names no project at all.
+    # do not belong to. A non-admin who names no project (All Projects) reads
+    # the strategies of the projects they belong to (S-D-4: this used to
+    # answer an empty list for every non-admin).
     from app.core.deps import resolve_project_scope  # noqa: PLC0415
 
     scoped_project_id, allowed = await resolve_project_scope(
         db, current_user, str(project_id) if project_id else None
     )
-    if scoped_project_id is None and allowed is not None:
-        return []
-    strategies = await list_strategy_models(db, project_id)
+    strategies = await list_strategy_models(db, scoped_project_id, allowed_project_ids=allowed)
     return [row(strategy, TestStrategyResponse) for strategy in strategies]
 
 

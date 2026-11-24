@@ -44,7 +44,8 @@ vi.mock('@/services/appSettingsService', () => ({
   },
 }))
 
-vi.mock('@/hooks/usePermissions', () => ({ usePermissions: () => ({ isAdmin: true }) }))
+const perms = vi.hoisted(() => ({ isAdmin: true }))
+vi.mock('@/hooks/usePermissions', () => ({ usePermissions: () => ({ isAdmin: perms.isAdmin }) }))
 
 const mockToastSuccess = vi.fn()
 const mockToastError = vi.fn()
@@ -176,7 +177,7 @@ function missingModelStatus(): AIModelStatusRead {
 function unreachableStatus(): AIModelStatusRead {
   return healthyStatus({
     ollama_reachable: false,
-    ollama_error: 'All connection attempts failed',
+    ollama_error: 'unreachable',
     installed_models: [],
     required: [
       { name: 'qwen2.5:7b', purpose: 'llm', present: false, remedy: null },
@@ -188,7 +189,7 @@ function unreachableStatus(): AIModelStatusRead {
         mode: 'llm',
         available: false,
         reason:
-          'Ollama is unreachable at http://ollama:11434 (All connection attempts failed) — this is a connectivity problem, not a missing model.',
+          'Ollama is unreachable: No answer from the Ollama server (connection, time limit or TLS). This is a connectivity problem, not a missing model.',
         reason_code: 'unreachable',
       },
       { mode: 'rules', available: true, reason: null },
@@ -223,10 +224,50 @@ function chainRow(mode: string): HTMLElement {
 describe('AIConfigPage — live model status', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    perms.isAdmin = true
     mockGetAIConfig.mockResolvedValue(baseConfig())
     mockUpdateAIConfig.mockResolvedValue(baseConfig())
     mockGetModelStatus.mockResolvedValue(healthyStatus())
     mockGetMLStatus.mockResolvedValue(mlStatus())
+  })
+
+  // D-23: the page printed the internal address and the server's raw code.
+  it('words a refused probe as a sentence, never the raw code', async () => {
+    mockGetModelStatus.mockResolvedValue({ ...unreachableStatus(), ollama_error: 'refused_by_policy' })
+    await renderPage()
+
+    await waitFor(() =>
+      expect(screen.getByText(/not allowed by the provider policy while offline mode is on/)).toBeInTheDocument(),
+    )
+    expect(screen.queryByText(/refused_by_policy/)).not.toBeInTheDocument()
+  })
+
+  it('an unknown error text from an older server is not printed', async () => {
+    mockGetModelStatus.mockResolvedValue({ ...unreachableStatus(), ollama_error: '[Errno -3] Temporary failure in name resolution' })
+    await renderPage()
+
+    await waitFor(() => expect(screen.getByText(/Ollama unreachable/)).toBeInTheDocument())
+    expect(screen.queryByText(/Errno/)).not.toBeInTheDocument()
+    expect(screen.getByText(/No detail reported\./)).toBeInTheDocument()
+  })
+
+  it('a hosted provider shows Ollama as not used, with no unreachable box', async () => {
+    mockGetModelStatus.mockResolvedValue({
+      ...unreachableStatus(), ollama_error: 'not_used', llm_provider: 'openai', required: [],
+    })
+    await renderPage()
+
+    await waitFor(() => expect(screen.getByTestId('ollama-not-used')).toHaveTextContent('Ollama is not used: the provider is openai.'))
+    expect(screen.queryByText(/Ollama unreachable/)).not.toBeInTheDocument()
+  })
+
+  it('shows the Ollama address to admins only', async () => {
+    perms.isAdmin = false
+    mockGetModelStatus.mockResolvedValue(unreachableStatus())
+    await renderPage()
+
+    await waitFor(() => expect(screen.getByText(/Ollama unreachable\./)).toBeInTheDocument())
+    expect(screen.queryByText(/ollama:11434/)).not.toBeInTheDocument()
   })
 
   it('renders every tier of the live chain with its availability and reason', async () => {

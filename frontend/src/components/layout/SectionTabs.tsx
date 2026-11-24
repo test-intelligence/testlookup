@@ -15,7 +15,10 @@ export default function SectionTabs() {
   const { pathname } = useLocation()
   const { canAccessManagement } = usePermissions()
   const item = owningNavItem(pathname)
-  if (!item?.tabs || (item.requires === 'management' && !canAccessManagement)) return null
+  // Below QA lead, a section with a role floor has no tabs: Admin is not shown,
+  // and a QA engineer reads Releases but not Gate policies (D-118), which
+  // leaves one tab, and one tab is no set of tabs.
+  if (!item?.tabs || (item.requires && !canAccessManagement)) return null
   return (
     <div data-section-tabs={item.id} className="mb-4">
       <RouteTabs items={item.tabs} ariaLabel={`${item.label} pages`} />

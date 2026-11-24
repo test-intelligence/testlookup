@@ -28,7 +28,7 @@ logger = logging.getLogger("services.onboarding")
 
 ONBOARDING_STEPS = [
     {"key": "create_project", "label": "Create a Project", "description": "Set up your first test project"},
-    {"key": "upload_run", "label": "Upload Test Results", "description": "Ingest a test run via webhook or client SDK"},
+    {"key": "upload_run", "label": "Upload Test Results", "description": "Upload a report, or send results from CI"},
     {"key": "connect_jira", "label": "Connect Jira", "description": "Link Jira for defect promotion"},
     {"key": "connect_telemetry", "label": "Connect Telemetry", "description": "Add Splunk, OCP, or Slack integration"},
     {"key": "view_intelligence", "label": "View Run Intelligence", "description": "Open the AI analysis for a test run"},
@@ -41,14 +41,7 @@ def _build_default_status(project_id: uuid.UUID) -> dict:
         {**s, "status": "pending", "completed_at": None}
         for s in ONBOARDING_STEPS
     ]
-    return {
-        "project_id": str(project_id),
-        "steps": steps,
-        "completed_count": 0,
-        "total_count": len(steps),
-        "progress_pct": 0,
-        "is_complete": False,
-    }
+    return _summarise(project_id, steps)
 
 
 async def _table_exists(db: AsyncSession) -> bool:
@@ -92,16 +85,27 @@ async def get_onboarding_status(
             "completed_at": record.completed_at.isoformat() if record and record.completed_at else None,
         })
 
-    completed = sum(1 for s in steps if s["status"] in ("completed", "skipped"))
+    return _summarise(project_id, steps)
+
+
+def _summarise(project_id: uuid.UUID, steps: list[dict]) -> dict:
+    """D-127: a skipped step is not progress. ``completed_count`` counts done
+    steps only, ``skipped_count`` the skipped ones, and ``progress_pct`` is the
+    share of the steps not skipped that are done (a skipped "Connect Jira" used
+    to read as 20% of the setup)."""
+    completed = sum(1 for s in steps if s["status"] == "completed")
+    skipped = sum(1 for s in steps if s["status"] == "skipped")
     total = len(steps)
+    open_total = total - skipped
 
     return {
         "project_id": str(project_id),
         "steps": steps,
         "completed_count": completed,
+        "skipped_count": skipped,
         "total_count": total,
-        "progress_pct": round(completed / total * 100) if total else 0,
-        "is_complete": completed == total,
+        "progress_pct": round(completed / open_total * 100) if open_total else (100 if total else 0),
+        "is_complete": completed + skipped == total,
     }
 
 

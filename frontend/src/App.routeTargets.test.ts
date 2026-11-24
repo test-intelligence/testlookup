@@ -45,7 +45,8 @@ const SPEC_SOURCES = import.meta.glob('../tests/**/*.spec.ts', {
 
 /** Route paths declared in `App.tsx`'s two route tables, as `/`-prefixed. */
 function declaredRoutes(): string[] {
-  const matches = [...APP_SOURCE.matchAll(/\{ path: '([^']+)', component: \w+ \}/g)]
+  // An entry may carry a flag after its component (`releases: true`, D-118).
+  const matches = [...APP_SOURCE.matchAll(/\{ path: '([^']+)', component: \w+(?:, \w+: \w+)? \}/g)]
   expect(
     matches.length,
     'App.tsx route tables could not be parsed — the entry shape changed',

@@ -1,7 +1,7 @@
 /**
  * NTF-01: the bell follows only the server's two allow-listed path shapes,
- * re-checked here, and `/releases/<id>` (a management route) only for a QA
- * lead or admin. Equality on the whole value, never a substring. W38: the two
+ * re-checked here, and `/releases/<id>` (a QA engineer and above reads releases, D-118).
+ * Equality on the whole value, never a substring. W38: the two
  * exact strings `/users?tab=erasure-requests` (management only) and
  * `/settings/profile` (every role), and their near misses.
  */
@@ -9,8 +9,9 @@ import { describe, expect, it } from 'vitest'
 import { notificationChannelLabel, notificationHref } from './notificationHref'
 
 const ID = '0f8fad5b-d9cb-469f-a165-70867728950e'
-const LEAD = { canAccessManagement: true }
+const LEAD = { canAccessManagement: true, canReadReleases: true }
 const VIEWER = { canAccessManagement: false }
+const QA_ENGINEER = { canAccessManagement: false, canReadReleases: true }
 
 describe('notificationHref', () => {
   it('a run decision links for every role', () => {
@@ -23,8 +24,9 @@ describe('notificationHref', () => {
     expect(notificationHref({ link: `/test-management?case=${ID}` }, VIEWER)).toBe(`/test-management?case=${ID}`)
   })
 
-  it('a release links for a QA lead or admin only', () => {
+  it('a release links for a QA engineer and above; for a viewer or tester it stays text (D-118)', () => {
     expect(notificationHref({ link: `/releases/${ID}` }, LEAD)).toBe(`/releases/${ID}`)
+    expect(notificationHref({ link: `/releases/${ID}` }, QA_ENGINEER)).toBe(`/releases/${ID}`)
     expect(notificationHref({ link: `/releases/${ID}` }, VIEWER)).toBeNull()
   })
 

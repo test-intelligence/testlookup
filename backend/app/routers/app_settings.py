@@ -17,6 +17,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.sample_values import configured_value
 from app.core.deps import CREDENTIAL_KIND_JWT, credential_kind, get_current_active_user, require_role
 from app.db.postgres import get_db
 from app.models.postgres import AppSetting, User, UserRole
@@ -59,6 +60,12 @@ _SMTP_KEY = "smtp_config"
 _SMTP_SECRET_FIELD = "password"
 
 
+def _env_smtp_password() -> str | None:
+    """The environment's SMTP password, or None while it is the shipped sample
+    (``your-app-password``): a placeholder is not a saved password (D-33)."""
+    return configured_value(settings.SMTP_PASSWORD)
+
+
 def _build_smtp_config_read(
     *,
     enabled: bool,
@@ -94,16 +101,16 @@ async def _load_smtp_row(db: AsyncSession) -> dict:
         cfg = dict(row.value)
         # Read password from secret_refs (encrypted)
         secret_value = await read_secret(db, _SMTP_KEY, _SMTP_SECRET_FIELD)
-        cfg[_SMTP_SECRET_FIELD] = secret_value or cfg.get(_SMTP_SECRET_FIELD) or settings.SMTP_PASSWORD
+        cfg[_SMTP_SECRET_FIELD] = secret_value or cfg.get(_SMTP_SECRET_FIELD) or _env_smtp_password()
         return cfg
 
     # Env-var defaults
     return {
         "enabled": settings.SMTP_ENABLED,
-        "host": settings.SMTP_HOST,
+        "host": configured_value(settings.SMTP_HOST) or "localhost",
         "port": settings.SMTP_PORT,
-        "user": settings.SMTP_USER,
-        _SMTP_SECRET_FIELD: settings.SMTP_PASSWORD,
+        "user": configured_value(settings.SMTP_USER),
+        _SMTP_SECRET_FIELD: _env_smtp_password(),
         "from_address": settings.SMTP_FROM,
         "tls": settings.SMTP_TLS,
     }
@@ -119,7 +126,7 @@ async def get_smtp_config(
 
     cfg = await _load_smtp_row(db)
     # Check secret_refs for password existence (not the raw value)
-    smtp_secret_present = await has_secret(db, _SMTP_KEY, _SMTP_SECRET_FIELD) or bool(settings.SMTP_PASSWORD)
+    smtp_secret_present = await has_secret(db, _SMTP_KEY, _SMTP_SECRET_FIELD) or bool(_env_smtp_password())
     return _build_smtp_config_read(
         enabled=cfg.get("enabled", False),
         host=cfg.get("host", "localhost"),
@@ -188,7 +195,7 @@ async def update_smtp_config(
         user=payload.user or None,
         from_address=payload.from_address,
         implicit_tls=payload.implicit_tls,
-        has_secret_material=stored_password_set or bool(settings.SMTP_PASSWORD),
+        has_secret_material=stored_password_set or bool(_env_smtp_password()),
     )
 
 

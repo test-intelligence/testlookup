@@ -36,7 +36,8 @@ function jiraOutcomeUnknownDetail(err: unknown): JiraOutcomeUnknownDetail | null
 }
 
 const REASON_COPY: Record<string, string> = {
-  offline_mode: 'AI_OFFLINE_MODE is on — outbound Jira calls are blocked.',
+  // D-48: plain words, no setting name; and what still works.
+  offline_mode: 'Offline mode is on, so nothing is sent to Jira. A defect can still be kept in TestLookup without a Jira issue.',
   disabled: 'The Jira integration is disabled in Settings → Integrations.',
   not_configured: 'Jira credentials are not configured in Settings → Integrations.',
   unreachable: 'Jira could not be reached — check the domain and credentials.',
@@ -44,7 +45,7 @@ const REASON_COPY: Record<string, string> = {
 
 export function jiraUnavailableCopy(reason: string | null | undefined): string {
   if (!reason) return 'Jira is unavailable.'
-  return REASON_COPY[reason] ?? `Jira is unavailable (${reason}).`
+  return REASON_COPY[reason] ?? 'Jira is unavailable right now.'
 }
 
 export default function CreateJiraIssueModal({

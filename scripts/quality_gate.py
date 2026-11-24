@@ -3230,6 +3230,184 @@ def _backend_project_scope_guard_placement() -> list[Violation]:
     return violations
 
 
+#: Write routes in ``backend/app/routers`` that state no role, each with the
+#: reason a role does not apply. ``(file, "*")`` covers every write route of a
+#: file that is one of these kinds throughout. The list is reviewed like a
+#: baseline: a new entry is a decision, and the guard reports an entry that no
+#: longer matches a route, so it only shrinks when a route gains a role.
+_ROLE_FREE_WRITE_ROUTES: dict[tuple[str, str], str] = {
+    # Whole files: public sign-in, the caller's own account, machine credentials.
+    ("auth.py", "*"): "sign-in, invitation, password and the caller's own account: no role applies",
+    ("mfa.py", "*"): "the caller's own second factor",
+    ("scim.py", "*"): "SCIM provisioning, authenticated by a SCIM bearer token, not a user role",
+    ("stream.py", "*"): "streaming ingest, authenticated by a project API key",
+    ("ingest.py", "*"): "report ingest, authenticated by a project API key",
+    ("webhooks.py", "*"): "storage event webhook, authenticated by its shared secret",
+    ("chat.py", "*"): "the caller's own chat sessions",
+    ("digests.py", "*"): "the caller's own digest subscriptions",
+    ("saved_views.py", "*"): "the caller's own saved views",
+    # The caller's own things.
+    ("notifications.py", "upsert_preference"): "the caller's own notification preferences",
+    ("notifications.py", "update_preference"): "the caller's own notification preferences",
+    ("notifications.py", "delete_preference"): "the caller's own notification preferences",
+    ("notifications.py", "mark_read"): "the caller's own notification history",
+    ("notifications.py", "mark_all_read"): "the caller's own notification history",
+    ("notifications.py", "send_test"): "a test message to the caller's own channel",
+    ("search.py", "clear_recent_searches"): "the caller's own recent searches",
+    ("subject_erasure_requests.py", "file_my_erasure_request"): "the caller's own data-subject request",
+    ("subject_erasure_requests.py", "withdraw_my_erasure_request"): "the caller's own data-subject request",
+    ("subject_rights.py", "start_my_data_export"): "the caller's own data export",
+    ("onboarding.py", "track_usage_event"): "a usage event about the caller",
+    # Read-shaped POSTs: nothing is written but a ticket, a preview or an export of what the caller can read.
+    ("agent_invoke.py", "issue_invocation_stream_ticket"): "a short-lived ticket to read an invocation's events",
+    ("project_data_download.py", "issue_project_export_download_ticket"): "a download ticket for a job the caller can read",
+    ("compliance_packs.py", "verify_compliance_pack"): "verifies a pack's signature; writes nothing",
+    ("ownership.py", "preview_source_roots"): "a preview; writes nothing",
+    ("release_attribution_rules.py", "preview_attribution_rule"): "a preview; writes nothing",
+    ("workflows.py", "validate_workflow"): "validates a workflow; writes nothing",
+    ("summary_report.py", "request_summary_report_export"): "an export of a report the caller can read",
+    ("summary_report.py", "retry_summary_report_export"): "an export of a report the caller can read",
+    ("run_intelligence.py", "refresh_intelligence"): "recomputes a run's cached analysis for a reader of the run",
+    ("onboarding.py", "detect_progress"): "recomputes the checklist from stored data; sets nothing a reader chooses",
+    # A role checked in the handler or its service, where it depends on the request.
+    ("feedback.py", "submit_feedback"): "feedback_service applies the correction-role rule to what the body plants",
+    ("feedback.py", "update_feedback"): "feedback_service applies the correction-role rule to what the body plants",
+    ("my_failures.py", "reassign_assigned_failure"): "the my-failures service requires QA lead in the failure's project",
+    ("my_failures.py", "update_failure_triage_status"): "the my-failures service checks the assignee or a QA lead",
+    ("search.py", "trigger_reindex"): "the handler checks QA lead for a project and admin for the instance",
+    ("reports.py", "revoke_share_link_endpoint"): "require_link_access: the link's creator, a project member or an admin",
+    # Callbacks and machine endpoints that carry their own credential.
+    ("feedback.py", "jira_resolution_webhook"): "Jira webhook, authenticated by its shared secret",
+    ("github_app.py", "github_app_setup_callback"): "GitHub App setup redirect, checked by its state token",
+    ("live.py", "ingest_live_event"): "live runner events, authenticated by an API key or webhook secret",
+    ("observability.py", "receive_frontend_telemetry"): "browser telemetry; stores no user choice",
+    ("sso.py", "saml_single_logout_post_binding"): "SAML single logout from the identity provider",
+    ("sso.py", "saml_acs"): "SAML assertion consumer: sign-in, before any role exists",
+    ("sso.py", "exchange_sso_code"): "SSO code exchange: sign-in, before any role exists",
+}
+
+_ROLE_MARKERS = ("require_role(", "require_project_role(", "require_instance_admin(")
+#: A handler whose role depends on the body checks it with this helper.
+_ROLE_BODY_MARKERS = ("holds_role_for_project_write(",)
+_MUTATING_DECORATORS = {"post", "put", "patch", "delete"}
+
+
+def _role_free_write_routes(routers: Path) -> list[tuple[Path, int, str, str, str]]:
+    """``(path, line, file, function, method path)`` of every write route that states no role."""
+    found: list[tuple[Path, int, str, str, str]] = []
+    for path in sorted(routers.rglob("*.py")):
+        text = path.read_text(encoding="utf-8", errors="ignore")
+        try:
+            tree = ast.parse(text)
+        except SyntaxError:
+            continue
+        # Module-level names bound to a role dependency (``_lead = require_role(...)``),
+        # and routers created with a role in their own ``dependencies=[...]``.
+        role_aliases: set[str] = set()
+        role_routers: set[str] = set()
+        for node in tree.body:
+            if not isinstance(node, ast.Assign):
+                continue
+            seg = ast.get_source_segment(text, node.value) or ""
+            names = {t.id for t in node.targets if isinstance(t, ast.Name)}
+            if any(marker in seg for marker in _ROLE_MARKERS):
+                if "APIRouter(" in seg:
+                    role_routers |= names
+                else:
+                    role_aliases |= names
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for dec in node.decorator_list:
+                if not (
+                    isinstance(dec, ast.Call)
+                    and isinstance(dec.func, ast.Attribute)
+                    and dec.func.attr in _MUTATING_DECORATORS
+                ):
+                    continue
+                owner = dec.func.value.id if isinstance(dec.func.value, ast.Name) else ""
+                dec_src = ast.get_source_segment(text, dec) or ""
+                defaults = [d for d in (*node.args.defaults, *node.args.kw_defaults) if d is not None]
+                args_src = chr(10).join(ast.get_source_segment(text, d) or "" for d in defaults)
+                body_src = chr(10).join(ast.get_source_segment(text, s) or "" for s in node.body)
+                signature = dec_src + chr(10) + args_src
+                if (
+                    owner in role_routers
+                    or any(marker in signature for marker in _ROLE_MARKERS)
+                    or any(f"Depends({alias})" in signature for alias in role_aliases)
+                    or any(marker in body_src for marker in _ROLE_BODY_MARKERS)
+                ):
+                    continue
+                route = dec.args[0].value if dec.args and isinstance(dec.args[0], ast.Constant) else ""
+                found.append((path, node.lineno, path.name, node.name, f"{dec.func.attr.upper()} {route}".strip()))
+    return found
+
+
+def _backend_write_routes_state_a_role(
+    root: Optional[Path] = None,
+    allowed: Optional[dict[tuple[str, str], str]] = None,
+) -> list[Violation]:
+    """Every write route states a role, or is on a reviewed list with its reason.
+
+    The product-findings review of 2026-11-21 swept every ``@router.post``,
+    ``put``, ``patch`` and ``delete`` in ``backend/app/routers`` and found
+    write routes guarded by project membership alone: a VIEWER skipped the
+    team's setup steps for everyone (``POST /onboarding/{project}/skip``) and
+    planted training labels (``POST /projects/{project}/fix-outcomes``). Each
+    was a route added without ``require_role``, and nothing made that fail.
+
+    A route passes when its decorator or signature carries ``require_role(``,
+    ``require_project_role(`` or ``require_instance_admin(`` (directly, through
+    a module-level alias, or through its router's ``dependencies=[...]``), or
+    when its body checks a request-dependent role with
+    ``holds_role_for_project_write(``. Any other write route must be listed in
+    ``_ROLE_FREE_WRITE_ROUTES`` with the reason no role applies (the caller's
+    own data, a read-shaped POST, a machine credential, a sign-in step).
+
+    The runtime twin is ``backend/tests/regression/test_write_routes_state_a_role.py``
+    (user-session routes, from the real dependency trees). This one is static,
+    covers every route including API-key and public ones, and keeps a reason
+    next to each exemption.
+    """
+    base = root or REPO_ROOT
+    allowed = _ROLE_FREE_WRITE_ROUTES if allowed is None else allowed
+    routers = base / "backend" / "app" / "routers"
+    if not routers.is_dir():
+        return []
+    violations: list[Violation] = []
+    used: set[tuple[str, str]] = set()
+    for path, line, file_name, func, method_path in _role_free_write_routes(routers):
+        for key in ((file_name, func), (file_name, "*")):
+            if key in allowed:
+                used.add(key)
+                break
+        else:
+            violations.append(
+                Violation(
+                    file=path,
+                    line=line,
+                    message=(
+                        f"write route {method_path} ({func}) states no role: add "
+                        "Depends(require_role(UserRole.X)), or list it in "
+                        "_ROLE_FREE_WRITE_ROUTES with the reason no role applies"
+                    ),
+                )
+            )
+    guard_file = Path(__file__).resolve()
+    for file_name, func in sorted(set(allowed) - used):
+        violations.append(
+            Violation(
+                file=guard_file,
+                line=0,
+                message=(
+                    f"_ROLE_FREE_WRITE_ROUTES lists {file_name}:{func}, which no longer "
+                    "matches a role-free write route: delete the entry (the list only shrinks)"
+                ),
+            )
+        )
+    return violations
+
+
 def _backend_cloud_providers_are_priced() -> list[Violation]:
     """Every cloud LLM provider must have entries in the price table.
 
@@ -7514,6 +7692,20 @@ GUARDS: list[Guard] = [
         description="Access checks must not sit inside an `if not project_id` branch.",
         check=_backend_project_scope_guard_placement,
         fix_hint="Call resolve_project_scope(db, user, project_id) unconditionally; it 403s a non-admin naming a project they cannot access.",
+    ),
+    Guard(
+        name="backend.write-routes-state-a-role",
+        description=(
+            "Every POST/PUT/PATCH/DELETE route in backend/app/routers states a role (require_role, "
+            "require_project_role, require_instance_admin, or a body check with "
+            "holds_role_for_project_write), or is in _ROLE_FREE_WRITE_ROUTES with its reason."
+        ),
+        check=_backend_write_routes_state_a_role,
+        fix_hint=(
+            "Add Depends(require_role(UserRole.X)) to the route. Only when no role applies (the caller's "
+            "own data, a read-shaped POST, a machine credential, a sign-in step) add it to "
+            "_ROLE_FREE_WRITE_ROUTES with that reason."
+        ),
     ),
     Guard(
         name="backend.cloud-providers-are-priced",

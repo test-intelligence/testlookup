@@ -72798,7 +72798,7 @@
     },
     "/api/v1/onboarding/{project_id}/complete": {
       "post": {
-        "description": "Mark an onboarding step as completed.",
+        "description": "Mark an onboarding step as completed.\n\nAny member may report ``view_intelligence`` (the run page sends it when a\nreader opens Analysis). Any other step changes what the whole team's\nchecklist says, so it needs QA_ENGINEER in the project (S-D-7).",
         "operationId": "mark_step_complete_api_v1_onboarding__project_id__complete_post",
         "parameters": [
           {
@@ -78234,7 +78234,7 @@
     },
     "/api/v1/projects/{project_id}/fix-outcomes": {
       "post": {
-        "description": "Record a fix outcome for a fingerprint.\n\nWrites an ``ai_feedback`` row with ``source=\"fix_outcome\"`` against the\nlatest analysis for the (project, fingerprint) pair — the AI-F1 label\nsystem maps that source into the ``human_indirect`` provenance bucket.\n404 when the fingerprint has never been analysed (nothing to grade).\nProject-scoped via ``require_project_access`` (authorization ratchet);\nany active project member may record an outcome, matching the feedback\nendpoints above.",
+        "description": "Record a fix outcome for a fingerprint.\n\nWrites an ``ai_feedback`` row with ``source=\"fix_outcome\"`` against the\nlatest analysis for the (project, fingerprint) pair — the AI-F1 label\nsystem maps that source into the ``human_indirect`` provenance bucket.\n404 when the fingerprint has never been analysed (nothing to grade).\nProject-scoped via ``require_project_access`` (authorization ratchet).\nThe row becomes a training label, so it needs QA_ENGINEER, the floor the\ncorrection-role rule in ``feedback_service`` sets for anything that plants\na label (S-D-7: any member used to be able to write one).",
         "operationId": "record_fix_outcome_api_v1_projects__project_id__fix_outcomes_post",
         "parameters": [
           {

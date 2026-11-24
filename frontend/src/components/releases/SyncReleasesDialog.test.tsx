@@ -17,6 +17,10 @@ vi.mock('@/services/gitlabIntegrationService', () => ({ gitlabIntegrationService
 const toastSuccess = vi.hoisted(() => vi.fn())
 vi.mock('react-hot-toast', () => ({ default: { success: toastSuccess, error: vi.fn() } }))
 
+// D-114: the dialog reads the effective offline ceiling every role may read.
+const aiMode = vi.hoisted(() => ({ data: undefined as { ai_offline_mode: boolean } | undefined }))
+vi.mock('@/hooks/useAIConfig', () => ({ useAIConfig: () => ({ data: aiMode.data }) }))
+
 import SyncReleasesDialog from './SyncReleasesDialog'
 
 const httpError = (status: number, detail: string) =>
@@ -38,6 +42,28 @@ beforeEach(() => {
   toastSuccess.mockReset()
   gitlabGet.mockReset()
   gitlabGet.mockRejectedValue(Object.assign(new Error("404"), { response: { status: 404 } }))
+  aiMode.data = undefined
+})
+
+describe('SyncReleasesDialog: offline mode (D-114)', () => {
+  it('says offline mode blocks a sync before anything is pressed, and Sync is off', () => {
+    aiMode.data = { ai_offline_mode: true }
+    const { container } = renderDialog()
+    const note = container.querySelector('[data-sync-offline]') as HTMLElement
+    expect(note).toHaveTextContent('Offline mode is on, so releases cannot be synced from GitHub, GitLab or Jira.')
+    expect(note.textContent).not.toContain('AI_OFFLINE_MODE')
+    const button = screen.getByRole('button', { name: 'Sync' })
+    expect(button).toBeDisabled()
+    fireEvent.click(button)
+    expect(sync).not.toHaveBeenCalled()
+  })
+
+  it('online, there is no note and Sync works', () => {
+    aiMode.data = { ai_offline_mode: false }
+    const { container } = renderDialog()
+    expect(container.querySelector('[data-sync-offline]')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Sync' })).toBeEnabled()
+  })
 })
 
 describe('SyncReleasesDialog', () => {

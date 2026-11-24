@@ -5603,3 +5603,87 @@ def test_invokes_test_runner_is_fast_on_a_long_assignment_chain() -> None:
     started = time.perf_counter()
     qg._invokes_test_runner(command)
     assert time.perf_counter() - started < 2.0
+
+
+# ── backend.write-routes-state-a-role (product findings 2026-11-21, S-D-7) ───
+
+
+def _routers(tmp_path: Path, body: str) -> Path:
+    _write(tmp_path / "backend" / "app" / "routers" / "things.py", body)
+    return tmp_path
+
+
+def test_write_routes_state_a_role_flags_a_membership_only_write(tmp_path: Path) -> None:
+    root = _routers(tmp_path, """
+        from fastapi import APIRouter, Depends
+        router = APIRouter()
+
+        @router.post("/{project_id}/skip")
+        async def skip(project_id, _=Depends(require_project_access())):
+            return {}
+
+        @router.get("/{project_id}/status")
+        async def status(project_id, _=Depends(require_project_access())):
+            return {}
+    """)
+    violations = qg._backend_write_routes_state_a_role(root=root, allowed={})
+    assert [v.message.split(" (")[0] for v in violations] == ["write route POST /{project_id}/skip"]
+    assert violations[0].line == 5  # the handler's def line
+
+
+def test_write_routes_state_a_role_passes_every_way_a_role_is_stated(tmp_path: Path) -> None:
+    root = _routers(tmp_path, """
+        from fastapi import APIRouter, Depends
+        router = APIRouter()
+        admin_router = APIRouter(dependencies=[Depends(require_role(UserRole.ADMIN))])
+        _lead = require_role(UserRole.QA_LEAD)
+
+        @router.post("/a")
+        async def in_signature(user=Depends(require_role(UserRole.TESTER))):
+            return {}
+
+        @router.put("/b", dependencies=[Depends(require_project_role(UserRole.QA_ENGINEER))])
+        async def in_decorator():
+            return {}
+
+        @router.patch("/c")
+        async def through_an_alias(user=Depends(_lead)):
+            return {}
+
+        @admin_router.delete("/d")
+        async def through_the_router():
+            return {}
+
+        @router.post("/e")
+        async def checked_in_the_body(body, db, user):
+            if not await holds_role_for_project_write(db, user, body.project_id, UserRole.QA_ENGINEER):
+                raise HTTPException(403)
+            return {}
+    """)
+    assert qg._backend_write_routes_state_a_role(root=root, allowed={}) == []
+
+
+def test_write_routes_state_a_role_honours_the_reviewed_list_and_reports_a_stale_entry(tmp_path: Path) -> None:
+    root = _routers(tmp_path, """
+        from fastapi import APIRouter, Depends
+        router = APIRouter()
+
+        @router.post("/me/dismissals")
+        async def dismiss(user=Depends(get_current_active_user)):
+            return {}
+    """)
+    allowed = {
+        ("things.py", "dismiss"): "the caller's own dismissals",
+        ("things.py", "gone"): "a route that was given a role since",
+    }
+    violations = qg._backend_write_routes_state_a_role(root=root, allowed=allowed)
+    assert len(violations) == 1
+    assert "things.py:gone" in violations[0].message and "no longer matches" in violations[0].message
+    # A whole-file entry covers every write route of that file.
+    assert qg._backend_write_routes_state_a_role(root=root, allowed={("things.py", "*"): "own data"}) == []
+
+
+def test_write_routes_state_a_role_every_reviewed_entry_has_a_reason() -> None:
+    for key, reason in qg._ROLE_FREE_WRITE_ROUTES.items():
+        assert reason.strip(), f"{key} has no reason"
+

@@ -90,14 +90,14 @@ type IntegrationsHookResult = {
   error: unknown
   isLoading: boolean
 }
-const mockIntegrationsConfig = vi.fn<() => IntegrationsHookResult>(
+const mockIntegrationsConfig = vi.fn<(enabled?: boolean) => IntegrationsHookResult>(
   () => ({ config: undefined, error: undefined, isLoading: true }),
 )
 vi.mock('@/hooks/useIntegrationsConfig', async (importOriginal) => {
   // Keep the real jiraBridgeState — the mapping from config to badge is the
   // thing under test.
   const actual = await importOriginal<typeof import('@/hooks/useIntegrationsConfig')>()
-  return { ...actual, useIntegrationsConfig: () => mockIntegrationsConfig() }
+  return { ...actual, useIntegrationsConfig: (enabled?: boolean) => mockIntegrationsConfig(enabled) }
 })
 const suiteOptions = vi.hoisted(() => ({ names: [] as string[] }))
 vi.mock('@/hooks/useSuiteOptions', () => ({
@@ -311,6 +311,52 @@ describe('DefectsPage', () => {
 
     expect(await screen.findByText('Unknown')).toBeInTheDocument()
     expect(screen.queryByText('Connected')).not.toBeInTheDocument()
+  })
+
+  it('D-40: below QA lead the tab asks nothing, says who can tell, and links to no settings page', async () => {
+    const { useAuthStore } = await import('@/store/authStore')
+    const before = useAuthStore.getState().user
+    useAuthStore.setState({ user: { ...(before ?? {}), role: 'QA_ENGINEER' } as never })
+    try {
+      await mockRows([])
+      mockIntegrationsConfig.mockClear()
+      mockIntegrationsConfig.mockReturnValue({ config: undefined, error: undefined, isLoading: false })
+
+      renderWithDefects()
+
+      expect(await screen.findByText(/Only QA leads and admins can see whether Jira is connected/)).toBeInTheDocument()
+      // The hook is told not to fetch, so no 403 toast can appear.
+      expect(mockIntegrationsConfig).toHaveBeenCalled()
+      expect(mockIntegrationsConfig.mock.calls.every(([enabled]) => enabled === false)).toBe(true)
+      expect(document.querySelector('a[href="/settings/integrations"]')).toBeNull()
+    } finally {
+      useAuthStore.setState({ user: before })
+    }
+  })
+
+  it('D-40: a QA lead still reads the settings and gets the settings link', async () => {
+    const { useAuthStore } = await import('@/store/authStore')
+    const before = useAuthStore.getState().user
+    useAuthStore.setState({ user: { ...(before ?? {}), role: 'QA_LEAD' } as never })
+    try {
+      await mockRows([])
+      mockIntegrationsConfig.mockClear()
+      mockIntegrationsConfig.mockReturnValue({
+        config: {
+          jira_enabled: true, jira_domain: 'acme.atlassian.net', jira_email: 'qa@acme.test',
+          jira_token_set: true, jira_default_project_key: 'ACME',
+        },
+        error: undefined, isLoading: false,
+      })
+
+      renderWithDefects()
+
+      expect(await screen.findByText('Connected')).toBeInTheDocument()
+      expect(mockIntegrationsConfig.mock.calls.every(([enabled]) => enabled === true)).toBe(true)
+      expect(screen.getByRole('link', { name: 'Bridge settings →' })).toHaveAttribute('href', '/settings/integrations')
+    } finally {
+      useAuthStore.setState({ user: before })
+    }
   })
 
   it('says connected only with an enabled bridge that has a host and a credential', async () => {

@@ -17,7 +17,7 @@ const APP = Object.values(
 )[0]
 
 function appRoutes(): string[] {
-  const out = [...(APP ?? '').matchAll(/\{\s*path:\s*'([^']+)',\s*component:\s*\w+\s*\}/g)].map((m) => `/${m[1]}`)
+  const out = [...(APP ?? '').matchAll(/\{\s*path:\s*'([^']+)',\s*component:\s*\w+(?:,\s*\w+:\s*\w+)?\s*\}/g)].map((m) => `/${m[1]}`)
   return Array.from(new Set(out))
 }
 

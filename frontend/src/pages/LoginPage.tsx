@@ -479,7 +479,8 @@ export default function LoginPage() {
                     value={password}
                     onChange={(e) => setPassword(e.target.value)}
                     className="appearance-none block w-full px-3 py-2 border border-[var(--color-border)] rounded-md shadow-sm placeholder-[var(--color-text-faint)] text-[var(--color-text)] bg-[var(--color-bg-input)] focus:outline-none focus:ring-[var(--color-ring)] focus:border-[var(--color-ring)] sm:text-sm"
-                    placeholder="••••••••"
+                    // D-130: bullets read as a filled-in password on an empty field.
+                    placeholder="Password"
                   />
                 </div>
               </div>

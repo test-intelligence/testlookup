@@ -28,6 +28,8 @@ export function usePermissions() {
     canGenerateApiKeys: hasRole('QA_ENGINEER'),
     canTriggerLlm: hasRole('QA_ENGINEER'),
     canAccessManagement: hasRole('QA_LEAD'),
+    /** D-118: Releases, read-only below QA lead. */
+    canReadReleases: hasRole('QA_ENGINEER'),
     canViewSettings: hasRole('QA_LEAD'),
     canEditSettings: role === 'ADMIN',
     hasRole,

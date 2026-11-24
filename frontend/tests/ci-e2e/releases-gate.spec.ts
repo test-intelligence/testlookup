@@ -11,7 +11,8 @@
  *  - a blocker's "Open gate →" opens `/releases/{id}#gate` with the gate panel in view (scorecard, every
  *    reason, the baseline sentence) and each phase's live gate chip;
  *  - "Evaluate all in progress" evaluates both in-progress releases, one toast for all;
- *  - a QA engineer and a viewer never reach the page (a QA-lead route): Home, no release call, no button.
+ *  - a QA engineer reads the page (D-118): the verdicts, no Evaluate button, no write; a viewer never reaches
+ *    it (Home, no release call).
  *
  * Harness: `tests/lib/rollout.ts` (fail closed, pinned clock). Fixtures: `fixtures-releases.ts`.
  */
@@ -120,25 +121,39 @@ test('Evaluate all in progress evaluates every in-progress release, one toast fo
   assertHermetic(api, errors)
 })
 
-// `/releases` is a management route (QA lead and ADMIN, `App.tsx` `managementRoutes`): a QA engineer or a
-// viewer who opens it lands on Home. So no lower role ever sees an Evaluate button, and none makes a call the
-// release page makes (gate, packs, activity, members, an evaluation) that could answer it 403. The page's own
-// role gating (a verdict for everyone, buttons for a QA lead) is pinned by `ReleasesPage.roles.test.tsx`.
-for (const user of [QA_ENGINEER, VIEWER]) {
-  test(`a ${user.role}: /releases is a QA lead's page; Home, no release call, no Evaluate`, async ({ page }) => {
-    const { handlers, writes } = releasesHandlers({ hotfix: true })
-    const dashboard = (p: Page) => p.getByRole('heading', { level: 1, name: 'Dashboard' })
-    const { api, errors } = await openRollout(page, '/overview', { handlers: [...OVERVIEW_ON, ...handlers], ready: dashboard, user })
-    // Typed in (a bookmark): the route guard sends a lower role home.
-    await page.goto('/releases')
-    await expect(page).toHaveURL(/\/overview$/)
-    await expect(dashboard(page)).toBeVisible()
-    await expect(page.getByTestId('release-evaluate')).toHaveCount(0)
-    await networkQuiet(page, api)
-    expect(writes).toEqual([])
-    const releaseCalls = api.seen.filter((line) => /\/gate|\/compliance-packs|\/activity|\/members|\/releases\/[^/?]+/.test(line))
-    expect(releaseCalls, 'no call of the release page is made').toEqual([])
-    await expect(page.getByText(/403|Requires at least|not allowed/i)).toHaveCount(0)
-    assertHermetic(api, errors)
-  })
-}
+// D-118 (owner decision 4): a QA engineer opens `/releases`, read-only below QA lead: the verdict on each
+// card, and no Evaluate, no Evaluate all and no New release; the page writes nothing for them (every release
+// write on the API is QA lead or admin). The page's own role gating is pinned control by control in
+// `ReleasesPage.roles.test.tsx`.
+test(`a ${QA_ENGINEER.role}: /releases reads the verdicts, offers no Evaluate, writes nothing`, async ({ page }) => {
+  const { handlers, writes } = releasesHandlers({ hotfix: true })
+  const { api, errors } = await openRollout(page, '/releases', { handlers, ready, user: QA_ENGINEER })
+  await expect(page).toHaveURL(/\/releases$/)
+  await expect(badge(page, '2026.11.1')).toBeVisible()
+  await expect(page.getByTestId('release-evaluate')).toHaveCount(0)
+  await expect(page.getByTestId('release-evaluate-all')).toHaveCount(0)
+  await expect(page.getByRole('button', { name: /New release/ })).toHaveCount(0)
+  await networkQuiet(page, api)
+  expect(writes).toEqual([])
+  await expect(page.getByText(/403|Requires at least|not allowed/i)).toHaveCount(0)
+  assertHermetic(api, errors)
+})
+
+// Below a QA engineer (`QaEngineerGuard` in `App.tsx`) a viewer who opens it lands on Home, and makes no call
+// the release page makes (gate, packs, activity, members, an evaluation) that could answer it 403.
+test(`a ${VIEWER.role}: /releases is a QA engineer's page; Home, no release call, no Evaluate`, async ({ page }) => {
+  const { handlers, writes } = releasesHandlers({ hotfix: true })
+  const dashboard = (p: Page) => p.getByRole('heading', { level: 1, name: 'Dashboard' })
+  const { api, errors } = await openRollout(page, '/overview', { handlers: [...OVERVIEW_ON, ...handlers], ready: dashboard, user: VIEWER })
+  // Typed in (a bookmark): the route guard sends a lower role home.
+  await page.goto('/releases')
+  await expect(page).toHaveURL(/\/overview$/)
+  await expect(dashboard(page)).toBeVisible()
+  await expect(page.getByTestId('release-evaluate')).toHaveCount(0)
+  await networkQuiet(page, api)
+  expect(writes).toEqual([])
+  const releaseCalls = api.seen.filter((line) => /\/gate|\/compliance-packs|\/activity|\/members|\/releases\/[^/?]+/.test(line))
+  expect(releaseCalls, 'no call of the release page is made').toEqual([])
+  await expect(page.getByText(/403|Requires at least|not allowed/i)).toHaveCount(0)
+  assertHermetic(api, errors)
+})

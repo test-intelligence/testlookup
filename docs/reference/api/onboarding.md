@@ -20,7 +20,7 @@ ADMIN-only rather than membership-scoped: this is cross-project analytics
 by nature, mirroring ``/audit-dashboard/export``, and it has no consumer —
 no frontend, CLI, MCP or SDK caller references it.
 
-Source: [backend/app/routers/onboarding.py:171](../../../backend/app/routers/onboarding.py#L171).
+Source: [backend/app/routers/onboarding.py:192](../../../backend/app/routers/onboarding.py#L192).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -147,7 +147,7 @@ filed under it, and ``GET /events`` reports it as that project's adoption.
 to another project. An unparseable id is still dropped, as before, so the
 event is filed under no project.
 
-Source: [backend/app/routers/onboarding.py:137](../../../backend/app/routers/onboarding.py#L137).
+Source: [backend/app/routers/onboarding.py:158](../../../backend/app/routers/onboarding.py#L158).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -234,7 +234,11 @@ Mark Step Complete
 
 Mark an onboarding step as completed.
 
-Source: [backend/app/routers/onboarding.py:80](../../../backend/app/routers/onboarding.py#L80).
+Any member may report ``view_intelligence`` (the run page sends it when a
+reader opens Analysis). Any other step changes what the whole team's
+checklist says, so it needs QA_ENGINEER in the project (S-D-7).
+
+Source: [backend/app/routers/onboarding.py:85](../../../backend/app/routers/onboarding.py#L85).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`.
 
@@ -247,6 +251,7 @@ project_id: uuid.UUID, body: StepAction, db: AsyncSession=Depends(get_db), curre
 Direct handler error branches (dependency/service errors can add others):
 
 ```python
+HTTPException(status_code=403, detail='Requires at least QA_ENGINEER role to mark this setup step complete.')
 HTTPException(status_code=422, detail=str(exc))
 HTTPException(status_code=500, detail='Failed to update step')
 ```
@@ -338,7 +343,7 @@ Detect Progress
 
 Auto-detect and update onboarding progress from existing data.
 
-Source: [backend/app/routers/onboarding.py:60](../../../backend/app/routers/onboarding.py#L60).
+Source: [backend/app/routers/onboarding.py:65](../../../backend/app/routers/onboarding.py#L65).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`.
 
@@ -426,14 +431,14 @@ Mark Step Restored
 
 Un-skip an onboarding step, returning it to pending so it can be redone.
 
-Source: [backend/app/routers/onboarding.py:118](../../../backend/app/routers/onboarding.py#L118).
+Source: [backend/app/routers/onboarding.py:137](../../../backend/app/routers/onboarding.py#L137).
 
-Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`.
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-project_id: uuid.UUID, body: StepAction, db: AsyncSession=Depends(get_db), _: User=Depends(require_project_access())
+project_id: uuid.UUID, body: StepAction, db: AsyncSession=Depends(get_db), current_user: User=Depends(require_role(UserRole.QA_LEAD)), _: User=Depends(require_project_access())
 ```
 
 Direct handler error branches (dependency/service errors can add others):
@@ -530,14 +535,14 @@ Mark Step Skipped
 
 Mark an onboarding step as skipped.
 
-Source: [backend/app/routers/onboarding.py:99](../../../backend/app/routers/onboarding.py#L99).
+Source: [backend/app/routers/onboarding.py:116](../../../backend/app/routers/onboarding.py#L116).
 
-Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`.
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-project_id: uuid.UUID, body: StepAction, db: AsyncSession=Depends(get_db), _: User=Depends(require_project_access())
+project_id: uuid.UUID, body: StepAction, db: AsyncSession=Depends(get_db), current_user: User=Depends(require_role(UserRole.QA_LEAD)), _: User=Depends(require_project_access())
 ```
 
 Direct handler error branches (dependency/service errors can add others):
@@ -634,7 +639,7 @@ Get Status
 
 Get onboarding progress for a project.
 
-Source: [backend/app/routers/onboarding.py:43](../../../backend/app/routers/onboarding.py#L43).
+Source: [backend/app/routers/onboarding.py:48](../../../backend/app/routers/onboarding.py#L48).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`.
 

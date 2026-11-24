@@ -142,6 +142,8 @@ const UxPrimitivesPage = import.meta.env.DEV
 type AppRoute = {
   path: string
   component: ComponentType
+  /** A management route a QA engineer may read too (D-118: Releases). */
+  releases?: true
 }
 
 const appRoutes: AppRoute[] = [
@@ -184,7 +186,7 @@ const appRoutes: AppRoute[] = [
   { path: 'release-gate', component: ReleaseGatePage },
   { path: 'release-gate/:runId', component: ReleaseGatePage },
   // W11 REL-09: every role READS a project's attribution rules (a QA lead also
-  // writes them), so the page is here rather than with /releases (QA lead+).
+  // writes them).
   // React Router ranks this static path above `releases/:releaseId`.
   { path: 'releases/attribution-rules', component: ReleaseAttributionRulesPage },
   { path: 'flaky', component: FlakyTestsPage },
@@ -207,11 +209,15 @@ const appRoutes: AppRoute[] = [
   { path: 'settings/expected-runs', component: ExpectedRunsPage },
 ]
 
-/** Routes restricted to QA_LEAD and ADMIN roles. */
+/**
+ * Routes restricted to QA_LEAD and ADMIN roles. D-118 (owner decision 4):
+ * QA engineers READ releases too (the page hides its writes below QA lead);
+ * viewers and testers are redirected, as before.
+ */
 const managementRoutes: AppRoute[] = [
+  { path: 'releases', component: ReleasesPage, releases: true },
+  { path: 'releases/:releaseId', component: ReleasesPage, releases: true },
   { path: 'projects', component: ProjectsPage },
-  { path: 'releases', component: ReleasesPage },
-  { path: 'releases/:releaseId', component: ReleasesPage },
   { path: 'activity', component: ActivityPage },
   { path: 'users', component: UserManagementPage },
   { path: 'settings', component: SettingsPage },
@@ -323,17 +329,12 @@ function renderLazyRoute(Component: ComponentType) {
 }
 
 /**
- * Route guard for management pages (Projects, Releases, Users).
- * Redirects users without QA_LEAD or ADMIN role to the overview page.
+ * Route guard: management pages (Projects, Users, Settings) need QA_LEAD or
+ * ADMIN; `releases` (D-118) needs QA_ENGINEER. Anyone else goes to the overview.
  */
-function ManagementGuard({ children }: { children: React.ReactNode }) {
-  const { canAccessManagement } = usePermissions()
-
-  if (!canAccessManagement) {
-    return <Navigate to="/overview" replace />
-  }
-
-  return <>{children}</>
+function RoleGuard({ children, releases }: { children: React.ReactNode; releases?: boolean }) {
+  const { canAccessManagement, canReadReleases } = usePermissions()
+  return (releases ? canReadReleases : canAccessManagement) ? <>{children}</> : <Navigate to="/overview" replace />
 }
 
 /**
@@ -377,14 +378,14 @@ export default function App() {
           {appRoutes.map(({ path, component }) => (
             <Route key={path} path={path} element={renderLazyRoute(component)} />
           ))}
-          {managementRoutes.map(({ path, component: Component }) => (
+          {managementRoutes.map(({ path, component: Component, releases }) => (
             <Route
               key={path}
               path={path}
               element={
-                <ManagementGuard>
+                <RoleGuard releases={releases}>
                   {renderLazyRoute(Component)}
-                </ManagementGuard>
+                </RoleGuard>
               }
             />
           ))}

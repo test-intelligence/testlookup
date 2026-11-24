@@ -5,6 +5,7 @@ import { Rocket, Copy, Check, AlertTriangle, ArrowRight, ListChecks, BookOpen, X
 import { copyTextToClipboard } from '@/utils/clipboard'
 import { backendUrl } from '@/services/api'
 import { useCliWheel } from '@/hooks/useCliWheel'
+import { usePermissions } from '@/hooks/usePermissions'
 import { buildSteps } from './firstRunSteps'
 
 function CommandRow({ command }: { command: string }) {
@@ -48,6 +49,54 @@ function CommandRow({ command }: { command: string }) {
  * turns an empty dashboard into a clear "here's how to get value" path.
  * Presentational + dismissible (the parent owns persistence via onDismiss).
  */
+/**
+ * D-68: where the key for the ingest curl comes from depends on the role. The
+ * project's keys (`/settings/api-keys`) are a QA lead's page; a QA engineer owns
+ * keys of their own (`/settings/my-api-keys`); a viewer or tester can own none
+ * (the API's floor is QA_ENGINEER), so they are told who can upload.
+ */
+function KeyHint() {
+  const { canAccessManagement, hasRole } = usePermissions()
+  if (!hasRole('QA_ENGINEER')) {
+    return (
+      <p className="mt-1.5 text-2xs text-[var(--color-text-faint)]">
+        Your role cannot hold an API key. Ask a QA engineer or a QA lead to upload the first report.
+      </p>
+    )
+  }
+  const [to, label] = canAccessManagement
+    ? ['/settings/api-keys', 'Settings → API Keys']
+    : ['/settings/my-api-keys', 'Settings → My API keys']
+  return (
+    <p className="mt-1.5 text-2xs text-[var(--color-text-faint)]">
+      {canAccessManagement ? 'Generate a project key under' : 'Generate a key of your own under'}{' '}
+      <ScopedLink to={to} hintInTitleOnly className="text-[var(--color-accent)] hover:underline">
+        {label}
+      </ScopedLink>{' '}
+      and pass it as the <code className="font-mono">X-API-Key</code> above.
+    </p>
+  )
+}
+
+/**
+ * D-126: the Runs page's Upload report form is the shortest way in, but step 2
+ * named only the CLI and the API. Shown to the roles that can upload
+ * (QA_ENGINEER and above, the ingest floor).
+ */
+function UploadLink() {
+  const { hasRole } = usePermissions()
+  if (!hasRole('QA_ENGINEER')) return null
+  return (
+    <p className="mt-1.5 text-sm text-[var(--color-text-muted)]" data-testid="first-run-upload">
+      Have a report file?{' '}
+      <ScopedLink to="/runs?upload=1" hintInTitleOnly className="text-[var(--color-accent)] hover:underline">
+        Upload a report
+      </ScopedLink>{' '}
+      on the Runs page.
+    </p>
+  )
+}
+
 export default function FirstRunGuide({
   projectName,
   projectId,
@@ -104,7 +153,14 @@ export default function FirstRunGuide({
             <div className="min-w-0 flex-1">
               <p className="text-sm font-medium text-[var(--color-text)]">{s.title}</p>
               <p className="text-sm text-[var(--color-text-muted)]">{s.body}</p>
+              {s.uploadLink && <UploadLink />}
               {s.command && <CommandRow command={s.command} />}
+              {s.altCommand && (
+                <>
+                  <p className="mt-2 text-2xs text-[var(--color-text-faint)]">{s.altCommand.label}</p>
+                  <CommandRow command={s.altCommand.command} />
+                </>
+              )}
               {s.cliInstall && (
                 <>
                   <p className="mt-2 text-2xs text-[var(--color-text-faint)]">
@@ -122,17 +178,7 @@ export default function FirstRunGuide({
                     Or POST straight to the ingest API from any CI runner:
                   </p>
                   <CommandRow command={s.apiCommand} />
-                  <p className="mt-1.5 text-2xs text-[var(--color-text-faint)]">
-                    Generate a project key under{' '}
-                    <ScopedLink
-                      to="/settings/api-keys"
-                      hintInTitleOnly
-                      className="text-[var(--color-accent)] hover:underline"
-                    >
-                      Settings → API Keys
-                    </ScopedLink>{' '}
-                    and pass it as the <code className="font-mono">X-API-Key</code> above.
-                  </p>
+                  <KeyHint />
                 </>
               )}
             </div>

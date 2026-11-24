@@ -28,7 +28,13 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import get_current_active_user, require_project_access, require_role, require_run_access
+from app.core.deps import (
+    get_current_active_user,
+    holds_role_for_project_write,
+    require_project_access,
+    require_role,
+    require_run_access,
+)
 from app.core.config import _is_placeholder_secret, settings
 from app.db.postgres import get_db
 from app.db.mongo import get_mongo_db
@@ -355,6 +361,25 @@ async def submit_decision_report_feedback(
     db: AsyncSession = Depends(get_db),
     current_user=Depends(require_run_access()),
 ):
+    if body.feedback_kind == "claim_correction":
+        # A claim correction feeds the report evaluation cycle
+        # (``decision_report_eval_cycle_service``), like any other correction:
+        # QA_ENGINEER in the run's project. A utility rating stays open to
+        # every member who can read the run.
+        from sqlalchemy import select  # noqa: PLC0415
+
+        from app.models.postgres import TestRun  # noqa: PLC0415
+
+        run_project = (
+            await db.execute(select(TestRun.project_id).where(TestRun.id == run_id))
+        ).scalar_one_or_none()
+        if run_project is not None and not await holds_role_for_project_write(
+            db, current_user, run_project, UserRole.QA_ENGINEER
+        ):
+            raise HTTPException(
+                status_code=403,
+                detail="Requires at least QA_ENGINEER role to correct a report claim.",
+            )
     result = await feedback_service.submit_decision_report_feedback(
         db,
         get_mongo_db(),
@@ -413,7 +438,8 @@ async def record_fix_outcome(
     project_id: uuid.UUID,
     body: FixOutcomeRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_project_access()),
+    current_user: User = Depends(require_role(UserRole.QA_ENGINEER)),
+    _: User = Depends(require_project_access()),
 ):
     """Record a fix outcome for a fingerprint.
 
@@ -421,9 +447,10 @@ async def record_fix_outcome(
     latest analysis for the (project, fingerprint) pair — the AI-F1 label
     system maps that source into the ``human_indirect`` provenance bucket.
     404 when the fingerprint has never been analysed (nothing to grade).
-    Project-scoped via ``require_project_access`` (authorization ratchet);
-    any active project member may record an outcome, matching the feedback
-    endpoints above.
+    Project-scoped via ``require_project_access`` (authorization ratchet).
+    The row becomes a training label, so it needs QA_ENGINEER, the floor the
+    correction-role rule in ``feedback_service`` sets for anything that plants
+    a label (S-D-7: any member used to be able to write one).
     """
     result = await feedback_service.record_fix_outcome(
         db,
