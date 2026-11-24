@@ -29,6 +29,8 @@ import { useNavigate } from 'react-router-dom'
 import { AlertTriangle, CheckSquare, Clock, ExternalLink, Inbox, UserCog } from 'lucide-react'
 import { clsx } from 'clsx'
 import toast from 'react-hot-toast'
+import useSWR from 'swr'
+import { REFRESH_INTERVALS } from '@/config/refreshIntervals'
 import { InlineFormSection } from '@/components/ui/inPage/InlineFormSection'
 import { InlineRowSection } from '@/components/ui/inPage/InlineRowSection'
 import { useInlineSlot, type InlineSlot } from '@/components/ui/inPage/useInlineSlot'
@@ -45,7 +47,7 @@ import { helpTopicParam } from '@/components/help/helpTopics'
 import { formatRunWhen } from '@/utils/formatters'
 import { runBuildLabel } from '@/utils/runOption'
 import { SEVERITY_STYLE, severityLevel } from '@/components/ui/severity'
-import { useMyFailures, useMyFailuresCountUnscoped, useReassignOptions } from '@/hooks/useMyFailures'
+import { useMyFailures, useReassignOptions } from '@/hooks/useMyFailures'
 import { useReleaseScope } from '@/hooks/useReleaseScope'
 import { useProjectStore, ALL_PROJECTS_ID } from '@/store/projectStore'
 import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
@@ -156,9 +158,18 @@ export default function MyFailuresPage() {
   // so the difference is only the other projects. Not under a release: the
   // list is then narrowed by release too, and the difference would mix both.
   const release = useReleaseScope()
-  const { data: everywhere } = useMyFailuresCountUnscoped({ days })
+  // Asked only where the line can show. At the server's default 30 days the
+  // key is the sidebar badge's own, so SWR answers both from one request.
+  const askElsewhere = Boolean(singleProjectId && effectiveScope === 'mine' && !release)
+  const elsewhereUserId = user?.id ?? null
+  const elsewhereDays = days === 30 ? undefined : days
+  const { data: everywhere } = useSWR(
+    askElsewhere && elsewhereUserId ? ['my-failures-count-unscoped', elsewhereUserId, elsewhereDays] : null,
+    () => myFailuresService.count({ days: elsewhereDays }),
+    { refreshInterval: REFRESH_INTERVALS.POLLING },
+  )
   const elsewhere =
-    singleProjectId && effectiveScope === 'mine' && !release && data && everywhere
+    askElsewhere && data && everywhere
       ? Math.max(0, everywhere.count - data.unresolved_total)
       : 0
 
