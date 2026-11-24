@@ -134,8 +134,10 @@ test('TCM-05 Plans: the Ran against column; v1 · case now v2 opens the steps v1
   await page.getByRole('heading', { name: TM_PLAN_NAME }).click()
   const table = page.locator('table').filter({ has: page.getByRole('columnheader', { name: 'Ran against' }) })
   await expect(table.getByRole('columnheader')).toHaveText(['#', 'Test Case', 'Status', 'Ran against', 'Actions'])
-  const row = (i: number) => table.locator('tbody > tr:not([data-in-page-row])').filter({ hasText: tmCaseId(i).slice(0, 8) })
-  await expect(row(ACTIVE_CASE).getByRole('cell').nth(2), 'Status stays the third cell').toHaveText('passed')
+  // D-62: a plan row names its case by title (never a slice of its id) and its status in words.
+  const row = (i: number) => table.locator('tbody > tr:not([data-in-page-row])')
+    .filter({ has: page.getByRole('cell', { name: tmCaseTitle(i), exact: true }) })
+  await expect(row(ACTIVE_CASE).getByRole('cell').nth(2), 'Status stays the third cell').toHaveText('Passed')
   await expect(row(ACTIVE_CASE).getByRole('cell').nth(3)).toHaveText('v1 · case now v2')
   await expect(row(2).getByRole('cell').nth(3), 'never run').toHaveText('—')
   await expect(row(6).getByRole('cell').nth(3), 'run before versions were recorded').toHaveText('not recorded')
