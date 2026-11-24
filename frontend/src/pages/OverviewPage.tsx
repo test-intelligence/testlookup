@@ -115,6 +115,9 @@ type SparkTone = 'good' | 'warn' | 'bad' | 'neutral'
 const PASS_RATE_DOMAIN = [0, 100] as const
 const formatSparkPercent = (value: number) => `${value.toFixed(1)}%`
 
+/** D-25: a KPI's change line when there is no fair earlier window. */
+const NO_EARLIER_PERIOD ='no earlier period to compare'
+
 function metricNumber(m: DashboardMetricValue | undefined): number {
   if (!m) return 0
   if (typeof m.value === 'number') return m.value
@@ -138,6 +141,9 @@ function metricNumber(m: DashboardMetricValue | undefined): number {
 function kpiMetric(display: string, m: DashboardMetricValue | undefined) {
   const dir = m?.trend_direction
   if (!m || dir == null) return { value: display }
+  // D-25: the server found no fair earlier window (a young project, or a
+  // previous window too thin to compare): say so, with no number.
+  if (dir === 'none') return { value: display, trend_direction: dir, trend_text: NO_EARLIER_PERIOD }
   if (dir === 'flat' || m.trend == null) return { value: display, trend_direction: dir, trend_text: 'vs prev period' }
   return { value: display, trend: m.trend, trend_direction: dir }
 }
@@ -775,6 +781,8 @@ export default function OverviewPage() {
         <KpiLink to="/runs">
           <MetricCard
             title="Total executions"
+            // D-25: a volume, not a score: more executions is not "better".
+            positiveDirection="none"
             loading={kpiLoading}
             metric={kpiMetric(`${totalExecutions}`, summary?.total_executions_7d)}
             sparkline={spark('Total executions', totalSeries, daysWithData, 'neutral')}

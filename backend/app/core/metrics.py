@@ -41,6 +41,7 @@ FINALIZE_STEPS = (
     "assign_failed_tests", "auto_tagging", "quarantine_tagging",
     "release_linking", "commit_range", "activity_ledger",
     "suite_executions", "duration_regressions",
+    "coverage_first_snapshot",  # D-34
 )
 # Create every series at 0 now. A labelled counter has no series until its
 # first inc(), and that first scrape already reads 1, so increase() sees no

@@ -4,7 +4,8 @@ import type { PaginatedResponse } from './common'
 export interface DashboardMetricValue {
   value: number | string
   trend?: number | null
-  trend_direction?: 'up' | 'down' | 'flat'
+  /** D-25: `none` = no fair earlier period to compare (a young project or a thin base). */
+  trend_direction?: 'up' | 'down' | 'flat' | 'none'
   /**
    * F-067: the POPULATION a rate is computed over. /overview counts every
    * execution ("per test execution", 81.0%) while the Summary Report counts

@@ -102,12 +102,19 @@ HEALTH_COMPONENT_LABELS: dict[str, str] = {
     "retired_in_open_plans": "Retired cases in open plans",
 }
 #: Today's weights (the page's old synthesis, TestManagementPage.tsx:1312-1324).
+#: D-65: the automation component is progress to the project's target,
+#: ``min(100, share / target * 100)``, not the raw share.
 HEALTH_WEIGHTS: dict[str, float] = {
     "automation": 0.35, "stale_drafts": 0.20, "review_freshness": 0.20, "retired_in_open_plans": 0.25,
 }
 #: score >= 85 / >= 70 / else (today's thresholds).
 HEALTH_TAGS: tuple[str, ...] = ("Healthy", "Needs attention", "At risk")
 HEALTH_TAG_THRESHOLDS: tuple[int, ...] = (85, 70)
+#: D-65: below this many non-retired cases the library is too small to rate:
+#: the score is kept, the tag is this fourth state instead of a verdict.
+HEALTH_MIN_CASES = 10
+HEALTH_TAG_GETTING_STARTED = "Getting started"
+HEALTH_GETTING_STARTED_SENTENCE = "Not enough cases to rate yet."
 STALE_DRAFT_DAYS = 30
 #: The "Aging reviews over SLA" gap: the oldest review waits >= 7 days.
 REVIEW_SLA_DAYS = 7

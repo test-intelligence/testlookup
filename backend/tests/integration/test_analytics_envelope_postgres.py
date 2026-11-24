@@ -264,7 +264,29 @@ def _intended_value_changes(expected: dict) -> int:
             if row["passed_count"] + row["failed_count"] == 0 and row["pass_rate"] is not None:
                 row["pass_rate"] = None
                 changed += 1
+            # D-59 (2026-11-21): authored cases are counted apart; this world has none.
+            row["authored_count"] = 0
+            # D-60 / S-E-6 (2026-11-21): each test under its own effective suite, the
+            # grouping /coverage uses (``analytics_scope_characterisation.json`` has
+            # CheckoutSuite at 11 unique tests and InventorySuite last run viz-3043).
+            # The golden filed all 25 tests of the dominant suite's runs under
+            # CheckoutSuite; the live-stream run viz-3044 now files its rows under its
+            # label (CheckoutSuite), so InventorySuite's latest run is viz-3043.
+            fix = _D60_CHANGES.get(row["suite_name"])
+            if fix and any(row[k] != v for k, v in fix.items()):
+                row.update(fix)
+                changed += 1
     return changed
+
+
+#: The D-60 values per suite, derived from the seed plan (``build_viz_seed_plan``)
+#: and matching the /coverage golden for the same world.
+_D60_CHANGES = {
+    "CheckoutSuite": {"test_count": 11, "passed_count": 10, "pass_rate": 90.9},
+    "InventorySuite": {
+        "last_run_at": "2026-09-19T16:03:03.280888+00:00", "last_run_id": "<run:viz-3043>",
+    },
+}
 
 
 #: STRAT-01 / D28 (W35): value metrics answered a member who names no project with the empty

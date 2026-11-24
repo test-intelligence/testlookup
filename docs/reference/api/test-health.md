@@ -235,7 +235,7 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 Handler return expressions (source excerpts, not an inferred wire schema):
 
 ```python
-{'status': 'completed', 'flaky_tests_found': count}
+{'status': 'completed', 'flaky_tests_found': count, 'scores_queued': _enqueue_flaky_score_recompute(project_id)}
 ```
 
 Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.

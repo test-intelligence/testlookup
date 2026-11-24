@@ -28,8 +28,10 @@ export interface MetricCardProps extends DataAttributes {
    * Which trend direction is GOOD for this metric. Pass-rate style metrics
    * default to 'up'; count-of-bad-things metrics (Failed, Flaky, Duration)
    * should pass 'down' so a falling trend is "(better)", not "(worse)".
+   * D-25: a volume (executions) passes 'none': the direction is a word, never
+   * "(better)" / "(worse)", and the icon is muted.
    */
-  positiveDirection?: 'up' | 'down'
+  positiveDirection?: 'up' | 'down' | 'none'
   /** A small inline chart beside the value (the aside slot). */
   sparkline?: ReactNode
   /** The label's hover text (default: the label). */
@@ -122,7 +124,7 @@ export default function MetricCard({
   const dir = metric?.trend_direction
   const hasTrend = metric?.trend != null || Boolean(metric?.trend_text)
   const TrendIcon = dir === 'up' ? TrendingUp : dir === 'down' ? TrendingDown : Minus
-  const judged = dir === 'up' || dir === 'down'
+  const judged = (dir === 'up' || dir === 'down') && positiveDirection !== 'none'
   const trendColor = judged
     ? dir === positiveDirection
       ? 'text-[var(--ui-success)]'

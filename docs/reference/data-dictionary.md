@@ -58,7 +58,7 @@ Current SQLAlchemy metadata, without a database connection. All columns, server/
 | [flaky_classifier_calibration](#flaky_classifier_calibration) | FlakyClassifierCalibration | 10 |
 | [flaky_coach_results](#flaky_coach_results) | FlakyCoachResult | 19 |
 | [flaky_detection_state](#flaky_detection_state) | FlakyDetectionState | 13 |
-| [flaky_quarantine_requests](#flaky_quarantine_requests) | FlakyQuarantineRequest | 35 |
+| [flaky_quarantine_requests](#flaky_quarantine_requests) | FlakyQuarantineRequest | 36 |
 | [flaky_score](#flaky_score) | FlakyScore | 11 |
 | [generation_batches](#generation_batches) | GenerationBatch | 17 |
 | [generation_case_sources](#generation_case_sources) | GenerationCaseSource | 12 |
@@ -1681,7 +1681,7 @@ approver: Mapped[Optional['User']] = relationship('User', foreign_keys=[approved
 
 ## deletion_jobs
 
-[backend/app/models/postgres.py:7814](../../backend/app/models/postgres.py#L7814)
+[backend/app/models/postgres.py:7820](../../backend/app/models/postgres.py#L7820)
 
 One record of a deletion actually happening (migration 0147, S2b).
 
@@ -1830,7 +1830,7 @@ Constraints and indexes:
 
 ## drop_folder_builds
 
-[backend/app/models/postgres.py:8637](../../backend/app/models/postgres.py#L8637)
+[backend/app/models/postgres.py:8643](../../backend/app/models/postgres.py#L8643)
 
 One build folder ``<project>/runs/<build>/`` seen by the drop-folder watcher (W34 STRAT-13; migration 0254).
 
@@ -2241,6 +2241,7 @@ QA leads see every past decision on the same test.
 | `detected_at` | `DATETIME` | False | False | `server=now()` |  |
 | `last_failure_at` | `DATETIME` | True | False | `—` |  |
 | `proposed_at` | `DATETIME` | True | False | `—` |  |
+| `proposed_by_user_id` | `UUID` | True | False | `—` | users.id / SET NULL |
 | `approved_at` | `DATETIME` | True | False | `—` |  |
 | `approved_by_user_id` | `UUID` | True | False | `—` | users.id / SET NULL |
 | `rejected_at` | `DATETIME` | True | False | `—` |  |
@@ -2270,6 +2271,7 @@ Constraints and indexes:
 - `ForeignKeyConstraint` `unnamed`: `last_stability_run_id`
 - `ForeignKeyConstraint` `unnamed`: `owner_user_id`
 - `ForeignKeyConstraint` `unnamed`: `project_id`
+- `ForeignKeyConstraint` `unnamed`: `proposed_by_user_id`
 - `ForeignKeyConstraint` `unnamed`: `rejected_by_user_id`
 - `PrimaryKeyConstraint` `unnamed`: `id`
 - Index `ix_fqr_fingerprint` (unique=False): `flaky_quarantine_requests.project_id, flaky_quarantine_requests.test_fingerprint`; options `{}`
@@ -2513,7 +2515,7 @@ Constraints and indexes:
 
 ## instance_retention_policy
 
-[backend/app/models/postgres.py:8397](../../backend/app/models/postgres.py#L8397)
+[backend/app/models/postgres.py:8403](../../backend/app/models/postgres.py#L8403)
 
 The instance-wide retention defaults (W22b ACT-06, migration 0242).
 
@@ -3188,7 +3190,7 @@ Constraints and indexes:
 
 ## project_activity_events
 
-[backend/app/models/postgres.py:8488](../../backend/app/models/postgres.py#L8488)
+[backend/app/models/postgres.py:8494](../../backend/app/models/postgres.py#L8494)
 
 Append-only, project-scoped product feed of everything that happens.
 
@@ -3266,7 +3268,7 @@ Constraints and indexes:
 
 ## project_data_jobs
 
-[backend/app/models/postgres.py:7939](../../backend/app/models/postgres.py#L7939)
+[backend/app/models/postgres.py:7945](../../backend/app/models/postgres.py#L7945)
 
 One project export or import (W24 ADM-05 phase 1: settings + catalog; migration 0247).
 
@@ -3405,7 +3407,7 @@ Constraints and indexes:
 
 ## project_llm_usage
 
-[backend/app/models/postgres.py:8448](../../backend/app/models/postgres.py#L8448)
+[backend/app/models/postgres.py:8454](../../backend/app/models/postgres.py#L8454)
 
 Running per-period LLM cost meter for a project.
 
@@ -3458,7 +3460,7 @@ Constraints and indexes:
 
 ## project_retention_policies
 
-[backend/app/models/postgres.py:8296](../../backend/app/models/postgres.py#L8296)
+[backend/app/models/postgres.py:8302](../../backend/app/models/postgres.py#L8302)
 
 Per-project data retention policy (PMF US-11.4, migration 0113).
 
@@ -3620,7 +3622,7 @@ canonical_test_cases: Mapped[list['CanonicalTestCase']] = relationship('Canonica
 
 ## quarantine_lifecycle_policies
 
-[backend/app/models/postgres.py:7691](../../backend/app/models/postgres.py#L7691)
+[backend/app/models/postgres.py:7697](../../backend/app/models/postgres.py#L7697)
 
 Per-project quarantine lifecycle configuration (PMF US-5.4/5.5/5.6).
 
@@ -4017,7 +4019,7 @@ test_run_links: Mapped[list['ReleaseTestRunLink']] = relationship('ReleaseTestRu
 
 ## report_exports
 
-[backend/app/models/postgres.py:8245](../../backend/app/models/postgres.py#L8245)
+[backend/app/models/postgres.py:8251](../../backend/app/models/postgres.py#L8251)
 
 VIZ-607: one background export of a report (migration 0194).
 
@@ -4120,7 +4122,7 @@ Constraints and indexes:
 
 ## retention_holds
 
-[backend/app/models/postgres.py:8159](../../backend/app/models/postgres.py#L8159)
+[backend/app/models/postgres.py:8165](../../backend/app/models/postgres.py#L8165)
 
 A retention hold on a project, a release, a run or a compliance pack (W22a ACT-05, migration 0239).
 
@@ -4530,7 +4532,7 @@ Constraints and indexes:
 
 ## run_tombstones
 
-[backend/app/models/postgres.py:7773](../../backend/app/models/postgres.py#L7773)
+[backend/app/models/postgres.py:7779](../../backend/app/models/postgres.py#L7779)
 
 A run that was deliberately deleted, and must not come back (0148, S2c).
 
@@ -4897,7 +4899,7 @@ Constraints and indexes:
 
 ## subject_erasure_requests
 
-[backend/app/models/postgres.py:8106](../../backend/app/models/postgres.py#L8106)
+[backend/app/models/postgres.py:8112](../../backend/app/models/postgres.py#L8112)
 
 A person's request to have their account erased (W38: W31 F-1; migration 0256).
 
@@ -4936,7 +4938,7 @@ Constraints and indexes:
 
 ## subject_rights_jobs
 
-[backend/app/models/postgres.py:8030](../../backend/app/models/postgres.py#L8030)
+[backend/app/models/postgres.py:8036](../../backend/app/models/postgres.py#L8036)
 
 One personal-data export or erasure of ONE person (W31 STRAT-12; migration 0253).
 
@@ -6255,7 +6257,7 @@ Constraints and indexes:
 
 ## value_metric_assumptions
 
-[backend/app/models/postgres.py:7732](../../backend/app/models/postgres.py#L7732)
+[backend/app/models/postgres.py:7738](../../backend/app/models/postgres.py#L7738)
 
 Per-project tunable assumptions for the engineer-hours-saved model
 (PMF US-12.1, migration 0112).

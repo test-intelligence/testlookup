@@ -32,6 +32,14 @@ export interface TrendSummary {
   days_with_runs: number
   empty_days: number
   active_day_share: number
+  /**
+   * D-24: the window's days from the project's first run on (`window_days`
+   * when the first run is before the window or unknown). Optional: a server
+   * from before D-24 omits it.
+   */
+  history_days?: number
+  /** D-24: the project's first run day (`YYYY-MM-DD`), `null` with no run. */
+  first_run_day?: string | null
   executions: {
     total: number
     passed: number
@@ -194,6 +202,10 @@ export function parseTrendSummary(raw: unknown): TrendSummary | null {
     last_run_day: (last_run_day as string | null | undefined) ?? null,
     previous_run_day: (previous_run_day as string | null | undefined) ?? null,
     untagged_share,
+    ...(isNum(raw.history_days) ? { history_days: raw.history_days } : {}),
+    ...(typeof raw.first_run_day === 'string' || raw.first_run_day === null
+      ? { first_run_day: raw.first_run_day as string | null }
+      : {}),
     confidence: { score, dimensions: dims, verdict, band },
     ...(isRecord(meta) ? { meta: meta as unknown as EnvelopeMeta } : {}),
   }

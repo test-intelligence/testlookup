@@ -2154,7 +2154,7 @@ class MyFailureListResponse(BaseModel):
 class MetricCard(BaseModel):
     value: Any
     trend: Optional[float] = None  # Percentage change vs previous period
-    trend_direction: Optional[str] = None  # "up" | "down" | "flat"
+    trend_direction: Optional[str] = None  # "up" | "down" | "flat" | "none" (D-25: no fair earlier window)
 
 
 #: ``GET /metrics/summary`` fields that honour ``suite_name`` but NOT
@@ -9716,6 +9716,11 @@ class FlakyQuarantineRead(BaseModel):
     detected_at: datetime
     last_failure_at: Optional[datetime] = None
     proposed_at: Optional[datetime] = None
+    # D-53: the person who proposed it; null = detected automatically (or a
+    # manual proposal made before migration 0260 -- ``detection_method`` says).
+    proposed_by_user_id: Optional[uuid.UUID] = None
+    # Full name, else username -- resolved by the router (batched), not a column.
+    proposed_by_name: Optional[str] = None
     approved_at: Optional[datetime] = None
     approved_by_user_id: Optional[uuid.UUID] = None
     rejected_at: Optional[datetime] = None

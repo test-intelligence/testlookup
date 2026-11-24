@@ -104,7 +104,7 @@ export interface LibraryHealth {
   older_than_180_pct?: number | null
   /** 0..100; null when not measured. */
   score?: number | null
-  /** `Healthy` | `Needs attention` | `At risk`; null when not measured. */
+  /** `Healthy` | `Needs attention` | `At risk`, or D-65's `Getting started` (fewer than 10 cases: no verdict yet); null when not measured. */
   tag?: string | null
   components: LibraryHealthComponent[]
   review_queue: ReviewQueueSummary

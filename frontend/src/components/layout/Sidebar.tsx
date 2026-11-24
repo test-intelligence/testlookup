@@ -67,7 +67,9 @@ function InboxBadge({ collapsed }: { collapsed: boolean }) {
         color: 'var(--status-failed)',
         border: '1px solid color-mix(in srgb, var(--status-failed) 30%, transparent)',
       }}
-      aria-label={`${count} assigned failures`}
+      // D-37: every project, the server's default 30 days; the Inbox lists one
+      // project over its own window, so the badge says which question it answers.
+      title={`${count} assigned failures, all projects, 30 days`}
     >
       {count > 99 ? '99+' : count}
     </span>

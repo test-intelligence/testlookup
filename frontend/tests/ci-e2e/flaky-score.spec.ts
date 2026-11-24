@@ -4,7 +4,7 @@
  *  - the table gains ONE column, **Flakiness score** with `(4 signals)` under it (its header `title` names both
  *    detectors), after Fail %; every cell is one line: a scored test `0.81` + its band chip (`high`), below the
  *    evidence floor `insufficient` (title `3 of 5 observations`), not swept yet `not scored yet` (title
- *    `Scores are computed nightly`), a failed enrichment `—` (title `Score not available`); Fail %,
+ *    `Scores are computed nightly, or press Refresh`), a failed enrichment `—` (title `Score not available`); Fail %,
  *    Recommendation and Impact stay;
  *  - **Sort** (in the chip row, not a new row) → `Flakiness score`: the scored tests by score, highest first,
  *    then every unscored one in the server's order; back to `Impact`: the server's order;
@@ -82,7 +82,7 @@ test('the score column: one line per cell for a scored, an insufficient, a pendi
   await expect(insufficient.locator('[title="3 of 5 observations"]')).toHaveCount(1)
   const pending = await scoreCell(page, 'fp-03')
   await expect(pending).toHaveText('not scored yet')
-  await expect(pending.locator('[title="Scores are computed nightly"]')).toHaveCount(1)
+  await expect(pending.locator('[title="Scores are computed nightly, or press Refresh"]')).toHaveCount(1)
   const unavailable = await scoreCell(page, 'fp-07')
   await expect(unavailable).toHaveText('—')
   await expect(unavailable.locator('[title="Score not available"]')).toHaveCount(1)
@@ -153,7 +153,7 @@ test('a row\'s details panel opens with the four signals and their weights; an i
 
   await page.getByRole('button', { name: 'test_checkout_flow_3', exact: true }).click()
   await expect(page.getByRole('complementary', { name: 'test_checkout_flow_3' })).toContainText(
-    'Not scored yet: the score is computed nightly from the last 30 days.',
+    'Not scored yet: scores are computed nightly, or press Refresh.',
   )
   await networkQuiet(page, api)
   expectInventory(api, errors, DETECTED_LOAD, '/flaky, Detected (the panel asks nothing)')

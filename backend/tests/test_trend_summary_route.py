@@ -27,7 +27,7 @@ RELEASE = "22222222-2222-4222-8222-222222222222"
 TODAY_KEYS = {
     "window_days", "today", "measured", "reason", "days_with_runs", "empty_days", "active_day_share",
     "executions", "pass_rate", "variance", "gap", "last_run_day", "previous_run_day", "untagged_share",
-    "confidence", "meta",
+    "confidence", "history_days", "first_run_day", "meta",
 }
 
 
@@ -78,11 +78,15 @@ async def test_the_body_is_the_contract_computed_from_the_pages_two_reads(monkey
     monkeypatch.setattr(metrics_service, "get_trend_data", trend)
     monkeypatch.setattr(analytics_service, "coverage_stats", coverage)
     monkeypatch.setattr(route_module, "build_meta", meta)
+    # D-24: the third read, the scope's first run (before this window here).
+    first_run = AsyncMock(return_value=None)
+    monkeypatch.setattr(metrics_service, "first_run_at", first_run)
     db = object()
 
     body = await route_module.get_trend_summary(scope=_scope(), db=db)
 
     assert set(body) == TODAY_KEYS
+    first_run.assert_awaited_once_with(db, str(PROJECT), allowed_project_ids=None)
     assert body["meta"] == {"schema_version": 3}
     assert body["executions"]["total"] == 10 and body["pass_rate"] == 90.0
     # The page's own two reads, with the scope's release and suite (D-3).
@@ -126,11 +130,15 @@ async def test_a_members_unpinned_scope_reaches_both_reads(monkeypatch):
     monkeypatch.setattr(metrics_service, "get_trend_data", trend)
     monkeypatch.setattr(analytics_service, "coverage_stats", coverage)
     monkeypatch.setattr(route_module, "build_meta", AsyncMock(return_value={}))
+    first_run = AsyncMock(return_value=None)
+    monkeypatch.setattr(metrics_service, "first_run_at", first_run)
     member = frozenset({MINE_A, MINE_B})
     db = object()
 
     await route_module.get_trend_summary(scope=_scope(project_id=None, allowed_project_ids=member), db=db)
 
+    # D-24: the first-run read carries the member set too.
+    first_run.assert_awaited_once_with(db, None, allowed_project_ids=member)
     trend.assert_awaited_once_with(
         db, None, 14, suite_name="checkout", release_id=RELEASE, allowed_project_ids=member,
     )

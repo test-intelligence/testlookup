@@ -1,6 +1,6 @@
 # Your inbox and approvals
 
-**Inbox** (`/my-failures`) is your personal queue: the failures assigned to you, and the decisions waiting for you. It has four tabs: **Assigned to me**, **Approvals**, **Activity** and **Insights**. The badge on **Inbox** in the sidebar counts your assigned failures. The old `/reviews` address opens the **Approvals** tab.
+**Inbox** (`/my-failures`) is your personal queue: the failures assigned to you, and the decisions waiting for you. It has four tabs: **Assigned to me**, **Approvals**, **Activity** and **Insights**. The badge on **Inbox** in the sidebar counts the failures assigned to you across all projects in the last 30 days, so it can be larger than the list for one project; the list then says how many more are in other projects. The old `/reviews` address opens the **Approvals** tab.
 
 ## How failures get assigned
 
@@ -101,7 +101,7 @@ Each row says why it is there — **You**, **Mentioned you**, **Assigned to you*
 
 Each row shows a severity (**High**, **Medium** or **Low**), the sentence that states the pattern, and the page to look at: **Trends › Execution time**, **Flaky tests**, **Coverage › History** or **LLM cost budget**. A slower suite or test also links to **Latest run**. The line below the sentence says when the insight was first seen and last confirmed. A resolved insight says **Cleared** (a later check found the suite or test quiet) or **Not seen for 3 days**. **24 h** and **7 d** pick the window, and **Showing n of total** says how many there are.
 
-A check that could not measure says why below the list, for example "Coverage drop — not measured: No coverage snapshot yet: the first is taken at 00:05 UTC." It never reads as "no insights". If the check last ran more than 3 hours ago, the line says when.
+A check that could not measure says why below the list, for example "Coverage drop — not measured: No coverage snapshot yet: the first is taken when a run of this project finishes, or at 00:05 UTC." It never reads as "no insights". If the check last ran more than 3 hours ago, the line says when.
 
 **Dismiss** (QA engineers and above) asks `Dismiss for everyone in <project>?` and then hides the insight for the whole project until that episode ends. A new episode of the same suite or test shows again. There is no undo. **Show dismissed (n)** lists the dismissed insights with who dismissed them, and the project's [Activity log](/docs/administration#activity-log) records each dismissal. Insights notify nobody and never call an AI model. While the project's `cross_run_insights` flag is off, the tab says so. For the thresholds of each check, see [Insights on the dashboards](/docs/dashboards#insights).
 

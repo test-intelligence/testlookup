@@ -26,6 +26,10 @@ export interface FlakyQuarantineRead {
   detected_at: string
   last_failure_at: string | null
   proposed_at: string | null
+  /** D-53: the person who proposed it; null = detected automatically (or proposed before this was recorded). */
+  proposed_by_user_id?: string | null
+  /** Full name, else username. */
+  proposed_by_name?: string | null
   approved_at: string | null
   approved_by_user_id: string | null
   rejected_at: string | null

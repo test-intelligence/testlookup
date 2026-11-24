@@ -81,6 +81,13 @@ _PROPOSAL_TTL_DAYS = 7
 
 # Default quarantine window when the QA Lead doesn't override it on approve.
 _DEFAULT_QUARANTINE_DAYS = 14
+#: D-52: the window a manual proposal's flip figures are measured over (the
+#: Flaky tests page's default window).
+_MANUAL_MEASURE_DAYS = 30
+#: Review of D-52: below this many results a manual proposal's flip figures
+#: stay unmeasured ("flip rate 100 %, window 1" is no measurement). The same
+#: floor as the recheck's ``total < 10``.
+_MANUAL_MEASURE_MIN_RESULTS = 10
 
 # Flip-rate floor below which a recheck_at row is moved back to RELEASED.
 # A test running 10+ times at <10% flip rate is considered stable enough.
@@ -778,6 +785,55 @@ def manifest_etag(rows: list[FlakyQuarantineRequest]) -> str:
 # ── Transitions ─────────────────────────────────────────────────────────────
 
 
+async def _measure_manual_proposal(
+    db: AsyncSession, project_id: uuid.UUID, test_fingerprint: str,
+) -> Optional[tuple[float, int, int, int]]:
+    """D-52: (fail rate, results, passes, fails) of the test's stored results in
+    this project over the last ``_MANUAL_MEASURE_DAYS`` days, or ``None``.
+
+    A manual proposal sends no flip figures, so the Proposed tab read "—" for
+    Flip rate and Window. The rate is the recheck's own ``fails / total``
+    (PASSED vs FAILED + BROKEN; skipped results are not evidence). Scoped by
+    ``TestRun.project_id``: the fingerprint carries no project salt. No stored
+    result, or a failed read, leaves the figures unmeasured (``None``), never 0.
+    """
+    from sqlalchemy import func as _func
+
+    from app.models.postgres import TestCase, TestRun, TestStatus
+
+    since = datetime.now(timezone.utc) - timedelta(days=_MANUAL_MEASURE_DAYS)
+    try:
+        # A savepoint: on Postgres a failed statement aborts the transaction,
+        # and the proposal's own INSERT shares it, so the read must not.
+        async with db.begin_nested():
+            rows = (
+                await db.execute(
+                    select(TestCase.status, _func.count(TestCase.id))
+                    .join(TestRun, TestRun.id == TestCase.test_run_id)
+                    .where(
+                        TestRun.project_id == project_id,
+                        TestCase.test_fingerprint == test_fingerprint,
+                        TestCase.created_at >= since,
+                    )
+                    .group_by(TestCase.status)
+                )
+            ).all()
+    except Exception as exc:  # noqa: BLE001 - the proposal itself must still be written
+        logger.warning(
+            "manual_proposal_measure_failed",
+            project_id=str(project_id),
+            error_type=type(exc).__name__,
+        )
+        return None
+    buckets = {str(getattr(status, "value", status)): int(count or 0) for status, count in rows}
+    passes = buckets.get(TestStatus.PASSED.value, 0)
+    fails = buckets.get(TestStatus.FAILED.value, 0) + buckets.get(TestStatus.BROKEN.value, 0)
+    total = passes + fails
+    if total < _MANUAL_MEASURE_MIN_RESULTS:
+        return None
+    return round(fails / total, 3), total, passes, fails
+
+
 async def propose_quarantine(
     *,
     project_id: uuid.UUID,
@@ -813,10 +869,28 @@ async def propose_quarantine(
     # manual-propose router handler (actor=user, detection_method="manual").
     source_label = "manual" if detection_method == "manual" else "auto"
 
+    # D-53: who asked. NULL = the detectors (no actor); a person's id otherwise.
+    proposer_id = getattr(actor, "id", None) if actor is not None else None
+
     async with AsyncSessionLocal() as db:
         try:
             existing = await _find_live(db, project_id, test_fingerprint)
             now = datetime.now(timezone.utc)
+
+            # D-52: a manual proposal sends no flip figures; measure them from
+            # the test's stored results unless the row already holds the
+            # detector's (which the merge below keeps).
+            if (
+                source_label == "manual"
+                and flip_rate is None
+                and flip_window_size is None
+                and (existing is None or (existing.flip_rate is None and existing.flip_window_size is None))
+            ):
+                measured = await _measure_manual_proposal(db, project_id, test_fingerprint)
+                if measured is not None:
+                    flip_rate, flip_window_size, measured_passes, measured_fails = measured
+                    if pass_count is None and fail_count is None:
+                        pass_count, fail_count = measured_passes, measured_fails
 
             if existing is not None:
                 before = _snapshot(existing)
@@ -850,6 +924,10 @@ async def propose_quarantine(
                 if existing.status == FlakyQuarantineStatus.DETECTED.value:
                     existing.status = FlakyQuarantineStatus.PROPOSED.value
                     existing.proposed_at = now
+                # D-53: a person proposing a row the detectors found becomes its
+                # proposer; an earlier proposer is kept.
+                if proposer_id is not None and getattr(existing, "proposed_by_user_id", None) is None:
+                    existing.proposed_by_user_id = proposer_id
                 existing.updated_at = now
                 await db.commit()
                 await db.refresh(existing)
@@ -881,6 +959,7 @@ async def propose_quarantine(
                 detected_at=now,
                 last_failure_at=now,
                 proposed_at=now,
+                proposed_by_user_id=proposer_id,
                 quarantine_duration_days=quarantine_duration_days,
                 rationale=rationale,
             )

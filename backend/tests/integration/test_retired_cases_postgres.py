@@ -109,7 +109,7 @@ async def _what_counts(world) -> dict:
             suite_name=SUITE, project_id=world.project.id, page=1, size=50, limit=None,
             db=session, current_user=world.lead,
         )
-    suite_count = next((s["test_count"] for s in suites if s["suite_name"] == SUITE), 0)
+    suite_count = next((s["authored_count"] for s in suites if s["suite_name"] == SUITE), 0)
     return {
         "never_executed": sorted(str(g["id"]) for g in gaps),
         "never_executed_total": gap_total,

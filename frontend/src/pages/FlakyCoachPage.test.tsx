@@ -107,7 +107,7 @@ describe('FlakyCoachBody — the Flakiness score column (W09 FLK-03)', () => {
     expect(scoreCellOf('thin')).toHaveTextContent(/^insufficient$/)
     expect(scoreCellOf('thin').querySelector('[title="3 of 5 observations"]')).not.toBeNull()
     expect(scoreCellOf('pending')).toHaveTextContent(/^not scored yet$/)
-    expect(scoreCellOf('pending').querySelector('[title="Scores are computed nightly"]')).not.toBeNull()
+    expect(scoreCellOf('pending').querySelector('[title="Scores are computed nightly, or press Refresh"]')).not.toBeNull()
     expect(scoreCellOf('failed')).toHaveTextContent(/^—$/)
     expect(scoreCellOf('failed').querySelector('[title="Score not available"]')).not.toBeNull()
     // A malformed enrichment reads as unavailable, and the page still renders.
@@ -152,7 +152,7 @@ describe('FlakyCoachBody — the Flakiness score column (W09 FLK-03)', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'test_pending' }))
     panel = screen.getByRole('complementary', { name: 'test_pending' })
-    expect(within(panel).getByText('Not scored yet: the score is computed nightly from the last 30 days.')).toBeInTheDocument()
+    expect(within(panel).getByText('Not scored yet: scores are computed nightly, or press Refresh.')).toBeInTheDocument()
 
     for (const fp of ['failed', 'garbage']) {
       fireEvent.click(screen.getByRole('button', { name: `test_${fp}` }))
@@ -181,6 +181,26 @@ describe('FlakyCoachBody — the Flakiness score column (W09 FLK-03)', () => {
     expect(order()).toEqual(['c', 'b', 'a', 'd'])
     fireEvent.change(sort, { target: { value: 'impact' } })
     expect(order()).toEqual(['a', 'b', 'c', 'd'])
+  })
+})
+
+// D-49 / D-51: persistent regressions stay on the worklist (F-010) but no longer read as the flakiest tests.
+describe('FlakyCoachBody — consistent failures are marked and follow the flaky rows (D-51)', () => {
+  const flaky = (fp: string) => ({ ...scoreEntry(fp, null), status_history: ['PASSED', 'FAILED', 'PASSED', 'FAILED'] })
+  const steady = (fp: string) => ({ ...scoreEntry(fp, null), status_history: ['PASSED', 'FAILED', 'FAILED', 'FAILED'] })
+  const order = () => Array.from(document.querySelectorAll('tr[data-flaky-row]')).map((tr) => tr.getAttribute('data-flaky-row'))
+  const rowOf = (fp: string) => document.querySelector(`tr[data-flaky-row="${fp}"]`) as HTMLElement
+
+  it('marks a row whose history does not alternate, and only that row', () => {
+    renderBody([steady('coupon'), flaky('timing')])
+    expect(within(rowOf('coupon')).getByText('consistent failure: look for a regression')).toBeInTheDocument()
+    expect(within(rowOf('timing')).queryByText(/consistent failure/)).toBeNull()
+  })
+
+  it('puts the flaky rows first by default, the consistent failures after, each in the server order', () => {
+    renderBody([steady('r1'), flaky('f1'), steady('r2'), flaky('f2')])
+    expect(screen.getByLabelText('Sort')).toHaveValue('impact')
+    expect(order()).toEqual(['f1', 'f2', 'r1', 'r2'])
   })
 })
 

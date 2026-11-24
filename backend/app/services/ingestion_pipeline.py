@@ -1051,6 +1051,19 @@ async def finalize_run(
 
     await _run_isolated("activity_ledger", _ledger)
 
+    # D-34: a project's first coverage snapshot, so Coverage > History has a
+    # point today instead of after the 00:05 UTC beat. One indexed probe once
+    # the project has any snapshot. Isolated and counted like the steps above
+    # (a failure leaves the run intact; the beat takes the snapshot anyway), and
+    # before the readiness gate's cache clear below, so the history read
+    # refills with the new point.
+    from app.services.coverage_snapshot_service import stage_first_snapshot
+
+    await _run_isolated(
+        "coverage_first_snapshot",
+        lambda d: stage_first_snapshot(d, pid),
+    )
+
     # This is the readiness gate: a relay cannot observe the child intents as
     # pending until finalization has reached its end. If this commit fails, the
     # owning Celery task retries finalization and activates the same unique rows.

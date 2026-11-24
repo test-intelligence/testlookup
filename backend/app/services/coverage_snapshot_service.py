@@ -19,9 +19,11 @@ It is stored in ``coverage_snapshots`` (0001's column names: ``total_tests``
 ``snapshot_day`` := D, ``snapshot_date`` := when it was written). One row a
 project a day (``uq_coverage_snapshots_project_day``): the daily beat UPSERTS
 yesterday and every missing day of the last 30, so a second run of the beat
-rewrites a day with its newer values and never duplicates it. Today's partial
-day is never stored. A snapshot is a row of its own, so the history survives a
-run purge.
+rewrites a day with its newer values and never duplicates it. The beat never
+stores today's partial day; the one exception is a project's FIRST snapshot
+(D-34, ``stage_first_snapshot``), taken for today when one of its runs finishes
+and rewritten by that night's beat. A snapshot is a row of its own, so the
+history survives a run purge.
 
 **The untagged tests** are the distinct tests whose executions in the window
 carry no suite label: no effective suite, or one of the labels the Coverage
@@ -69,7 +71,10 @@ SUITE_ROWS_MAX: Final = 50
 #: (``CoveragePage.tsx`` ``isUntaggedRow``; ``trend_summary_service``'s list
 #: minus the empty string, which the effective suite already reads as NULL).
 UNTAGGED_LABELS: Final = ("unknown suite", "unknown", "untagged")
-NO_SNAPSHOT_REASON: Final = "No coverage snapshot yet: the first is taken at 00:05 UTC."
+NO_SNAPSHOT_REASON: Final = (
+    "No coverage snapshot yet: the first is taken when a run of this project finishes, "
+    "or at 00:05 UTC."
+)
 
 _UTC = timezone.utc
 
@@ -229,6 +234,43 @@ async def missing_days(
     return [first + timedelta(days=n) for n in range(back) if first + timedelta(days=n) not in stored]
 
 
+async def stage_first_snapshot(
+    db: AsyncSession, project_id: uuid.UUID, *, today: Optional[date] = None,
+) -> bool:
+    """D-34: the project's FIRST snapshot, taken when one of its runs finishes.
+
+    The history had no point until the 00:05 UTC beat, so a project created or
+    imported today read "No coverage snapshot yet" all day. While the project
+    has no snapshot for a day before today, stage (upsert) one for TODAY (the
+    30 days ending now, so the run that just finished is counted) and return
+    True; otherwise do nothing (one indexed probe -- every run after the
+    project's first day costs only that).
+
+    It is provisional: tonight's beat rewrites that day as "yesterday" with the
+    finished day's values (``days_to_snapshot`` always rewrites yesterday), so
+    the beat's rule -- a stored day is a finished day -- holds from then on.
+    Flush only; the caller commits.
+    """
+    day = today or utc_today()
+    # Review of D-34: only a FINISHED day (before today) ends the project's first
+    # day. Until then each finished run rewrites today's provisional point, so a
+    # bulk upload on day one is not frozen at its first run's partial coverage.
+    exists = (
+        await db.execute(
+            scoped_text(
+                "SELECT 1 FROM coverage_snapshots WHERE project_id = :snap_project"
+                " AND snapshot_day < :snap_today LIMIT 1",
+                {},
+            ),
+            {"snap_project": project_id, "snap_today": day},
+        )
+    ).scalar_one_or_none()
+    if exists is not None:
+        return False
+    await stage_snapshot(db, project_id, day, await snapshot_values(db, project_id, day))
+    return True
+
+
 def days_to_snapshot(missing: list[date], today: date) -> list[date]:
     """What one beat stores for a project: every missing day plus yesterday
     (rewritten, so a late upload of yesterday's runs is counted), ascending.
@@ -299,8 +341,10 @@ async def coverage_history(db: AsyncSession, scope: AnalyticsScope, *, today: Op
 HISTORY_DEFINITIONS: Final = {
     "snapshot": (
         "One snapshot a project a UTC day, taken by the daily job at 00:05 UTC for the "
-        "day before (and for every missing day of the last 30). A day with no snapshot "
-        "is absent from points: a gap, never 0."
+        "day before (and for every missing day of the last 30). A project's very first "
+        "snapshot is taken for today when one of its runs finishes, and the daily job "
+        "rewrites that day once it has ended. A day with no snapshot is absent from "
+        "points: a gap, never 0."
     ),
     "catalogue_tests": (
         "Canonical tests of the project that existed on that day and were not deleted "
@@ -434,6 +478,7 @@ __all__ = [
     "missing_days",
     "snapshot_values",
     "snapshot_window",
+    "stage_first_snapshot",
     "stage_snapshot",
     "untagged_tests",
     "utc_today",

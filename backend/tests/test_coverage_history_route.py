@@ -60,7 +60,9 @@ async def test_the_body_is_exactly_the_contract_s(served):
     body = await router.coverage_history.__wrapped__(scope=_scope(), db=object())
     assert set(body) == BODY_KEYS | {"meta"}
     assert body["measured"] is False
-    assert body["reason"] == "No coverage snapshot yet: the first is taken at 00:05 UTC."
+    assert body["reason"] == (
+        "No coverage snapshot yet: the first is taken when a run of this project finishes, or at 00:05 UTC."
+    )
     assert served["meta"]["measured"] is False and served["meta"]["reason"] == body["reason"]
     assert served["meta"]["ignored_filters"] == []
     assert set(body["meta"]["definitions"]) >= {"snapshot", "catalogue_tests", "exercised_pct", "scope"}

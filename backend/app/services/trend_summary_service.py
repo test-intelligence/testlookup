@@ -122,8 +122,16 @@ def summarize(
     *,
     days: int,
     today: date,
+    first_run_day: Optional[date] = None,
 ) -> dict:
-    """The trend summary of ``days`` UTC days ending ``today`` (the §1.3 body without ``meta``)."""
+    """The trend summary of ``days`` UTC days ending ``today`` (the §1.3 body without ``meta``).
+
+    D-24 / S-E-2: ``first_run_day`` is the scope's first run ever. Days of the
+    window before it are "before the first run", not silence: they leave the
+    gap scan and the ``data_coverage`` denominator (``history_days``, the
+    window's days from the first run, capped at the window). ``None`` (not
+    known, or before the window) keeps the whole window.
+    """
     by_date: dict[str, Mapping[str, Any]] = {}
     for trend_row in trend_rows:
         by_date[str(trend_row.get("date") or "")[:10]] = trend_row
@@ -144,6 +152,16 @@ def summarize(
     active = [cell for cell in cells if cell.executions > 0]
     days_with_runs = len(active)
     empty_days = len(cells) - days_with_runs
+
+    # D-24: the window's cells from the first run on. A first run inside the
+    # window drops the leading cells; one before it (or unknown) keeps all.
+    history_cells = cells
+    if first_run_day is not None and cells:
+        first_iso = first_run_day.isoformat()
+        if first_iso > cells[0].iso:
+            history_cells = [cell for cell in cells if cell.iso >= first_iso]
+    history_days = len(history_cells)
+    history_active = sum(1 for cell in history_cells if cell.executions > 0)
 
     passed = sum(_int(row, "passed") for row in trend_rows)
     failed = sum(_int(row, "failed") for row in trend_rows)
@@ -177,7 +195,8 @@ def summarize(
 
     share = untagged_share(suites)
     scores = {
-        "data_coverage": min(100, (days_with_runs / days) * 100) if days > 0 else 0,
+        # S-E-2: over the days since the first run, not days the project did not exist.
+        "data_coverage": min(100, (history_active / history_days) * 100) if history_days > 0 else 0,
         "sample_size": min(100, (total / SAMPLE_FULL_EXECUTIONS) * 100),
         "variance_stability": stability,
         "tag_quality": max(0, 100 - share * 100),
@@ -192,13 +211,16 @@ def summarize(
     previous_run_day = isos[-2] if len(isos) > 1 else None
 
     gap = None
-    if 0 < days_with_runs < days:
+    # D-24: the scan runs over the days since the first run only; the days
+    # before it are not a silence.
+    scan = history_cells
+    if 0 < history_active < history_days:
         longest = 0
         gap_start: Optional[str] = None
         gap_end: Optional[str] = None
         run_start = -1
         run_len = 0
-        for i, cell in enumerate(cells):
+        for i, cell in enumerate(scan):
             if cell.executions == 0:
                 if run_start == -1:
                     run_start = i
@@ -206,14 +228,14 @@ def summarize(
             else:
                 if run_len > longest:
                     longest = run_len
-                    gap_start = cells[run_start].iso if run_start >= 0 else None
-                    gap_end = cells[i - 1].iso if i > 0 else None
+                    gap_start = scan[run_start].iso if run_start >= 0 else None
+                    gap_end = scan[i - 1].iso if i > 0 else None
                 run_start = -1
                 run_len = 0
         if run_len > longest:
             longest = run_len
-            gap_start = cells[run_start].iso if run_start >= 0 else None
-            gap_end = cells[-1].iso
+            gap_start = scan[run_start].iso if run_start >= 0 else None
+            gap_end = scan[-1].iso
         gap = {
             "silent_days": longest,
             "start": gap_start,
@@ -248,6 +270,10 @@ def summarize(
         "days_with_runs": days_with_runs,
         "empty_days": empty_days,
         "active_day_share": round(days_with_runs / days, 4) if days > 0 else 0.0,
+        # D-24: the window's days from the first run on (= window_days when the
+        # first run is before the window or unknown), and that first run day.
+        "history_days": history_days,
+        "first_run_day": first_run_day.isoformat() if first_run_day is not None else None,
         "executions": {
             "total": total,
             "passed": passed,
@@ -303,4 +329,18 @@ async def trend_summary(db: AsyncSession, scope: AnalyticsScope, *, today: Optio
         db, scope.project, scope.window_days, scope.suite_arg,
         scope.allowed_project_ids, scope.release_arg,
     )
-    return summarize(trend, coverage.get("suites") or [], days=scope.window_days, today=day)
+    return summarize(
+        trend, coverage.get("suites") or [], days=scope.window_days, today=day,
+        first_run_day=await scope_first_run_day(db, scope),
+    )
+
+
+async def scope_first_run_day(db: AsyncSession, scope: AnalyticsScope) -> Optional[date]:
+    """D-24 / S-E-2: the UTC day of the scope's first run (project-level, the
+    caller's projects when unpinned), so days before it are not silence."""
+    from app.services import metrics_service  # noqa: PLC0415
+
+    first = await metrics_service.first_run_at(
+        db, scope.project, allowed_project_ids=scope.allowed_project_ids
+    )
+    return first.astimezone(timezone.utc).date() if first is not None else None

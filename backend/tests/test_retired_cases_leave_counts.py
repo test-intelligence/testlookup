@@ -196,7 +196,7 @@ async def test_the_suites_manual_count_leaves_retired_cases_out(monkeypatch):
 
     monkeypatch.setattr(suite_reviews, "list_suite_owners", _no_owners)
     manual = [SimpleNamespace(
-        suite_name="Checkout", test_count=2, passed_count=0, failed_count=0, last_run_at=None,
+        suite_name="Checkout", authored_count=2,
     )]
     db = SimpleNamespace(
         execute=AsyncMock(side_effect=[_Result(rows=[]), _Result(rows=[]), _Result(rows=manual)]),
@@ -214,7 +214,7 @@ async def test_the_suites_manual_count_leaves_retired_cases_out(monkeypatch):
     manual_sql = " ".join(str(db.execute.await_args_list[2].args[0]).split())
     assert "FROM managed_test_cases" in manual_sql
     assert "AND status NOT IN ('deprecated', 'archived')" in manual_sql
-    assert {s["suite_name"]: s["test_count"] for s in result} == {"Checkout": 2}
+    assert {s["suite_name"]: s["authored_count"] for s in result} == {"Checkout": 2}
 
 
 @pytest.mark.asyncio

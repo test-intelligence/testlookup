@@ -42,7 +42,7 @@ NOW = datetime.now(timezone.utc)
 PATH = "/api/v1/value-metrics/by-team"
 BODY_KEYS = {
     "window_days", "measured", "reason", "rules_configured", "teams",
-    "not_attributable_hours", "headline_hours", "meta",
+    "not_attributable_hours", "headline_hours", "available", "insufficient_data_reason", "meta",
 }
 BIG_RUNS, BIG_TESTS = 1500, 40
 

@@ -7,7 +7,8 @@
  * with the tab), never on the page's load. One project only: in All Projects
  * the section says so and asks nothing. Before the project's first snapshot
  * the server's reason is the message ("No coverage snapshot yet: the first is
- * taken at 00:05 UTC."). A missing or malformed answer reads "Coverage
+ * taken when a run of this project finishes, or at 00:05 UTC."). A missing
+ * or malformed answer reads "Coverage
  * history is not available" — the rest of the page is unaffected.
  *
  * A snapshot is project-wide: the page's suite and release filters do not
@@ -27,7 +28,9 @@ import { utcDayIso } from '@/utils/calendarDay'
 
 export const HISTORY_TITLE = 'Coverage history'
 export const HISTORY_UNAVAILABLE = 'Coverage history is not available'
-export const HISTORY_FIRST_SNAPSHOT = 'No coverage snapshot yet: the first is taken at 00:05 UTC.'
+/** D-34: the server's `NO_SNAPSHOT_REASON`, word for word (the fallback when it sends none). */
+export const HISTORY_FIRST_SNAPSHOT =
+  'No coverage snapshot yet: the first is taken when a run of this project finishes, or at 00:05 UTC.'
 export const HISTORY_PICK_PROJECT = 'Pick a project to see its coverage history'
 
 const MESSAGE = 'rounded-xl border px-4 py-6 text-center text-sm text-[var(--color-text-muted)]'

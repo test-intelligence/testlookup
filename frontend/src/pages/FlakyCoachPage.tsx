@@ -27,6 +27,7 @@ import {
   windowLine,
   type FlakySort,
 } from './flaky/flakyScoreModel'
+import { CONSISTENT_FAILURE_MARK, intermittentFirst, isIntermittent } from './flaky/flakyModel'
 
 type Recommendation = FlakyCoachEntry['quarantine_recommendation']
 
@@ -312,7 +313,9 @@ export function FlakyCoachBody({
   // A fingerprint is matched against the loaded entries only; it never reaches a request.
   const detail = useDetailParam('test', { accept: isDetailToken })
   const openFingerprint = detail.id
-  const ordered = sortEntries(entries, sort)
+  // D-51: by default the tests that pass and fail alternately come first; the
+  // consistent failures (kept on the worklist on purpose) follow, marked.
+  const ordered = sort === 'impact' ? intermittentFirst(sortEntries(entries, sort)) : sortEntries(entries, sort)
   const filtered = filter === 'all' ? ordered : ordered.filter((e) => e.quarantine_recommendation === filter)
   const open = openFingerprint ? entries.find((e) => e.test_fingerprint === openFingerprint) ?? null : null
   // The body renders once the analysis has loaded: a key no entry has (or not a token) is dropped.
@@ -416,6 +419,11 @@ export function FlakyCoachBody({
                       </button>
                       {entry.suite_name && (
                         <p className="truncate text-xs text-[var(--color-text-muted)]">{entry.suite_name}</p>
+                      )}
+                      {!isIntermittent(entry.status_history) && (
+                        <p data-consistent-failure="" className="truncate text-xs text-[var(--ui-warning-ink)]">
+                          {CONSISTENT_FAILURE_MARK}
+                        </p>
                       )}
                     </Td>
                     <Td>

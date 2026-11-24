@@ -122,7 +122,7 @@ describe('scoreCell', () => {
   it.each([
     ['scored', SCORED, { text: '0.62', band: 'medium', title: 'Flakiness score 0.62 · medium confidence · 23 observations' }],
     ['insufficient', INSUFFICIENT, { text: 'insufficient', band: null, title: '3 of 5 observations' }],
-    ['pending', PENDING, { text: 'not scored yet', band: null, title: 'Scores are computed nightly' }],
+    ['pending', PENDING, { text: 'not scored yet', band: null, title: 'Scores are computed nightly, or press Refresh' }],
   ])('%s', (_label, raw, expected) => {
     expect(scoreCell(parseFlakyScore(raw))).toEqual(expected)
   })
@@ -167,8 +167,9 @@ describe('the details section lines', () => {
 
   it('says insufficient and pending in words', () => {
     expect(insufficientLine(parseFlakyScore(INSUFFICIENT) as FlakyScoreBrief)).toBe('insufficient: 3 of 5 observations')
+    // D-50: Refresh queues the recompute too, so the line says so.
     expect(pendingLine(parseFlakyScore(PENDING) as FlakyScoreBrief)).toBe(
-      'Not scored yet: the score is computed nightly from the last 30 days.',
+      'Not scored yet: scores are computed nightly, or press Refresh.',
     )
   })
 })

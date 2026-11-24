@@ -302,6 +302,69 @@ describe('OverviewPage', () => {
     expect(kpiChange('Total executions')).toHaveAttribute('title', expect.stringMatching(/vs prev period/i))
   })
 
+  it('D-25: no fair earlier window reads "no earlier period to compare", with no % and no judgement', async () => {
+    const { useDashboardSummary, useTrendData } = await import('@/hooks/useMetrics')
+    mockDashboardData(useDashboardSummary, useTrendData)
+    ;(useDashboardSummary as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: {
+        release_readiness: 'GREEN',
+        total_executions_7d: { value: 2600, trend: null, trend_direction: 'none' },
+        avg_pass_rate_7d: { value: 84.7, trend: null, trend_direction: 'none' },
+        active_defects: { value: 4 },
+        flaky_test_count: { value: 2 },
+        new_failures_24h: { value: 3 },
+        avg_duration_ms: { value: 180000 },
+      },
+      isLoading: false,
+    })
+
+    render(
+      <MemoryRouter initialEntries={['/overview']}>
+        <Routes>
+          <Route path="/overview" element={<OverviewPage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    await screen.findByText('Total executions')
+    for (const title of ['Total executions', 'Avg pass rate']) {
+      const line = kpiChange(title)
+      expect(line).toHaveTextContent(/^no earlier period to compare$/)
+      expect(line.textContent).not.toMatch(/%|better|worse|No change/)
+    }
+  })
+
+  it('D-25: executions is a volume: an up trend is a word, never "(better)"', async () => {
+    const { useDashboardSummary, useTrendData } = await import('@/hooks/useMetrics')
+    mockDashboardData(useDashboardSummary, useTrendData)
+    ;(useDashboardSummary as ReturnType<typeof vi.fn>).mockReturnValue({
+      data: {
+        release_readiness: 'GREEN',
+        total_executions_7d: { value: 150, trend: 50, trend_direction: 'up' },
+        avg_pass_rate_7d: { value: 84.7, trend: 3, trend_direction: 'up' },
+        active_defects: { value: 4 },
+        flaky_test_count: { value: 2 },
+        new_failures_24h: { value: 3 },
+        avg_duration_ms: { value: 180000 },
+      },
+      isLoading: false,
+    })
+
+    render(
+      <MemoryRouter initialEntries={['/overview']}>
+        <Routes>
+          <Route path="/overview" element={<OverviewPage />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    await screen.findByText('Total executions')
+    expect(kpiChange('Total executions')).toHaveTextContent(/^Up 50% vs prev period$/)
+    expect(kpiCard('Total executions').querySelector('[data-trend-judgement]')).toBeNull()
+    // A pass rate is still judged.
+    expect(kpiCard('Avg pass rate').querySelector('[data-trend-judgement]')).toHaveTextContent('(better)')
+  })
+
   // UX redesign P3: "Eng-hours saved" leaves Home for Reports › Value (spec
   // §5, Home, Delete). Home neither shows it nor asks for it.
   it('shows no Eng-hours saved KPI and does not read value metrics (it lives on Reports › Value)', async () => {

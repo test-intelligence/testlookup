@@ -188,7 +188,9 @@ describe('Sidebar (UX redesign P1): flat items from navConfig', () => {
     mockCounts.inbox = 7
     renderAt('/overview')
     const inbox = document.querySelector('[data-nav-id="inbox"]') as HTMLElement
-    expect(within(inbox).getByLabelText('7 assigned failures')).toHaveTextContent('7')
+    expect(within(inbox).getByTitle('7 assigned failures, all projects, 30 days')).toHaveTextContent('7')
+    // D-37: the badge counts every project over a fixed 30 days; it says so on hover too.
+    expect(within(inbox).getByTitle(/all projects, 30 days/)).toHaveTextContent('7')
   })
 
   it('Runs shows a live dot while a run is reporting, and none otherwise', () => {

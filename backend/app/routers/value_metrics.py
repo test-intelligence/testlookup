@@ -123,7 +123,13 @@ _TEAM_DEFINITIONS = {
     "headline_hours": (
         "The window's hours-saved total, computed in this request from the same legs "
         "over the same window, so the teams' hours plus not_attributable_hours equal it. "
-        "It is not gated on the Overview's minimum history."
+        "It is not gated on the Overview's minimum history; available says whether "
+        "the page may show it."
+    ),
+    "available": (
+        "The Overview's own gate on the hours-saved headline (runs ingested, at least the "
+        "minimum days of history, a nonzero total in the window). When false, hours are "
+        "not estimated yet and insufficient_data_reason says why."
     ),
 }
 
@@ -139,7 +145,8 @@ async def get_metrics_by_team(
     One row per team (``Unassigned`` last): tests, executions, the evaluated
     pass rate, flaky tests, defects and MTTR, and the hours saved attributed
     from the headline's own legs, plus ``not_attributable_hours`` (runs
-    unblocked by quarantine) and ``headline_hours``. ``rules_configured:
+    unblocked by quarantine) and ``headline_hours``, with the Overview's own
+    gate as ``available`` / ``insufficient_data_reason`` (D-15). ``rules_configured:
     false`` / ``measured: false`` when the project has no ownership rules and
     no component map. ``release_id`` / ``suite_name`` are accepted, authorised
     and declared in ``meta.ignored_filters``: these are project-level counts

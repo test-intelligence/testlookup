@@ -20,15 +20,62 @@ import type { QuarantineStatsResponse, QuarantineStatus } from '@/services/flaky
  * single flaky test is the common case — so the nouns have to agree rather
  * than sit hardcoded plural ("1 flaky tests").
  */
-export function flakySubtitle(coach: Pick<FlakyCoachResponse, 'total_flaky' | 'quarantine_candidates'> | undefined): string {
+export function flakySubtitle(
+  coach: Pick<FlakyCoachResponse, 'total_flaky' | 'quarantine_candidates'> & { entries?: readonly unknown[] } | undefined,
+): string {
   // No answer yet (loading, or the analysis failed) is not "0 flaky tests":
   // the header read that for the 30 s a starved request took while the list
   // below it later showed two (E2E 2026-10-10).
   if (!coach) return 'Counting flaky tests · last 30 days'
   const flakyCount = coach.total_flaky ?? 0
   const candidateCount = coach.quarantine_candidates ?? 0
-  return `${flakyCount} flaky test${flakyCount === 1 ? '' : 's'} · ${candidateCount} quarantine candidate${candidateCount === 1 ? '' : 's'} · last 30 days`
+  const candidates = `${candidateCount} quarantine candidate${candidateCount === 1 ? '' : 's'}`
+  // D-49: the Detected tab counts every row it lists (persistent regressions
+  // stay on the worklist, F-010), the "flaky" count only the tests that pass
+  // and fail alternately. Both numbers are said, so the tab and the header
+  // agree instead of reading 28 beside 4.
+  if (coach.entries) {
+    const flagged = coach.entries.length
+    return `${flagged} test${flagged === 1 ? '' : 's'} flagged · ${flakyCount} flaky (pass and fail alternately) · ${candidates} · last 30 days`
+  }
+  return `${flakyCount} flaky test${flakyCount === 1 ? '' : 's'} · ${candidates} · last 30 days`
 }
+
+/**
+ * Does this row's stored history pass and fail alternately? The client copy of
+ * the backend's `history_is_intermittent` (test_health_coach_service.py), the
+ * rule behind `total_flaky`: at least 2 adjacent pass/fail changes
+ * (`MIN_FLIPS_FOR_INTERMITTENCY`), and a manual-triage row (its history is the
+ * one sentinel) always counts. Change both together.
+ */
+export const MANUAL_TRIAGE_HISTORY_SENTINEL = 'FLAKY (manual triage)'
+const MIN_FLIPS_FOR_INTERMITTENCY = 2
+const FAILED_SPELLINGS = new Set(['FAILED', 'BROKEN', 'TestStatus.FAILED', 'TestStatus.BROKEN'])
+
+export function isIntermittent(history: readonly string[] | null | undefined): boolean {
+  const statuses = history ?? []
+  if (statuses.length === 1 && statuses[0] === MANUAL_TRIAGE_HISTORY_SENTINEL) return true
+  // The backend also accepts the enum's str() spelling an older writer stored.
+  const failed = statuses.map((s) => FAILED_SPELLINGS.has(s))
+  let flips = 0
+  for (let i = 1; i < failed.length; i += 1) if (failed[i] !== failed[i - 1]) flips += 1
+  return flips >= MIN_FLIPS_FOR_INTERMITTENCY
+}
+
+/**
+ * The Detected list's default order (D-51): the tests that pass and fail
+ * alternately first, then the consistent failures, each group keeping the
+ * order it came in (the server's impact order).
+ */
+export function intermittentFirst<T extends { status_history?: readonly string[] | null }>(entries: readonly T[]): T[] {
+  return [
+    ...entries.filter((e) => isIntermittent(e.status_history)),
+    ...entries.filter((e) => !isIntermittent(e.status_history)),
+  ]
+}
+
+/** The Detected row mark for a non-intermittent row (D-51). */
+export const CONSISTENT_FAILURE_MARK = 'consistent failure: look for a regression'
 
 /** The three views of the quarantine state machine (Flaky tests › Proposed · Quarantined · History). */
 export type QuarantineView = 'proposals' | 'active' | 'history'

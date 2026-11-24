@@ -61,8 +61,14 @@ function OwnerCell({ aggregate }: { aggregate: SuiteAggregate }) {
 }
 
 function AggregateCells({ aggregate }: { aggregate: SuiteAggregate | undefined }) {
-  const none = 'No run has reported this suite'
-  if (!aggregate || aggregate.empty) {
+  // D-59: a suite of authored cases only has no test that ran: its run cells say
+  // "not run yet" (a dash), never a 0 failing or 0 executions.
+  const authoredOnly = !!aggregate && !aggregate.empty && aggregate.test_count === 0
+    && (aggregate.run_count ?? 0) === 0 && (aggregate.authored_count ?? 0) > 0
+  const none = authoredOnly
+    ? 'Only authored cases so far: no run has reported this suite yet'
+    : 'No run has reported this suite'
+  if (!aggregate || aggregate.empty || authoredOnly) {
     // No row, or an `empty` one (W13 TCL-07: a suite no result reports yet):
     // the four run cells say "no run"; an empty row still names its owner.
     return (
@@ -430,6 +436,15 @@ export default function SuitesPage() {
                     </td>
                     <td className="px-4 py-3 text-right tabular-nums text-[var(--color-text-muted)]">
                       {s.test_case_count ?? '—'}
+                      {showRunColumns && (() => {
+                        // D-59: the suite's authored cases, apart from its run statistics.
+                        const authored = aggregates.byName.get(s.name.trim())?.authored_count ?? 0
+                        return authored > 0 ? (
+                          <div data-authored-count="" className="whitespace-nowrap text-2xs text-[var(--color-text-faint)]" title="Authored cases in this suite (not Deprecated or Archived)">
+                            {authored} authored
+                          </div>
+                        ) : null
+                      })()}
                     </td>
                     {showRunColumns && <AggregateCells aggregate={aggregates.byName.get(s.name.trim())} />}
                     <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>

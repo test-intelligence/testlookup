@@ -1016,6 +1016,8 @@ jobs:
           tests/integration/test_embedding_generation_postgres.py
           tests/integration/test_migration_0228_0229_postgres.py
           tests/integration/test_tm_suites_empty_rows_postgres.py
+          tests/integration/test_test_management_suites_catalogue_postgres.py
+          tests/integration/test_inbox_counts_agree_postgres.py
           tests/integration/test_test_case_list_filters_postgres.py
           tests/integration/test_library_health_postgres.py
           tests/integration/test_test_case_timeline_postgres.py

@@ -45,7 +45,8 @@ import { helpTopicParam } from '@/components/help/helpTopics'
 import { formatRunWhen } from '@/utils/formatters'
 import { runBuildLabel } from '@/utils/runOption'
 import { SEVERITY_STYLE, severityLevel } from '@/components/ui/severity'
-import { useMyFailures, useReassignOptions } from '@/hooks/useMyFailures'
+import { useMyFailures, useMyFailuresCountUnscoped, useReassignOptions } from '@/hooks/useMyFailures'
+import { useReleaseScope } from '@/hooks/useReleaseScope'
 import { useProjectStore, ALL_PROJECTS_ID } from '@/store/projectStore'
 import { snapToAllowed, useTimeWindowStore } from '@/store/timeWindowStore'
 import { useAuthStore } from '@/store/authStore'
@@ -96,6 +97,7 @@ export default function MyFailuresPage() {
   const { isQaLead } = usePermissions()
   const project = useProjectStore(s => s.activeProject)
   const activeProjectId = useProjectStore(s => s.activeProjectId)
+  const setActiveProject = useProjectStore(s => s.setActiveProject)
   const isAllProjects = activeProjectId === ALL_PROJECTS_ID
   // The Approvals queues belong to one project: their count is only asked for
   // (and only shown) while one is active.
@@ -149,7 +151,19 @@ export default function MyFailuresPage() {
 
   const { data, isLoading, error } = useMyFailures({ days, page, size, scope: effectiveScope })
 
+  // D-37: the sidebar badge counts your failures in EVERY project; this list
+  // counts one. Asked over this page's window (not the badge's fixed 30 days)
+  // so the difference is only the other projects. Not under a release: the
+  // list is then narrowed by release too, and the difference would mix both.
+  const release = useReleaseScope()
+  const { data: everywhere } = useMyFailuresCountUnscoped({ days })
+  const elsewhere =
+    singleProjectId && effectiveScope === 'mine' && !release && data && everywhere
+      ? Math.max(0, everywhere.count - data.unresolved_total)
+      : 0
+
   const scopeLabel = isAllProjects ? 'all your projects' : (project?.name ?? 'the selected project')
+  const windowText = days === 1 ? 'the last 24 hours' : `the last ${days} days`
 
   const subtitle =
     tab === 'insights'
@@ -164,8 +178,8 @@ export default function MyFailuresPage() {
         ? effectiveScope === 'team'
           // The tab reads "Assigned to me" but opens on the team inbox for
           // leads, so the subtitle has to say whose failures these are.
-          ? `Every unresolved failure across ${scopeLabel}. Updated every 30 seconds.`
-          : `Failures assigned to you across ${scopeLabel}. Updated every 30 seconds.`
+          ? `Every unresolved failure across ${scopeLabel} in ${windowText}. Updated every 30 seconds.`
+          : `Failures assigned to you across ${scopeLabel} in ${windowText}. Updated every 30 seconds.`
         : 'Sign in to see your assigned failures.'
 
   return (
@@ -237,6 +251,18 @@ export default function MyFailuresPage() {
               </span>
             )}
           </div>
+
+          {elsewhere > 0 && (
+            <button
+              type="button"
+              data-testid="inbox-elsewhere"
+              onClick={() => setActiveProject(null)}
+              className="text-xs text-[var(--color-accent)] hover:underline"
+              title="Show your failures from every project"
+            >
+              {elsewhere} more in other projects
+            </button>
+          )}
 
           {/* Body: the page's primary content */}
           <section data-primary="" aria-label="Assigned failures" className="space-y-3">
@@ -380,7 +406,9 @@ function FailureRow({
 }) {
   const dot = severityDot(item.severity)
   const count = item.failure_count ?? 1
-  const windowLabel = windowDays === 1 ? '24h' : `${windowDays}d`
+  // D-38: the count is every failure of this test in the window, whoever holds
+  // it, so the lead and the assignee read the same number.
+  const windowLabel = windowDays === 1 ? '24 hours' : `${windowDays} days`
   // Visual emphasis scales with repetition — a single failure stays neutral,
   // 2-4 is amber, 5+ is red so repeat offenders pop without screen-real-estate cost.
   // The count's words on its tint read the hue's -ink (>= 4.5:1 in every theme, W29a UIX-03).

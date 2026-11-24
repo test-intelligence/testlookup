@@ -119,4 +119,32 @@ async def refresh_project_flaky_coach(
     count = await refresh_flaky_coach(project_id, db, days=days)
     await db.commit()
 
-    return {"status": "completed", "flaky_tests_found": count}
+    # D-50: the four-signal flakiness score was written only by the 06:10 UTC
+    # beat, so a new project (or a fresh import) read "Not scored yet" for up to
+    # a day. Refresh now queues the same task for THIS project only (one 30-day
+    # read, on the ``default`` queue): it fits the worker pool, never the sweep.
+    return {
+        "status": "completed",
+        "flaky_tests_found": count,
+        "scores_queued": _enqueue_flaky_score_recompute(project_id),
+    }
+
+
+def _enqueue_flaky_score_recompute(project_id: uuid.UUID) -> bool:
+    """Queue ``recompute_flaky_scores`` for one project; True when the broker took it.
+
+    The coach refresh above has already committed: a broker outage must not
+    turn it into an error, so a failed enqueue is logged and reported as False.
+    """
+    try:
+        from app.worker.tasks import recompute_flaky_scores
+
+        recompute_flaky_scores.apply_async(kwargs={"project_id": str(project_id)})
+        return True
+    except Exception as exc:  # noqa: BLE001 - the refresh itself succeeded
+        logger.warning(
+            "flaky_score_recompute_not_queued project_id=%s error_type=%s",
+            project_id,
+            type(exc).__name__,
+        )
+        return False

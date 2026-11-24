@@ -173,7 +173,7 @@ async def build_trends_report(db: AsyncSession, scope: AnalyticsScope) -> dict:
     """The trends report of ``scope``: the page's reads, its summary, its envelope."""
     from app.services import analytics_service, metrics_service  # noqa: PLC0415
     from app.services.analytics_meta import build_meta, utc_day_window_start  # noqa: PLC0415
-    from app.services.trend_summary_service import summarize, utc_today  # noqa: PLC0415
+    from app.services.trend_summary_service import scope_first_run_day, summarize, utc_today  # noqa: PLC0415
 
     days = scope.window_days
     trend = await metrics_service.get_trend_data(
@@ -196,7 +196,11 @@ async def build_trends_report(db: AsyncSession, scope: AnalyticsScope) -> dict:
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "trend": trend,
         "suites": suites,
-        "summary": summarize(trend, suites, days=days, today=utc_today()),
+        # D-24: the same first-run day the page's trend summary reads.
+        "summary": summarize(
+            trend, suites, days=days, today=utc_today(),
+            first_run_day=await scope_first_run_day(db, scope),
+        ),
         "pass_rate_delta_pp": _delta(dashboard),
         "meta": meta,
     }

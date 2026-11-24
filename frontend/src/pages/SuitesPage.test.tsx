@@ -327,6 +327,31 @@ describe('SuitesPage — run columns (P4)', () => {
     expect(cell(row, 'failing')).toHaveTextContent('0')
   })
 
+  it('D-59: authored cases show beside the test count and leave the run columns alone', () => {
+    mockUseSuiteAggregates.mockReturnValue(aggregates([auth({ authored_count: 2 })]))
+    renderPage({ data: SUITES, isLoading: false, error: undefined })
+    const row = rowOf('auth-api')
+    expect(row.querySelector('[data-authored-count]')).toHaveTextContent('2 authored')
+    expect(cell(row, 'pass-rate')).toHaveTextContent('75.0%')
+    expect(cell(row, 'failing')).toHaveTextContent('1')
+    // A suite without authored cases names none.
+    expect(rowOf('All Tests').querySelector('[data-authored-count]')).toBeNull()
+  })
+
+  it('D-59: a suite of authored cases only has not run: every run cell a dash, never 0 failing', () => {
+    mockUseSuiteAggregates.mockReturnValue(aggregates([auth({
+      authored_count: 3, test_count: 0, passed_count: 0, failed_count: 0, pass_rate: null,
+      last_run_at: null, last_run_id: null, run_count: 0, total_executions: 0,
+    })]))
+    renderPage({ data: SUITES, isLoading: false, error: undefined })
+    const row = rowOf('auth-api')
+    expect(row.querySelector('[data-authored-count]')).toHaveTextContent('3 authored')
+    const runDashes = within(row).getAllByTitle('Only authored cases so far: no run has reported this suite yet')
+    expect(runDashes).toHaveLength(4)
+    for (const dash of runDashes) expect(dash).toHaveTextContent('—')
+    expect(cell(row, 'owner')).toHaveTextContent('Dana Lead')
+  })
+
   it('the aggregates read failed: the page says the run columns are empty because of it', () => {
     mockUseSuiteAggregates.mockReturnValue(aggregates([], new Error('boom')))
     renderPage({ data: SUITES, isLoading: false, error: undefined })

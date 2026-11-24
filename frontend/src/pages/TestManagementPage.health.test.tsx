@@ -114,6 +114,25 @@ describe('/test-management Cases: the library health is the server\'s (W13 TCL-0
     expect(screen.queryByTestId('library-health-stat-basis')).toBeNull()
   })
 
+  it('D-65: a library too small to rate is "Getting started", never "At risk", with its facts', () => {
+    answer({ ...LIBRARY_HEALTH_FIXTURE, score: 65, tag: 'Getting started' })
+    renderTab()
+    expect(banner()).toHaveTextContent('Library health: not enough cases to rate yet')
+    expect((banner().querySelector('[data-banner-pill]') as HTMLElement).textContent).toBe('GETTING STARTED')
+    expect(banner()).not.toHaveTextContent(/AT RISK|65\/100/)
+    expect(facts()).toEqual(['Cases 3', 'Awaiting review 1', 'Automated 33%', 'Stale drafts 0'])
+    const insights = openInsights()
+    expect(insights.querySelector('[data-health-getting-started]')).toHaveTextContent('Not enough cases to rate yet')
+    expect(insights).not.toHaveTextContent('At risk')
+  })
+
+  it('D-65: the Automated fact is the share of cases, not the component score (progress to the target)', () => {
+    const automation = { ...LIBRARY_HEALTH_FIXTURE.components[0], value: 100, numerator: 6, denominator: 10 }
+    answer({ ...LIBRARY_HEALTH_FIXTURE, total_cases: 10, components: [automation, ...LIBRARY_HEALTH_FIXTURE.components.slice(1)] })
+    renderTab()
+    expect(facts()).toContain('Automated 60%')
+  })
+
   it('holds no 200-row roll: the only cases read is the table\'s page', () => {
     renderTab()
     const sizes = vi.mocked(useTestCases).mock.calls.map(([params]) => params?.size)

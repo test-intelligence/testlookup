@@ -47,6 +47,19 @@ describe('buildCoverageHistoryModel', () => {
     expect(model.largest).toBe(100)
   })
 
+  it("D-34: a project's first snapshot, taken today when its first run finished, is drawn on today", () => {
+    const model = buildCoverageHistoryModel({ points: [p('2026-10-16', 12, 100, 12)], days: 3, todayIso: '2026-10-16' })
+    expect(model.rows.map((r) => [r.x, r.catalogue, r.stored])).toEqual([
+      ['2026-10-13', null, false],
+      ['2026-10-14', null, false],
+      ['2026-10-15', null, false],
+      ['2026-10-16', 12, true],
+    ])
+    expect(model.stored).toBe(1)
+    // Without a point for today the axis still ends yesterday (no empty "today" slot).
+    expect(buildCoverageHistoryModel({ points, days: 3, todayIso: '2026-10-16' }).rows.slice(-1)[0]?.x).toBe('2026-10-15')
+  })
+
   it('the table series says why a value is missing', () => {
     const model = buildCoverageHistoryModel({ points, days: 3, todayIso: '2026-10-16' })
     const series = coverageHistoryToChartSeries(model)

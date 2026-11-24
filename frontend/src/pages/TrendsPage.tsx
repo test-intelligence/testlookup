@@ -1409,7 +1409,27 @@ export default function TrendsPage() {
             trend_text: `${Math.round(Math.abs(passRateDelta) * 10) / 10} pp vs ${previousWindowLabel}`,
           }
         : { trend_direction: 'none', trend_text: `${model.daysWithRuns} active days` }
-  const daysWithRunsPct = model.windowDays > 0 ? Math.round((model.daysWithRuns / model.windowDays) * 100) : 0
+  // D-24: a project younger than the window is judged on the days since its
+  // first run (the server's `history_days`), never on days it did not exist.
+  const historyDays =
+    typeof summary?.history_days === 'number' && summary.history_days > 0 && summary.history_days < model.windowDays
+      ? summary.history_days
+      : null
+  const daysBase = historyDays ?? model.windowDays
+  const daysWithRunsPct = daysBase > 0 ? Math.round((model.daysWithRuns / daysBase) * 100) : 0
+  const daysWithRunsTile = historyDays != null
+    ? {
+        value: `${model.daysWithRuns} / ${historyDays}`,
+        trend_text: model.daysWithRuns < historyDays * 0.5
+          ? `days since the first run (window ${model.windowDays}) — schedule may be paused`
+          : `days since the first run (window ${model.windowDays})`,
+      }
+    : {
+        value: `${model.daysWithRuns} / ${model.windowDays}`,
+        trend_text: model.daysWithRuns < model.windowDays * 0.5
+          ? `${daysWithRunsPct}% — schedule may be paused`
+          : `${daysWithRunsPct}% of window`,
+      }
 
   const lastRunRel = model.lastRunIso ? relativeAgo(model.lastRunIso) : '—'
   const previousRunRel = model.previousRunIso ? relativeAgo(model.previousRunIso) : null
@@ -1527,13 +1547,7 @@ export default function TrendsPage() {
           />
           <MetricCard
             title="Days with runs"
-            metric={{
-              value: `${model.daysWithRuns} / ${model.windowDays}`,
-              trend_direction: 'none',
-              trend_text: model.daysWithRuns < model.windowDays * 0.5
-                ? `${daysWithRunsPct}% — schedule may be paused`
-                : `${daysWithRunsPct}% of window`,
-            }}
+            metric={{ ...daysWithRunsTile, trend_direction: 'none' }}
           />
           <MetricCard
             title="Executions"

@@ -19720,6 +19720,29 @@ These are the full generated JSON Schema definitions, including required fields,
       ],
       "title": "Proposed At"
     },
+    "proposed_by_name": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Proposed By Name"
+    },
+    "proposed_by_user_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Proposed By User Id"
+    },
     "quarantine_duration_days": {
       "title": "Quarantine Duration Days",
       "type": "integer"

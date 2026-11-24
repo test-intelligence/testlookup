@@ -304,3 +304,35 @@ describe('File Jira knows whether Jira is available before the form opens (D-43)
     expect(jira.keys).toEqual([])
   })
 })
+
+describe('D-53: the Proposed tab names who asked', () => {
+  it('reads "Proposed by {name}", "Detected automatically", or "Proposed manually" for an older manual row', () => {
+    hooks.requests = [
+      row('a', 'PROPOSED', { detection_method: 'manual', proposed_by_name: 'Quinn Lead' }),
+      row('b', 'PROPOSED', { detection_method: 'pass_fail_ratio', proposed_by_name: null }),
+      row('c', 'PROPOSED', { detection_method: 'manual', proposed_by_name: null }),
+    ]
+    renderBody('proposals')
+    const lines = screen
+      .getAllByTestId('quarantine-row')
+      .map((tr) => tr.querySelector('[data-quarantine-proposer]')?.textContent)
+    expect(lines).toEqual(['Proposed by Quinn Lead', 'Detected automatically', 'Proposed manually'])
+  })
+
+  it('shows no proposer line on the Quarantined tab', () => {
+    hooks.requests = [row('a', 'QUARANTINED', { detection_method: 'manual', proposed_by_name: 'Quinn Lead' })]
+    renderBody('active')
+    expect(screen.queryByText('Proposed by Quinn Lead')).toBeNull()
+  })
+})
+
+describe('D-52: an unmeasured flip figure says so', () => {
+  it('reads "not measured" with a reason, never a bare dash', () => {
+    hooks.requests = [row('a', 'PROPOSED', { flip_rate: null, flip_window_size: null })]
+    renderBody('proposals')
+    const tr = screen.getByTestId('quarantine-row')
+    const cells = within(tr).getAllByText('not measured')
+    expect(cells).toHaveLength(2)
+    for (const cell of cells) expect(cell.getAttribute('title')).toMatch(/No pass or fail result/)
+  })
+})

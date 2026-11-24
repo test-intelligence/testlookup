@@ -74,6 +74,35 @@ describe('ValueMetricsByTeam', () => {
     expect(getByTeam).toHaveBeenCalledWith('proj-1', 30)
   })
 
+  it('D-15: an unavailable headline prints no "0 h": Hours saved is "—" and the totals give way to the Overview sentence', async () => {
+    getByTeam.mockResolvedValue({
+      window_days: 14,
+      measured: true,
+      reason: null,
+      rules_configured: true,
+      teams: [team('Search', 0), team('Unassigned', 0)],
+      not_attributable_hours: 0,
+      headline_hours: 0,
+      available: false,
+      insufficient_data_reason: 'fewer than 14 days of ingested runs',
+    })
+    renderView({ days: 14 })
+    const table = await screen.findByRole('table')
+    expect(table.textContent).not.toMatch(/\b0 h\b/)
+    const cells = table.querySelectorAll('[data-hours-saved]')
+    expect(cells).toHaveLength(2)
+    cells.forEach((cell) => {
+      expect(cell.textContent).toBe('—')
+      expect(cell.getAttribute('title')).toBe('Not estimated yet: fewer than 14 days of ingested runs')
+    })
+    expect(screen.queryByText(/Total .* — the headline/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Not attributable to a team/)).not.toBeInTheDocument()
+    expect(screen.getByText('Not enough data yet to estimate engineering hours saved.')).toBeInTheDocument()
+    expect(screen.getByText('fewer than 14 days of ingested runs')).toBeInTheDocument()
+    // Tests and pass rate still show.
+    expect(within(table).getAllByText('100%')).toHaveLength(2)
+  })
+
   it('asks nothing without a project and says to pick one', () => {
     renderView({ projectId: null })
     expect(screen.getByText('Pick a project to see value by team')).toBeInTheDocument()

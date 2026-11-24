@@ -6,6 +6,7 @@ import {
   automatedPctText,
   bannerFor,
   componentLine,
+  GETTING_STARTED_TAG,
   healthComponent,
   HEALTH_LOAD_ERROR_TEXT,
   HEALTH_NEEDS_PROJECT_TEXT,
@@ -24,6 +25,16 @@ describe('libraryHealthModel: the banner (W13 TCL-03)', () => {
     })
     expect(bannerFor({ projectId: 'p', health: health({ score: 91, tag: 'Healthy' }) }).state).toBe('ok')
     expect(bannerFor({ projectId: 'p', health: health({ score: 41, tag: 'At risk' }) })).toMatchObject({ state: 'fail', pillLabel: 'AT RISK' })
+  })
+
+  it('D-65: "Getting started" is a fourth state: pending, its own pill, the facts kept; the three words unchanged', () => {
+    expect(bannerFor({ projectId: 'p', health: health({ score: 65, tag: GETTING_STARTED_TAG }) })).toEqual({
+      state: 'pending',
+      pillLabel: 'GETTING STARTED',
+      title: 'Library health: not enough cases to rate yet',
+      factsFrom: { ...LIBRARY_HEALTH_FIXTURE, score: 65, tag: GETTING_STARTED_TAG },
+    })
+    expect(bannerFor({ projectId: 'p', health: health({ score: 50, tag: 'At risk' }) }).pillLabel).toBe('AT RISK')
   })
 
   it('All Projects asks nothing and says why: pending, no facts', () => {
