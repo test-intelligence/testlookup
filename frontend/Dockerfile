@@ -46,7 +46,7 @@ RUN npm run build
 # build could start from a different nginx). This is the image nginx:alpine
 # pointed at on 2026-11-12 (mainline 1.31.8 on Alpine 3.24). Dependabot's
 # docker updates for /frontend move the tag and digest.
-FROM nginx:1.31.8-alpine3.24@sha256:713fc2ebfd92e8217db451477182ee91944b123d2b1ee9fd5a8c6e91ca6c3a11 AS production
+FROM nginx:1.31.9-alpine3.24@sha256:fb4658584bd9a916ffb6f6e365f97c25cfdb2923801f551ea08356e695f14ff7 AS production
 # Take Alpine's security updates at build time (Trivy on PR #26). Alpine 3.24
 # ships util-linux 2.42.3-r1, which fixes the seven util-linux CVEs that
 # .trivyignore.yaml used to accept (secdb: CVE-2026-53612/53613/53614/76642/
