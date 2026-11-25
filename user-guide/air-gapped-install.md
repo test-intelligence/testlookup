@@ -6,9 +6,10 @@ egress is blocked by policy.
 
 The mechanism is an **offline install bundle**: one tarball containing every
 container image TestLookup redistributes, the Kubernetes manifests, the Compose
-files, licence texts, checksums, and an import script. You build it once on a
-connected host, carry it across the boundary, and import it on the other side.
-Nothing in the install path touches the internet.
+files, licence texts, checksums, and an import script. Obtain or build it on a
+connected host, authenticate it after the last untrusted transfer hop, and only
+then extract and import it on the other side. Nothing in the air-gapped install
+path touches the internet.
 
 One dependency is deliberately **not** in the bundle: **MongoDB** (licensed
 SSPL-1.0). It is an external prerequisite that you mirror into your registry
@@ -16,10 +17,11 @@ yourself — see [§2a](#2a-not-in-the-bundle-mongodb).
 
 ```mermaid
 flowchart LR
-    A["Connected build host<br/>make offline-bundle"] --> B["testlookup-offline-VERSION.tar.gz"]
+    A["Connected staging host<br/>obtain or build bundle"] --> B["Bundle + publisher provenance"]
     M["mongo:7, pulled by you<br/>(SSPL-1.0)"] --> E
     B --> C["Physical or reviewed transfer"]
-    C --> D["Air-gapped host<br/>import-bundle.sh"]
+    C --> V["Authenticate provenance<br/>before extraction"]
+    V --> D["Air-gapped host<br/>import-bundle.sh"]
     D --> E["Local registry"]
     E --> F["Compose"]
     E --> G["Kubernetes"]
@@ -45,6 +47,8 @@ flowchart LR
 
 | Requirement | Notes |
 |---|---|
+| Trusted `gh` and Sigstore trust material | Required to verify an official release on the import workstation. Provision them through your managed base image or another channel independent of the bundle. An approved boundary host can perform this gate instead ([§4](#4-transfer-and-verify)). |
+| `sha256sum` / `shasum` / `openssl` | Checks transfer integrity after publisher authentication. A checksum carried beside the bundle is not an identity check. |
 | `docker` (or `podman`) | To `docker load` the images. |
 | A container registry the target can pull from | Harbor, Artifactory, Nexus, the OpenShift internal registry, a plain `registry:2` — anything. Compose can also run straight off the loaded local images. |
 | MongoDB 7 image in that registry | Not in the bundle — mirror it yourself ([§2a](#2a-not-in-the-bundle-mongodb)). |
@@ -127,7 +131,25 @@ run on your connected host and pull from upstream.
 
 ---
 
-## 3. Build the bundle (connected host)
+## 3. Obtain or build the bundle (connected host)
+
+### Official release
+
+For a production install, download these three assets for the same version from
+the TestLookup GitHub release:
+
+```
+testlookup-offline-X.Y.Z.tar.gz
+testlookup-offline-X.Y.Z.tar.gz.sha256
+testlookup-offline-X.Y.Z.intoto.jsonl
+```
+
+The `.intoto.jsonl` file is signed build provenance emitted by
+`.github/workflows/offline-bundle.yml`. Carry it so the receiving side can
+authenticate the tarball without network access; do not treat the adjacent
+`.sha256` file as proof of who published either file.
+
+### Custom build
 
 ```bash
 git clone https://github.com/test-intelligence/testlookup && cd testlookup
@@ -144,6 +166,12 @@ Output:
 dist/testlookup-offline-0.1.0.tar.gz
 dist/testlookup-offline-0.1.0.tar.gz.sha256
 ```
+
+A locally built tarball is not covered by TestLookup's release attestation.
+Before using one in production, sign it with your organisation's approved
+artifact identity and verify that signature after the final untrusted transfer
+hop against a trust root provisioned separately from the tarball. The transfer
+and import steps below stay the same after that authenticity gate succeeds.
 
 Useful flags (`make offline-bundle ARGS="…"`):
 
@@ -177,19 +205,51 @@ once and re-run with `--skip-build`.
 
 ## 4. Transfer and verify
 
-Carry **both** files across. On the far side, before anything else:
+Carry the tarball, checksum, and signed provenance across. On the far side,
+authenticate the official release **before extracting it or executing any file
+from it**. Use a trusted GitHub CLI installation and trust material provisioned
+independently of this transfer:
 
 ```bash
-sha256sum -c testlookup-offline-0.1.0.tar.gz.sha256
-tar xzf testlookup-offline-0.1.0.tar.gz
-cd testlookup-offline-0.1.0
-
-./import-bundle.sh --verify-only        # checks every file in the bundle
+gh attestation verify testlookup-offline-X.Y.Z.tar.gz \
+  --repo test-intelligence/testlookup \
+  --signer-workflow test-intelligence/testlookup/.github/workflows/offline-bundle.yml \
+  --source-ref refs/heads/main \
+  --bundle testlookup-offline-X.Y.Z.intoto.jsonl \
+  --custom-trusted-root /path/to/trusted_root.jsonl &&
+sha256sum -c testlookup-offline-X.Y.Z.tar.gz.sha256 &&
+tar xzf testlookup-offline-X.Y.Z.tar.gz &&
+cd testlookup-offline-X.Y.Z &&
+./import-bundle.sh --verify-only
 ```
 
-`--verify-only` reads `checksums.sha256` and stops. It **fails closed**: a
-mismatch, or the absence of any sha256 tool, aborts the install. Do not use
-`--skip-verify` for a production install.
+Replace `/path/to/trusted_root.jsonl` with the path to your independently
+provisioned Sigstore trust root. `--bundle` supplies the local provenance,
+and `--custom-trusted-root` supplies the local trust root. The remaining flags
+pin the repository, signing workflow, and `main` source ref. Each command
+runs only if the previous one succeeds. If attestation verification fails,
+quarantine the transferred files. Continue to import only after the full
+block succeeds.
+
+The outer `.sha256` and the in-bundle `checksums.sha256` then detect accidental
+or partial corruption. `--verify-only` reads the latter and stops. It **fails
+closed**: a mismatch, or the absence of any sha256 tool, aborts the install. Do
+not use `--skip-verify` for a production install. These checks preserve
+integrity after authentication; by themselves they do not establish publisher
+identity.
+
+If enclave policy does not allow `gh` or Sigstore trust material on the import
+workstation, perform the same attestation command on an organisation-controlled
+boundary host **after the artifact's final untrusted transfer hop**. Record the
+verified tarball's SHA-256 in a signed transfer approval delivered independently
+of the removable media, release only that artifact through the controlled
+handoff, and compare the import workstation's SHA-256 with the approved value
+before extraction. Verification performed only before an uncontrolled courier
+or media hop is not sufficient.
+
+For a custom build, replace the GitHub attestation command with your
+organisation's artifact-signature verification. Do not continue unless it
+authenticates the tarball itself against the separately provisioned trust root.
 
 ---
 

@@ -949,7 +949,13 @@ _RELEASE_BUNDLE_RUN = (
     "env.RELEASE_TAG != '' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'"
 )
 _SIGNER = "test-intelligence/testlookup/.github/workflows/"
-_VERIFY_DOCS = ("RELEASING.md", "README.md", ".github/workflows/ci.yml", ".github/workflows/offline-bundle.yml")
+_VERIFY_DOCS = (
+    "RELEASING.md",
+    "README.md",
+    "user-guide/air-gapped-install.md",
+    ".github/workflows/ci.yml",
+    ".github/workflows/offline-bundle.yml",
+)
 
 
 def _attestation_verify_commands(text: str) -> list[str]:
@@ -1008,6 +1014,35 @@ def test_the_documented_attestation_checks_name_the_signing_workflow_and_main() 
     assert _attestation_verify_commands("  #   gh attestation verify a.tar.gz \\\n  #     --repo o/r \\\n  #     --bundle b\n  # next") == [
         "gh attestation verify a.tar.gz --repo o/r --bundle b"
     ]
+
+
+def test_the_air_gap_guide_authenticates_the_bundle_before_extraction() -> None:
+    """The transferred checksum is attacker-replaceable, so signed provenance
+    must authenticate the tarball before any archive member can be trusted."""
+    guide = (ROOT / "user-guide" / "air-gapped-install.md").read_text(encoding="utf-8")
+    transfer = guide.split("## 4. Transfer and verify", 1)[1].split("\n---", 1)[0]
+    [command] = _attestation_verify_commands(transfer)
+    assert "--bundle testlookup-offline-X.Y.Z.intoto.jsonl" in command
+    assert command.endswith("--custom-trusted-root /path/to/trusted_root.jsonl &&")
+    block = transfer.split("```bash\n", 1)[1].split("\n```", 1)[0]
+    assert block.split(" &&\n")[1:] == [
+        "sha256sum -c testlookup-offline-X.Y.Z.tar.gz.sha256",
+        "tar xzf testlookup-offline-X.Y.Z.tar.gz",
+        "cd testlookup-offline-X.Y.Z",
+        "./import-bundle.sh --verify-only",
+    ]
+    guidance = " ".join(transfer.split())
+    assert "provisioned independently of this transfer" in guidance
+    assert "by themselves they do not establish publisher identity" in guidance
+
+
+def test_the_bundle_builder_does_not_recommend_checksum_only_transfer() -> None:
+    """The custom builder must require publisher authentication before its
+    generated instructions permit checksum, extraction, or import commands."""
+    builder = (ROOT / "scripts" / "release" / "offline-bundle.sh").read_text(encoding="utf-8")
+    assert "Transfer both files to the air-gapped site" not in builder
+    assert "Quick start (after publisher authentication)" in builder
+    assert "before running checksum, tar, or import commands" in builder
 
 
 def test_a_release_bundle_run_attaches_signed_provenance() -> None:
