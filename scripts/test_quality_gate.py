@@ -5687,3 +5687,79 @@ def test_write_routes_state_a_role_every_reviewed_entry_has_a_reason() -> None:
     for key, reason in qg._ROLE_FREE_WRITE_ROUTES.items():
         assert reason.strip(), f"{key} has no reason"
 
+
+# ── frontend.ai-word-allowlisted (product findings 2026-11-21, D-13) ─────────
+
+
+def _tsx(tmp_path: Path, rel: str, body: str) -> Path:
+    _write(tmp_path / "frontend" / "src" / rel, body)
+    return tmp_path
+
+
+def test_ai_word_flags_a_string_literal_and_jsx_text_but_not_code_or_comments(tmp_path: Path) -> None:
+    root = _tsx(tmp_path, "pages/Thing.tsx", """
+        import { AIBadge } from '@/components/ai/AISuggestion'
+        // The AI Triage Result title said AI on a rules answer.
+        /* AI in a block comment */
+        const aiMode = useAIConfig()
+        export function Thing() {
+          return (
+            <div title="AI Triage Result">
+              {aiMode && <AIBadge />}
+              AI Create Plan
+              <p>Rule-based suggestion</p>
+            </div>
+          )
+        }
+    """)
+    violations = qg._frontend_ai_word_allowlisted(root=root, allowed={})
+    assert [(v.line, v.message) for v in violations] == [
+        (7, '"AI" in UI copy: "AI Triage Result"'),
+        (9, '"AI" in UI copy: "AI Create Plan"'),
+    ]
+
+
+def test_ai_word_a_doc_comment_after_a_brace_hides_nothing_after_it(tmp_path: Path) -> None:
+    # Batch 6 review: the JSX-comment stripper ran from a `{` before a `/**` doc comment to a much
+    # later `*/ }`, blanking the code between (300 lines of AISuggestion.tsx went unseen).
+    root = _tsx(tmp_path, "pages/Thing.tsx", """
+        export const LABELS = {
+          /** The label for a rules answer. */
+          rules: 'AI-suggested',
+        }
+        export function Thing() {
+          return <div>{/* a real JSX comment */}AI Create Plan</div>
+        }
+    """)
+    violations = qg._frontend_ai_word_allowlisted(root=root, allowed={})
+    assert [(v.line, v.message) for v in violations] == [
+        (3, '"AI" in UI copy: "AI-suggested"'),
+        (6, '"AI" in UI copy: "AI Create Plan"'),
+    ]
+
+
+def test_ai_word_skips_tests_and_matches_whole_text_only(tmp_path: Path) -> None:
+    root = _tsx(tmp_path, "pages/Thing.tsx", """
+        const a = 'AI review complete'
+        const b = 'AI review failed'
+    """)
+    _tsx(tmp_path, "pages/Thing.test.tsx", "expect(screen.queryByText('AI Triage')).toBeNull()\n")
+    allowed = {("frontend/src/pages/Thing.tsx", "AI review complete"): "model-only review"}
+    violations = qg._frontend_ai_word_allowlisted(root=root, allowed=allowed)
+    # The entry covers its own sentence only: a second "AI" sentence in the same file still fails.
+    assert [v.message for v in violations] == ['"AI" in UI copy: "AI review failed"']
+
+
+def test_ai_word_reports_a_stale_entry(tmp_path: Path) -> None:
+    root = _tsx(tmp_path, "pages/Thing.tsx", "const t = 'Triage result'\n")
+    allowed = {("frontend/src/pages/Thing.tsx", "AI Triage Result"): "fixed since"}
+    violations = qg._frontend_ai_word_allowlisted(root=root, allowed=allowed)
+    assert len(violations) == 1
+    assert violations[0].line == 0 and "no longer matches any copy" in violations[0].message
+
+
+def test_ai_word_every_reviewed_entry_has_a_reason_and_the_real_tree_passes() -> None:
+    for key, reason in qg._AI_WORD_ALLOWED.items():
+        assert reason.strip(), f"{key} has no reason"
+    assert qg._frontend_ai_word_allowlisted() == []
+

@@ -60,6 +60,21 @@ describe('statusLines', () => {
     expect(lines.since).toBeNull()
   })
 
+  // D-159: the card said "In use" for a bundled model whose file is not on the server (offline: no download).
+  it('D-159: an embedder the server cannot load reads "Selected", says search by meaning is off, and how to fix it', () => {
+    const lines = statusLines(index({ switched_at: '2026-10-24T14:05:09Z' }), false)
+    expect(lines.lead).not.toMatch(/^In use/)
+    expect(lines.lead).toBe(
+      'Selected: Bundled MiniLM (all-MiniLM-L6-v2). Its model file is not on this server and offline mode blocks the ' +
+      'download, so search by meaning is off. To turn it on, put the model file on the server, turn offline mode ' +
+      'off, or choose an Ollama embedding model.',
+    )
+    expect(lines.since).toBe('Selected since 24 Oct 2026 14:05 UTC.')
+    // Available, or not probed (Ollama / OpenAI answer null): unchanged.
+    expect(statusLines(index(), true).lead).toBe('In use: Bundled MiniLM (all-MiniLM-L6-v2).')
+    expect(statusLines(index(), null).lead).toBe('In use: Bundled MiniLM (all-MiniLM-L6-v2).')
+  })
+
   it('in sync after a switch: says since when, in UTC', () => {
     const lines = statusLines(index({ active: NOMIC, configured: NOMIC, switched_at: '2026-10-24T14:05:09Z' }))
     expect(lines.lead).toBe('In use: Ollama (nomic-embed-text:v1.5).')

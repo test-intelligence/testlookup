@@ -12,6 +12,7 @@ import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { FlakyQuarantineRead } from '@/services/flakyQuarantineService'
+import toast from 'react-hot-toast'
 
 const hooks = vi.hoisted(() => ({
   requests: [] as unknown[],
@@ -57,7 +58,8 @@ const service = vi.hoisted(() => ({
   reject: vi.fn(() => Promise.resolve({})),
   release: vi.fn(() => Promise.resolve({})),
 }))
-vi.mock('@/services/flakyQuarantineService', () => ({ flakyQuarantineService: service }))
+vi.mock('@/services/flakyQuarantineService', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/services/flakyQuarantineService')>(), flakyQuarantineService: service }))
 
 vi.mock('react-hot-toast', () => ({ default: { success: vi.fn(), error: vi.fn() } }))
 
@@ -124,6 +126,38 @@ describe('quarantine decisions record their notes inline', () => {
     expect(hooks.refreshStats).toHaveBeenCalled()
     expect(prompt).not.toHaveBeenCalled()
     expect(screen.queryByTestId('quarantine-decision-form')).toBeNull()
+  })
+
+  // S-E-4: a refused decision showed "Failed: Request failed with status code 409" beside the
+  // server's sentence (which the shared client toasts). The page adds no toast of its own then,
+  // and for a 404 (the client stays quiet) it shows the server's words.
+  async function approveAndFail(error: unknown) {
+    hooks.requests = [row('a', 'PROPOSED')]
+    service.approve.mockImplementationOnce(() => Promise.reject(error))
+    renderBody('proposals')
+    fireEvent.click(screen.getByTestId('quarantine-approve'))
+    const form = screen.getByTestId('quarantine-decision-form')
+    await act(async () => {
+      fireEvent.click(within(form).getByRole('button', { name: 'Confirm approve' }))
+    })
+  }
+
+  it('S-E-4: a 409 adds no status-code toast on top of the server sentence', async () => {
+    await approveAndFail(Object.assign(new Error('Request failed with status code 409'), {
+      response: { status: 409, data: { detail: 'This request is quarantined now, so it cannot be approved. Refresh the list to see where it stands.' } },
+      config: {},
+    }))
+    expect(toast.error).not.toHaveBeenCalled()
+    expect(toast.success).not.toHaveBeenCalled()
+  })
+
+  it('S-E-4: a 404 the client keeps quiet reads as the server sentence', async () => {
+    await approveAndFail(Object.assign(new Error('Request failed with status code 404'), {
+      response: { status: 404, data: { detail: 'Quarantine request not found' } },
+      config: {},
+    }))
+    expect(toast.error).toHaveBeenCalledWith('Quarantine request not found')
+    expect(vi.mocked(toast.error).mock.calls.flat().join(' ')).not.toMatch(/status code/)
   })
 
   it('rejects with no notes as undefined, and Cancel records nothing', async () => {

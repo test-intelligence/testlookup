@@ -24,7 +24,7 @@
  * row of this page is never handed to `TestCaseBody` (so never to a request
  * path): the pane says "Test case not found" itself.
  */
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { ChevronLeft, ChevronRight, ExternalLink, ListTree, Loader2, RotateCcw } from 'lucide-react'
 import toast from 'react-hot-toast'
@@ -109,6 +109,9 @@ function statusChips(run: TestRun): StatusChip[] {
 
 const CHIP = 'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-sm font-medium tabular-nums transition-colors'
 
+/** D-28: the longest the pane body holds its height while the next test loads. */
+const PANE_HOLD_MAX_MS = 5000
+
 export default function RunTestsTab({
   runId,
   run,
@@ -171,6 +174,40 @@ export default function RunTestsTab({
   // From a passing test, Next goes to the first failure.
   const prevFailure = failingIndex > 0 ? failingIds[failingIndex - 1] : null
   const nextFailure = failingIndex === -1 ? (failingIds[0] ?? null) : (failingIds[failingIndex + 1] ?? null)
+  // D-28: stepping to another test remounts its body (keyed) as a 256 px spinner. When the pane was the tallest
+  // thing on the page (a short, filtered list), the document shrank under the reader and the browser clamped the
+  // scroll towards the top. The pane's body keeps the height it had while the next test loads, and lets go once
+  // the new body has drawn (its first resize after the spinner), after PANE_HOLD_MAX_MS at the latest, or on close.
+  const paneBodyRef = useRef<HTMLDivElement>(null)
+  const [heldPaneHeight, setHeldPaneHeight] = useState<number | null>(null)
+  if (!paneOpen && heldPaneHeight !== null) setHeldPaneHeight(null)
+  const openHoldingHeight = (id: string) => {
+    // The body itself, not the wrapper that carries the hold: measuring the wrapper only ever grew it.
+    const body = paneBodyRef.current?.firstElementChild as HTMLElement | null | undefined
+    const height = body?.offsetHeight ?? 0
+    if (height > 0) setHeldPaneHeight(height)
+    testParam.open(id)
+  }
+  useEffect(() => {
+    if (heldPaneHeight === null) return
+    const release = () => setHeldPaneHeight(null)
+    const timer = setTimeout(release, PANE_HOLD_MAX_MS)
+    const body = paneBodyRef.current?.firstElementChild
+    let observer: ResizeObserver | null = null
+    if (body && typeof ResizeObserver !== 'undefined') {
+      let first = true
+      observer = new ResizeObserver(() => {
+        // The first call reports the spinner the new test mounted with; the next is its content.
+        if (first) first = false
+        else release()
+      })
+      observer.observe(body)
+    }
+    return () => {
+      clearTimeout(timer)
+      observer?.disconnect()
+    }
+  }, [heldPaneHeight, openTestId])
 
   async function handleRecoverLive() {
     if (recoveringLive) return
@@ -387,7 +424,7 @@ export default function RunTestsTab({
                           data-test-row={tc.id}
                           onClick={(e) => {
                             if (e.metaKey || e.ctrlKey) navigate(`/runs/${runId}/tests/${tc.id}`)
-                            else testParam.open(tc.id)
+                            else openHoldingHeight(tc.id)
                           }}
                         >
                           <td className="td max-w-[280px]">
@@ -474,7 +511,7 @@ export default function RunTestsTab({
                       type="button"
                       className="btn-secondary inline-flex items-center gap-1 text-xs disabled:opacity-50"
                       disabled={!prevFailure}
-                      onClick={() => prevFailure && testParam.open(prevFailure)}
+                      onClick={() => prevFailure && openHoldingHeight(prevFailure)}
                     >
                       <ChevronLeft className="h-3.5 w-3.5" aria-hidden="true" /> Previous failure
                     </button>
@@ -482,7 +519,7 @@ export default function RunTestsTab({
                       type="button"
                       className="btn-secondary inline-flex items-center gap-1 text-xs disabled:opacity-50"
                       disabled={!nextFailure}
-                      onClick={() => nextFailure && testParam.open(nextFailure)}
+                      onClick={() => nextFailure && openHoldingHeight(nextFailure)}
                     >
                       Next failure <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />
                     </button>
@@ -504,7 +541,13 @@ export default function RunTestsTab({
               {/* Keyed: a new test starts on its own History tab, with its own data. A value
                   that is not an id is never mounted (no request): its line, said here. */}
               {openTestId !== null ? (
-                <TestCaseBody key={openTestId} runId={runId} testId={openTestId} compact />
+                <div
+                  ref={paneBodyRef}
+                  data-test-pane-body=""
+                  style={heldPaneHeight !== null ? { minHeight: heldPaneHeight } : undefined}
+                >
+                  <TestCaseBody key={openTestId} runId={runId} testId={openTestId} compact />
+                </div>
               ) : (
                 <div className="text-[var(--color-text-muted)] text-center py-20">Test case not found</div>
               )}

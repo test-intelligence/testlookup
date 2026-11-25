@@ -599,6 +599,26 @@ async def _find_live(
     return result.scalar_one_or_none()
 
 
+# S-E-4: a refused decision says where the request stands in words (the page
+# shows this sentence as it is), never the stored enum value.
+_STATUS_WORDS = {
+    "DETECTED": "detected",
+    "PROPOSED": "proposed",
+    "APPROVED": "approved",
+    "QUARANTINED": "quarantined",
+    "RECHECK_SCHEDULED": "waiting for its recheck",
+    "RELEASED": "released",
+    "RE_QUARANTINED": "quarantined again",
+    "REJECTED": "rejected",
+    "EXPIRED": "expired",
+}
+
+
+def _conflict_sentence(status: Any, verb_past: str) -> str:
+    words = _STATUS_WORDS.get(str(status), str(status).lower().replace("_", " "))
+    return f"This request is {words} now, so it cannot be {verb_past}. Refresh the list to see where it stands."
+
+
 async def get_request(
     db: AsyncSession, request_id: uuid.UUID,
 ) -> Optional[FlakyQuarantineRequest]:
@@ -1038,7 +1058,7 @@ async def approve(
     ):
         raise HTTPException(
             status_code=_s.HTTP_409_CONFLICT,
-            detail=f"Cannot approve from status {row.status}",
+            detail=_conflict_sentence(row.status, "approved"),
         )
 
     before = _snapshot(row)
@@ -1160,7 +1180,7 @@ async def reject(
     ):
         raise HTTPException(
             status_code=_s.HTTP_409_CONFLICT,
-            detail=f"Cannot reject from status {row.status}",
+            detail=_conflict_sentence(row.status, "rejected"),
         )
     before = _snapshot(row)
     now = datetime.now(timezone.utc)
@@ -1209,7 +1229,7 @@ async def release(
     ):
         raise HTTPException(
             status_code=_s.HTTP_409_CONFLICT,
-            detail=f"Cannot release from status {row.status}",
+            detail=_conflict_sentence(row.status, "released"),
         )
     before = _snapshot(row)
     now = datetime.now(timezone.utc)

@@ -4,7 +4,7 @@
  * Pins:
  *  - lazy fetch: evidence is NOT requested until the badge is clicked;
  *  - the popover renders one row per check with its verdict + detail and
- *    keeps the "AI-classified" provenance copy;
+ *    a neutral "Classified" badge (D-47: no "AI" on a rules-engine kind);
  *  - the confidence-basis chip maps human_corrected → "human-corrected"
  *    and heuristic_estimate → "estimated";
  *  - no lookup key → plain badge, no button;
@@ -56,7 +56,9 @@ describe('KindEvidencePanel', () => {
       expect(el).toHaveTextContent(row.detail)
       expect(el).toHaveTextContent(row.verdict)
     }
-    expect(screen.getByText('AI-classified')).toBeInTheDocument()
+    expect(screen.getByText('Classified')).toBeInTheDocument()
+    // D-47: the kind is often the rules engine's; nothing in the panel calls it AI.
+    expect(screen.queryByText(/\bAI\b/)).toBeNull()
     expect(screen.getByText('82%')).toBeInTheDocument()
     expect(screen.getByText('estimated')).toBeInTheDocument()
   })
@@ -108,7 +110,7 @@ describe('KindBadgeWithEvidence', () => {
   it('renders a plain badge (no button) without a lookup key', () => {
     render(<KindBadgeWithEvidence kind="product" />)
     expect(screen.queryByRole('button')).not.toBeInTheDocument()
-    expect(screen.getByTitle(/AI-classified failure kind: Product/i)).toBeInTheDocument()
+    expect(screen.getByTitle(/^Failure kind: Product/i)).toBeInTheDocument()
   })
 })
 
@@ -129,7 +131,7 @@ describe('FailureKindBadge (W29a UIX-02)', () => {
 
   it('keeps its words, case and title', () => {
     render(<FailureKindBadge kind="product" compact />)
-    const badge = screen.getByTitle(/AI-classified failure kind: Product/)
+    const badge = screen.getByTitle(/^Failure kind: Product/)
     expect(badge).toHaveTextContent('Product')
     expect(badge.className).toContain('uppercase')
   })

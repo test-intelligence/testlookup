@@ -49,6 +49,7 @@ export const TEST_CASE_TRANSITION_ACTIONS = [
 
 export type TestCaseTransitionAction = typeof TEST_CASE_TRANSITION_ACTIONS[number]
 
+
 export interface AllowedTestCaseTransition {
   action: TestCaseTransitionAction
   allowed: boolean
@@ -300,6 +301,8 @@ export interface TestPlanItem {
   executed_case_version?: number | null
   /** W28 TCM-05: the case's current version (the list route's join); null on a create / execute answer. */
   case_version?: number | null
+  /** D-62: the case's title (the list route's join); null on a create / execute answer, or a deleted case. */
+  test_case_title?: string | null
 }
 
 // ── W28 editing (TCM-01, TCM-03, TCM-04) ────────────────────────────────────

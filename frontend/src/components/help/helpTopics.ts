@@ -18,8 +18,9 @@ export const HELP_TOPICS: Readonly<Record<string, HelpTopic>> = {
   '/my-failures': { topic: 'inbox' },
   // Pinned by MyFailuresPage.inbox.test.tsx (the Approvals tab's help).
   '/reviews': { topic: 'reports', anchor: 'the-decision-report-is-verified-before-publication' },
-  // Pinned by RunsPage.test.tsx; a run's own page (/runs/<id>) has the same prefix.
-  '/runs': { topic: 'ingestion' },
+  // Pinned by RunsPage.test.tsx; a run's own page (/runs/<id>) has the same prefix. D-27: the runs chapter (it
+  // links to "Getting results in"), not the upload chapter.
+  '/runs': { topic: 'runs' },
   '/runs/compare': { topic: 'runs', anchor: 'comparing-two-runs' },
   '/live': { topic: 'live' },
   '/intelligence': { topic: 'runs' },

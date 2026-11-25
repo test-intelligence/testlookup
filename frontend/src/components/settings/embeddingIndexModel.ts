@@ -162,8 +162,24 @@ export function isStalled(index: EmbeddingIndex | null | undefined): boolean {
 
 const lastError = (text: string | null | undefined) => (text ?? '').trim().replace(/\.+$/, '')
 
-/** What the `data-embedding-index` block says for one `EmbeddingIndex` (contract §2.4). */
-export function statusLines(index: EmbeddingIndex | null | undefined): EmbeddingStatusLines {
+/**
+ * D-159: the sentence after the selected embedder's name when `GET /search/index-status` answers
+ * `embedder_available: false` (the bundled model's file is not on this server and offline mode blocks the
+ * download): search by meaning is off, and how to turn it on.
+ */
+export const EMBEDDER_MISSING_SENTENCE =
+  ' Its model file is not on this server and offline mode blocks the download, so search by meaning is off.' +
+  ' To turn it on, put the model file on the server, turn offline mode off, or choose an Ollama embedding model.'
+
+/**
+ * What the `data-embedding-index` block says for one `EmbeddingIndex` (contract §2.4). `embedderAvailable` is the
+ * index-status read's `embedder_available` for the generation in use: `false` means the server cannot load it
+ * (D-159: the card said "In use" for a model that was not there); `true`, `null` or absent change nothing.
+ */
+export function statusLines(
+  index: EmbeddingIndex | null | undefined,
+  embedderAvailable?: boolean | null,
+): EmbeddingStatusLines {
   if (!index || !index.active || !index.configured) {
     return {
       kind: 'unreadable', lead: EMBEDDING_STATE_UNREADABLE, leadParts: [plain(EMBEDDING_STATE_UNREADABLE)], since: null,
@@ -210,15 +226,17 @@ export function statusLines(index: EmbeddingIndex | null | undefined): Embedding
   }
   const pending = !index.in_sync && isSupportedProvider(configured.provider)
   const since = formatUtc(index.switched_at)
+  const missing = embedderAvailable === false
   const leadParts = [
-    plain('In use: '), unit(inUseName(active)), plain('.'),
+    plain(missing ? 'Selected: ' : 'In use: '), unit(inUseName(active)), plain('.'),
+    ...(missing ? [plain(EMBEDDER_MISSING_SENTENCE)] : []),
     ...(pending ? [plain(' Configured '), ...generationParts(configured, active), plain(' is not in use yet.')] : []),
   ]
   return {
     kind: 'idle',
     lead: joinParts(leadParts),
     leadParts,
-    since: since ? `In use since ${since}.` : null,
+    since: since ? `${missing ? 'Selected' : 'In use'} since ${since}.` : null,
     families: null,
     note,
     stalled: null,

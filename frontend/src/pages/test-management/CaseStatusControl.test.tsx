@@ -9,7 +9,8 @@ import type { ManagedTestCase } from '@/types/test-management'
 import CaseStatusControl from './CaseStatusControl'
 
 vi.mock('react-hot-toast', () => ({ default: { success: vi.fn(), error: vi.fn() } }))
-vi.mock('@/services/testManagementService', () => ({ testManagementService: { transitionCase: vi.fn() } }))
+vi.mock('@/services/testManagementService', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/services/testManagementService')>(), testManagementService: { transitionCase: vi.fn() } }))
 vi.mock('@/services/testCaseEditingService', () => ({ testCaseEditingService: { getCaseFresh: vi.fn() } }))
 
 const transitionCase = vi.mocked(testManagementService.transitionCase)

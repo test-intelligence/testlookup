@@ -17,7 +17,7 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { SWRConfig } from 'swr'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { TestRun } from '@/types/runs'
 import { useRuns } from '@/hooks/useRuns'
@@ -704,7 +704,7 @@ describe('RunsPage — the page template (P3)', () => {
     perms.isQaEngineer = true
     renderRunsPage(brokenWindow())
     expect(screen.getByRole('heading', { level: 1, name: 'Test Runs' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Help: Test Runs' })).toHaveAttribute('data-help-topic', 'ingestion')
+    expect(screen.getByRole('button', { name: 'Help: Test Runs' })).toHaveAttribute('data-help-topic', 'runs')
     // The trigger-all / deep-all buttons left the header row for ⋯.
     expect(screen.queryByRole('button', { name: /Trigger all failed/ })).toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'More actions' }))
@@ -1007,6 +1007,45 @@ describe('RunsPage — the failure signatures open in a side panel (P3 drill-dow
     await waitFor(() => expect(primary().querySelector('#run-row-run-1 [data-signature-chip]')).not.toBeNull())
   })
 
+  describe('D-29: a build picked in the panel is marked in the table and scrolled to', () => {
+    const scrolled: Element[] = []
+    const original = Element.prototype.scrollIntoView
+    beforeEach(() => {
+      scrolled.length = 0
+      Element.prototype.scrollIntoView = function (this: Element) { scrolled.push(this) } as typeof original
+    })
+    afterEach(() => { Element.prototype.scrollIntoView = original })
+    const pick = (build: string) => {
+      const row = within(panel() as HTMLElement).getAllByRole('button').find((b) => b.textContent?.includes(build))
+      fireEvent.click(row as HTMLElement)
+    }
+
+    it('a row on this page gets aria-current="true" (and keeps it); picking another moves the mark', async () => {
+      renderRunsPage(brokenWindow())
+      fireEvent.click(await screen.findByRole('button', { name: /^Failure signatures/ }))
+      pick('#104')
+      const row4 = primary().querySelector('#run-row-run-4') as HTMLElement
+      await waitFor(() => expect(row4).toHaveAttribute('aria-current', 'true'))
+      expect(scrolled).toContain(row4)
+      pick('#102')
+      await waitFor(() => expect(primary().querySelector('#run-row-run-2')).toHaveAttribute('aria-current', 'true'))
+      expect(row4).not.toHaveAttribute('aria-current')
+    })
+
+    it('a row on another table page: the table turns to that page, then marks and scrolls to the row', async () => {
+      // 30 builds, the 5 oldest failed: newest first, they sit on table page 2.
+      const runs = newestFirst(Array.from({ length: 30 }, (_, i) => run(i + 1, i < 5
+        ? { status: 'FAILED', passed_tests: 8, failed_tests: 2, pass_rate: 80, created_at: hoursAgo(100 - i) }
+        : { status: 'PASSED', passed_tests: 10, failed_tests: 0, pass_rate: 100, created_at: hoursAgo(100 - i) })))
+      renderRunsPage(runs)
+      fireEvent.click(await screen.findByRole('button', { name: /^Failure signatures/ }))
+      expect(primary().querySelector('#run-row-run-1')).toBeNull()
+      pick('#101')
+      await waitFor(() => expect(primary().querySelector('#run-row-run-1')).toHaveAttribute('aria-current', 'true'))
+      expect(scrolled).toContain(primary().querySelector('#run-row-run-1'))
+    })
+  })
+
   it('a hostile error line renders as text in the chip title and the panel', async () => {
     const hostile = '<img src=x onerror=alert(1)>'
     for (const id of ['run-2', 'run-3', 'run-4']) api.signatures[id] = [{ signature: 'h', label: hostile, count: 1, test_count: 1, tests: ['t'] }]
@@ -1066,7 +1105,7 @@ describe('RunsPage — the AI-verdict column (P4, D2, FAIL-04)', () => {
     api.verdicts['run-2'] = decided('GO')
     renderRunsPage(brokenWindow())
     const headers = within(primary()).getAllByRole('columnheader').map((h) => h.textContent?.trim())
-    expect(headers.indexOf('AI verdict')).toBe(headers.indexOf('Status') + 1)
+    expect(headers.indexOf('Verdict')).toBe(headers.indexOf('Status') + 1)
 
     const noGo = await within(cell('run-4')).findByRole('link')
     expect(noGo).toHaveTextContent(/^No-Godraft$/)
@@ -1077,7 +1116,7 @@ describe('RunsPage — the AI-verdict column (P4, D2, FAIL-04)', () => {
     // Never analysed: "—", with the reason, and no link.
     await waitFor(() => expect(cell('run-1')).toHaveTextContent(/^—$/))
     expect(within(cell('run-1')).queryByRole('link')).toBeNull()
-    expect(cell('run-1').querySelector('[data-ai-verdict]')).toHaveAttribute('title', 'No AI verdict: this run has not been analysed')
+    expect(cell('run-1').querySelector('[data-ai-verdict]')).toHaveAttribute('title', 'No verdict: this run has not been analysed')
   })
 
   it('has no Test Suite column: the suite sits under its run number, in the Build cell', () => {
@@ -1105,14 +1144,14 @@ describe('RunsPage — the AI-verdict column (P4, D2, FAIL-04)', () => {
     renderRunsPage(brokenWindow())
     await waitFor(() => expect(cell('run-4').querySelector('[data-ai-verdict]')).toHaveAttribute('data-ai-verdict-reason', 'not-summarised'))
     expect(cell('run-4').querySelector('[data-ai-verdict]')).toHaveAttribute(
-      'title', "No AI verdict on this list yet: the run was analysed but its summary is not built. Open the run's analysis to build it.",
+      'title', "No verdict on this list yet: the run was analysed but its summary is not built. Open the run's analysis to build it.",
     )
   })
 
   it('a run the batch lists as unavailable says so, in its own words', async () => {
     api.unavailable.add('run-4')
     renderRunsPage(brokenWindow())
-    await waitFor(() => expect(cell('run-4').querySelector('[data-ai-verdict]')).toHaveAttribute('title', 'AI verdict unavailable: the run is not available to you'))
+    await waitFor(() => expect(cell('run-4').querySelector('[data-ai-verdict]')).toHaveAttribute('title', 'Verdict unavailable: the run is not available to you'))
     expect(cell('run-4').querySelector('[data-ai-verdict]')).toHaveAttribute('data-ai-verdict-reason', 'unavailable')
   })
 
@@ -1123,7 +1162,7 @@ describe('RunsPage — the AI-verdict column (P4, D2, FAIL-04)', () => {
     ]))
     const running = cell('run-2').querySelector('[data-ai-verdict]') as HTMLElement
     expect(running).toHaveTextContent('—')
-    expect(running).toHaveAttribute('title', 'No AI verdict: the run is still in progress')
+    expect(running).toHaveAttribute('title', 'No verdict: the run is still in progress')
     await waitFor(() => expect(verdictCalls()).toHaveLength(1))
     expect(verdictCalls()[0][1]).toMatchObject({ params: { run_id: ['run-1'] } })
   })
@@ -1135,7 +1174,7 @@ describe('RunsPage — the AI-verdict column (P4, D2, FAIL-04)', () => {
       expect(cell('run-4').querySelector('[data-ai-verdict]')).toHaveAttribute('data-ai-verdict-reason', 'unavailable'),
     )
     expect(cell('run-4')).toHaveTextContent(/^—$/)
-    expect(cell('run-4').querySelector('[data-ai-verdict]')).toHaveAttribute('title', 'AI verdict unavailable: the request failed')
+    expect(cell('run-4').querySelector('[data-ai-verdict]')).toHaveAttribute('title', 'Verdict unavailable: the request failed')
     expect(vi.mocked(toast.error)).not.toHaveBeenCalled()
   })
 

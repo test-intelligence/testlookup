@@ -125,7 +125,7 @@ export default function OnboardingPage() {
   if (!projectId && !isAllProjects) {
     return (
       <div className="space-y-6">
-        <PageHeader title="Getting Started" subtitle="Set up your project for AI-powered test intelligence" />
+        <PageHeader title="Getting Started" subtitle="Set up your project" />
         <div className="flex flex-col items-center py-20 text-[var(--color-text-muted)]">
           <FlaskConical className="h-10 w-10 mb-3 text-[var(--color-text-faint)]" />
           <p className="font-medium">Select a project first</p>
@@ -176,7 +176,7 @@ export default function OnboardingPage() {
         title="Getting Started"
         subtitle={isAllProjects
           ? 'Workspace onboarding for new projects — create a project, connect data, and activate Run Intelligence'
-          : 'Complete these steps to unlock the full power of AI test intelligence'}
+          : 'Complete these steps to set up your project'}
       />
 
       {isAllProjects && (

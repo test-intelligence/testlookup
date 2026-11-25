@@ -174,9 +174,9 @@ describe('AIAnalysisPanel', () => {
       await waitFor(() => {
         expect(screen.getByText(/Investigating/i)).toBeInTheDocument()
       })
-      expect(
-        screen.getByText(/Actual tools used will be shown when complete/i),
-      ).toBeInTheDocument()
+      // D-13: the loading line named "the ReAct agent" whatever engine was set.
+      expect(screen.getByText(/The checks it ran will be shown when it finishes/i)).toBeInTheDocument()
+      expect(screen.queryByText(/ReAct/)).toBeNull()
     })
   })
 
@@ -193,6 +193,26 @@ describe('AIAnalysisPanel', () => {
         expect(screen.getByText(/Analysis Failed/i)).toBeInTheDocument()
       })
       expect(screen.getByRole('button', { name: /Try Again/i })).toBeInTheDocument()
+    })
+
+    it('D-13: in Rules mode the error names no model and no Ollama', async () => {
+      aiMode.data = { analysis_mode: 'rules', ai_offline_mode: true }
+      const { aiService } = await import('@/services/aiService')
+      ;(aiService.analyze as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('boom'))
+      render(<AIAnalysisPanel {...DEFAULT_PROPS} />)
+      fireEvent.click(await screen.findByRole('button', { name: /Analyse Root Cause/i }))
+      expect(await screen.findByText(/check the server logs/i)).toBeInTheDocument()
+      expect(screen.queryByText(/Ollama|LLM|language model|AI agent/)).toBeNull()
+    })
+
+    it('D-13: in LLM mode the error points at the configured model', async () => {
+      aiMode.data = { analysis_mode: 'llm', ai_offline_mode: true }
+      const { aiService } = await import('@/services/aiService')
+      ;(aiService.analyze as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('boom'))
+      render(<AIAnalysisPanel {...DEFAULT_PROPS} />)
+      fireEvent.click(await screen.findByRole('button', { name: /Analyse Root Cause/i }))
+      expect(await screen.findByText(/configured language model is running/i)).toBeInTheDocument()
+      expect(screen.queryByText(/Ollama/)).toBeNull()
     })
 
     it('Try Again button returns to idle state', async () => {
@@ -531,6 +551,39 @@ describe('AIAnalysisPanel', () => {
       })
       expect(screen.queryByText(/unknown/)).not.toBeInTheDocument()
       expect(screen.getByTestId('ai-provenance')).toHaveTextContent('No engine answered')
+    })
+
+    it('D-13: a rules result reads "Triage result" with no "AI Triage", no "AI-suggested", no "unknown · unknown"', async () => {
+      await renderResolvedResult({
+        llm_provider: 'unknown',
+        llm_model: 'unknown',
+        tools_used: [],
+        confidence_why: { evidence_count: 0, data_sources: [], is_llm_inference: false, investigation_depth: 'fast_path' },
+        provenance: { mode_used: 'rules' },
+      })
+      expect(screen.getByText('Triage result')).toBeInTheDocument()
+      expect(screen.queryByText(/AI Triage/)).toBeNull()
+      expect(screen.queryByText(/unknown · unknown/)).toBeNull()
+      expect(screen.queryByText(/unknown/)).toBeNull()
+      expect(screen.getByTestId('ai-suggested-badge')).toHaveTextContent('Rule-based suggestion')
+      expect(screen.getByTestId('ai-suggested-badge')).not.toHaveTextContent(/\bAI\b/)
+      expect(screen.getByRole('region', { name: 'Rule-based suggestion' })).toBeInTheDocument()
+      // The subtitle under the title names the engine; no provider / model for a rules answer.
+      expect(screen.getByText('Triage result').nextElementSibling).toHaveTextContent(/^Produced by rules engine$/)
+    })
+
+    it('D-13: an LLM result names the engine and the model under the title and keeps "AI-suggested"', async () => {
+      await renderResolvedResult({ provenance: { mode_used: 'llm' } })
+      expect(screen.getByText('Triage result')).toBeInTheDocument()
+      expect(screen.getByText('Triage result').nextElementSibling).toHaveTextContent(/^Produced by LLM · ollama · qwen2\.5:7b$/)
+      expect(screen.getByTestId('ai-suggested-badge')).toHaveTextContent('AI-suggested')
+    })
+
+    it('D-13: the review control says a person confirmed the result, not "the AI verdict"', async () => {
+      await renderResolvedResult({ requires_human_review: true })
+      fireEvent.click(await screen.findByRole('button', { name: /Pending Human Review/i }))
+      expect(screen.getByText('A person confirmed this result.')).toBeInTheDocument()
+      expect(screen.queryByText(/AI verdict/)).toBeNull()
     })
 
     it('renders evidence through the chrome', async () => {

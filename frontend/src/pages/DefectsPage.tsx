@@ -113,7 +113,8 @@ const STATUS_TABS: { id: StatusKey; label: string }[] = [
   { id: 'OPEN',        label: 'Open' },
   { id: 'IN_PROGRESS', label: 'In progress' },
   { id: 'RESOLVED',    label: 'Resolved' },
-  { id: 'CLOSED',      label: 'Closed' },
+  // D-39: the Change status dialog offers "Invalid", which files a defect here; the tab names both words.
+  { id: 'CLOSED',      label: 'Closed / invalid' },
 ]
 
 type Severity = 'P0' | 'P1' | 'P2' | 'P3'

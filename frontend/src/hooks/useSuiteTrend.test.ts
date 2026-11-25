@@ -15,7 +15,8 @@ import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { SWRConfig } from 'swr'
 import { ALL_PROJECTS_ID, useProjectStore } from '@/store/projectStore'
 
-vi.mock('@/services/testManagementService', () => ({
+vi.mock('@/services/testManagementService', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/services/testManagementService')>(),
   testManagementService: { getSuiteTrend: vi.fn() },
 }))
 

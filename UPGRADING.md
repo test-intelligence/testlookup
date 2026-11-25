@@ -190,6 +190,21 @@ Existing usernames that contain `@` keep working for sign-in.
 | `POST /deep-investigate/{run_id}` in Rules mode | accepted | 422 "requires LLM or Auto mode" |
 | `POST /analyze` for a test with a human correction | returns the correction | the engine's answer, replacing the correction |
 
+### Wording and small UI (batch 6)
+
+- **Plan items** (`GET /api/v1/test-management/plans/{id}/items`) gain an optional
+  `test_case_title`; null when the case no longer exists.
+- **Quarantine conflicts** (approve, reject, release on a request in the wrong
+  state) still answer 409, with a sentence that says where the request stands
+  ("This request is quarantined now, so it cannot be approved. ...") instead of
+  "Cannot approve from status QUARANTINED". Scripts that matched the old text
+  should match the status code.
+- **Runs list:** the "AI verdict" column and filter are now "Verdict"; the
+  values are unchanged.
+- **Embedding index** (`GET /api/v1/settings/ai/embedding-index`, and the same
+  body in `GET /settings/ai`) gains `embedder_available`: whether this server
+  can load the built-in embedder in use; null for Ollama and OpenAI.
+
 ### Counts that agree (batch 5)
 
 - **Migration 0260** adds a nullable `proposed_by_user_id` to flaky-test

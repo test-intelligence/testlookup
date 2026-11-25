@@ -1,4 +1,5 @@
 import type {
+  TestCaseTransitionAction,
   AICoverageResponse,
   AIGenerateResponse,
   AIReviewResult,
@@ -47,6 +48,25 @@ async function downloadFile(url: string, fallbackFilename: string) {
   link.click()
   link.remove()
   window.URL.revokeObjectURL(blobUrl)
+}
+
+/** D-63: what a done transition says in its toast (past tense), never the API name. Here, in the
+ *  service both the Inbox and Test management already load, so it adds no shared chunk to the eager
+ *  bundle's preload map. */
+export const ACTION_DONE_LABELS: Record<TestCaseTransitionAction, string> = {
+  request_review: 'Review requested',
+  claim_review: 'Review claimed',
+  withdraw_review: 'Review withdrawn',
+  unclaim: 'Review unclaimed',
+  approve: 'Test case approved',
+  reject: 'Test case rejected',
+  request_changes: 'Changes requested',
+  activate: 'Test case activated',
+  flag_stale: 'Test case flagged as stale',
+  revise: 'Test case reopened for revision',
+  deprecate: 'Test case deprecated',
+  reinstate: 'Test case reinstated',
+  archive: 'Test case archived',
 }
 
 export const testManagementService = {

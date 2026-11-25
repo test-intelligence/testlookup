@@ -494,7 +494,7 @@ function FailureRow({
             the run is named by its build label (`runBuildLabel`, as on /runs),
             with the per-(project, suite) "Run #N" muted beside it (it repeats
             in every suite). Under it, on the same line: when the run was
-            generated and the short test_run_id slug as a copy/correlation aid. */}
+            generated (S-E-3: the run id is the line's tooltip, never printed). */}
         {item.build_number || item.run_seq != null ? (
           <>
             {item.build_number && (
@@ -507,10 +507,9 @@ function FailureRow({
         ) : (
           <span className="text-[var(--color-text-faint)]">—</span>
         )}
-        {(when || item.test_run_id) && (
-          <div className="text-2xs text-[var(--color-text-faint)] tabular-nums">
-            {when && <span>{when}</span>}
-            {item.test_run_id && <span>{when ? ' · ' : ''}{item.test_run_id.slice(0, 8)}</span>}
+        {when && (
+          <div className="text-2xs text-[var(--color-text-faint)] tabular-nums" title={item.test_run_id || undefined}>
+            <span>{when}</span>
           </div>
         )}
       </Td>

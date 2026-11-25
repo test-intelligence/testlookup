@@ -108,6 +108,13 @@ describe('Test Cases › Suites: authored cases apart from run tests (D-59)', ()
     expect(card('Checkout')).toHaveTextContent('90.0% pass rate')
   })
 
+  it('D-64: the review row of a suite that ran reads "Review:" (a person\'s state, not an AI verdict)', async () => {
+    renderAt('/test-management?tab=suites')
+    await screen.findByText('3 suites')
+    expect(within(card('Checkout')).getByText('Review:')).toBeInTheDocument()
+    expect(within(card('Checkout')).queryByText(/AI verdict/)).toBeNull()
+  })
+
   it('a suite without authored cases names none', async () => {
     renderAt('/test-management?tab=suites')
     await screen.findByText('3 suites')
@@ -120,6 +127,6 @@ describe('Test Cases › Suites: authored cases apart from run tests (D-59)', ()
     const payments = card('Payments')
     expect(counts('Payments')).toHaveTextContent('3 authored cases · not run yet')
     expect(payments).not.toHaveTextContent(/passed|failed|pass rate|Last run|0 tests/)
-    expect(within(payments).queryByText(/AI verdict/)).toBeNull()
+    expect(within(payments).queryByText(/^Review:/)).toBeNull()
   })
 })

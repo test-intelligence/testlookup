@@ -145,9 +145,59 @@ class SummaryLLMUnavailable(RuntimeError):
         message: str,
         *,
         routing_provenance: dict[str, Any] | None = None,
+        fallback_kind: str = "model_failed",
     ) -> None:
         super().__init__(message)
         self.routing_provenance = routing_provenance or {}
+        # D-13: why no model wrote the summary: "no_model" (the stage is set to the rules tier),
+        # "refused" (the AI settings allow no endpoint for it), "budget", or "model_failed".
+        self.fallback_kind = fallback_kind
+
+
+# D-13: the fallback says why it is a fallback. "The configured LLM was unavailable" is only true
+# when a model is configured and failed; on a model-free install it names a model that was never there,
+# and when the AI settings refuse the model or the budget ran out it sends the reader to the wrong fix.
+FALLBACK_SENTENCES = {
+    "model_failed": "This summary was generated from stored pipeline evidence because the configured LLM was unavailable.",
+    "no_model": "This summary was built from the stored results; no language model is in use.",
+    "refused": "This summary was built from the stored results; the AI settings allow no language model for this step.",
+    "budget": "This summary was built from the stored results; the language model budget for this run was used up.",
+}
+FALLBACK_PROGRESS = {
+    "model_failed": "Summary generated in fallback mode because the configured LLM was unavailable",
+    "no_model": "Summary built from the stored results; no language model is in use",
+    "refused": "Summary built from the stored results; the AI settings allow no language model for this step",
+    "budget": "Summary built from the stored results; the language model budget for this run was used up",
+}
+_BUDGET_REASONS = frozenset({"budget", "capability_unbudgeted", "step_llm_budget"})
+
+
+def _fallback_kind_for(choice_reason: str, endpoints: dict[str, Any]) -> str:
+    """Why the router gave the summary no endpoint (D-13), from its reason and the resolved endpoints."""
+    if choice_reason == "tier":
+        return "no_model"
+    if choice_reason in _BUDGET_REASONS:
+        return "budget"
+    if not any(endpoints.values()):
+        return "refused"
+    return "model_failed"
+
+
+def _analysis_mode_is_rules() -> bool:
+    """D-13: Rules mode uses no model, so a summary model that failed there was never the install's engine."""
+    try:
+        from app.services.analysis_router import get_analysis_mode
+
+        return get_analysis_mode() == "rules"
+    except Exception:  # noqa: BLE001 - the wording must never break the summary
+        return False
+
+
+def _completion_message(fallback_reason: str | None, fallback_kind: str = "model_failed") -> str:
+    """The progress event's message once the summary is stored (D-13: the same choice as the sentence)."""
+    if not fallback_reason:
+        return "Structured test run summary generated"
+    return FALLBACK_PROGRESS.get(fallback_kind, FALLBACK_PROGRESS["model_failed"])
 
 
 def _layer_has_content(layer: object) -> bool:
@@ -325,11 +375,13 @@ class SummaryAgent(BaseAgent):
             )
 
             fallback_reason: str | None = None
+            fallback_kind = "model_failed"
             current_op = "generate_structured_report"
             if state.get("_cost_budget_mode_override") in {"ml", "rules"}:
                 fallback_reason = (
                     "LLM summary disabled by the pipeline cost-budget downgrade"
                 )
+                fallback_kind = "budget"
                 structured = self._build_fallback_structured_report(
                     run_data=run_data,
                     anomaly_summary=anomaly_summary,
@@ -337,6 +389,7 @@ class SummaryAgent(BaseAgent):
                     analyses=analyses,
                     similar_failures=similar_failures,
                     error_message=fallback_reason,
+                    fallback_kind=fallback_kind,
                 )
             else:
                 try:
@@ -363,6 +416,9 @@ class SummaryAgent(BaseAgent):
                     fallback_reason = str(exc)
                     if isinstance(exc, SummaryLLMUnavailable):
                         summary_provenance.update(exc.routing_provenance)
+                        fallback_kind = exc.fallback_kind
+                    if fallback_kind == "model_failed" and _analysis_mode_is_rules():
+                        fallback_kind = "no_model"
                     logger.warning(
                         "summary_llm_unavailable_generating_deterministic_fallback_su",
                         error=exc,
@@ -374,6 +430,7 @@ class SummaryAgent(BaseAgent):
                         analyses=analyses,
                         error_message=fallback_reason,
                         similar_failures=similar_failures,
+                        fallback_kind=fallback_kind,
                     )
             summary_provenance["fallback_used"] = bool(fallback_reason)
             summary_provenance["fallback_reason_sha256"] = _hash_text(fallback_reason)
@@ -404,11 +461,7 @@ class SummaryAgent(BaseAgent):
                 project_id,
                 {
                     "status": "completed",
-                    "message": (
-                        "Structured test run summary generated"
-                        if not fallback_reason
-                        else "Summary generated in fallback mode because the configured LLM was unavailable"
-                    ),
+                    "message": _completion_message(fallback_reason, fallback_kind),
                 },
             )
 
@@ -832,6 +885,7 @@ class SummaryAgent(BaseAgent):
             raise SummaryLLMUnavailable(
                 choice.reason,
                 routing_provenance=initial_provenance,
+                fallback_kind=_fallback_kind_for(choice.reason, resolved.endpoints),
             )
 
         llm = await get_llm(endpoint=choice.endpoint)
@@ -1535,6 +1589,7 @@ class SummaryAgent(BaseAgent):
         analyses: dict[str, dict[str, Any]],
         error_message: str | None = None,
         similar_failures: list[dict[str, Any]] | None = None,
+        fallback_kind: str = "model_failed",
     ) -> dict[str, Any]:
         failed = int(run_data.get("failed_tests") or 0)
         pass_rate = float(run_data.get("pass_rate") or 0.0)
@@ -1591,7 +1646,7 @@ class SummaryAgent(BaseAgent):
         summary_sentence = (
             f"Build {build} on branch {branch} — {_format_results_line(run_data)} "
             f"The dominant failure category was {top_category.replace('_', ' ').lower()}. "
-            "This summary was generated from stored pipeline evidence because the configured LLM was unavailable."
+            + FALLBACK_SENTENCES.get(fallback_kind, FALLBACK_SENTENCES["model_failed"])
         )
 
         log_anomalies = [str(item.get("summary") or item.get("message") or item) for item in anomalies[:5]]
@@ -1605,15 +1660,21 @@ class SummaryAgent(BaseAgent):
                 likely_cause = root_cause_summary
                 break
 
-        immediate_mitigation = (
-            "Verify the configured local LLM model is available, then re-run the summary stage."
-            if error_message
-            else "Review the failing suites and rerun the affected tests."
-        )
+        if error_message and fallback_kind == "model_failed":
+            immediate_mitigation = "Verify the configured local LLM model is available, then re-run the summary stage."
+        elif fallback_kind == "refused":
+            immediate_mitigation = "Check the AI settings if a language model should write this summary."
+        else:
+            immediate_mitigation = "Review the failing suites and rerun the affected tests."
+
 
         fallback_fix_recommendations = recommended_actions[:5] or [
             "Review the top failing tests and confirm whether the issue is product, environment, or test-data related.",
-            "Restore or retarget the configured Ollama model before re-running AI-assisted summary generation.",
+            *(
+                ["Restore or retarget the configured Ollama model before re-running AI-assisted summary generation."]
+                if fallback_kind == "model_failed"
+                else []
+            ),
         ]
 
         # ── Executive panel (structured, scannable) ────────────────────

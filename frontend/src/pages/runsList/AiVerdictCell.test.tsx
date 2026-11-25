@@ -50,6 +50,6 @@ describe('AiVerdictCell — one state, one markup', () => {
     const { container } = renderCell({ recommendation: null, reason: 'unavailable', title: UNAVAILABLE_RUN_TITLE })
     const none = container.querySelector('[data-ai-verdict="none"]') as HTMLElement
     expect(none).toHaveAttribute('data-ai-verdict-reason', 'unavailable')
-    expect(none).toHaveAttribute('title', 'AI verdict unavailable: the run is not available to you')
+    expect(none).toHaveAttribute('title', 'Verdict unavailable: the run is not available to you')
   })
 })

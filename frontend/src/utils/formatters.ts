@@ -431,3 +431,33 @@ export const formatBytes = (bytes: number): string => {
   // One decimal above bytes; whole numbers for raw bytes.
   return exponent === 0 ? `${bytes} B` : `${value.toFixed(1)} ${units[exponent]}`
 }
+
+// ── How a run is named on screen (see `./runOption` for the rule) ──
+
+export type RunNameFields = { id?: string | null; build_number?: number | string | null; run_seq?: number | null }
+
+/**
+ * The run's build label: `main-1865`, or `Build 240` when the label is only a
+ * number (a bare "240" reads as a count), or the short id when there is none.
+ */
+export function runBuildLabel(run: { id?: string | null; build_number?: number | string | null }): string {
+  const raw = run.build_number == null ? '' : String(run.build_number).trim()
+  if (raw === '') return run.id ? `Run ${run.id.slice(0, 8)}` : 'Run'
+  return /^\d+$/.test(raw) ? `Build ${raw}` : raw
+}
+
+/** `Run #12`, the per-suite ordinal; null when the run has not been numbered. */
+export function runSeqLabel(run: { run_seq?: number | null }): string | null {
+  return run.run_seq != null ? `Run #${run.run_seq}` : null
+}
+
+/**
+ * S-E-3: a run's name where an id must never show: its build label, else
+ * `Run #N`, else the fallback, "Unnamed run" by default (the id belongs in a
+ * tooltip or a link).
+ */
+export function runName(run: RunNameFields | null | undefined, fallback = 'Unnamed run'): string {
+  const raw = run?.build_number == null ? '' : String(run.build_number).trim()
+  if (run && raw !== '') return runBuildLabel(run)
+  return (run && runSeqLabel(run)) ?? fallback
+}

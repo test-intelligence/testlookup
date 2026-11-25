@@ -54,7 +54,7 @@ Share links use their own token/access/expiry semantics and remain subject to re
 
 ## Release decisions
 
-Run-level release signals and release/phase-level policy decisions are related but distinct. Release-level persisted verdicts include `GO`, `CONDITIONAL_GO`, `NO_GO`, `NOT_EVALUATED`. Insufficient evidence is a real state; do not coerce it to green. Review gating can project `PENDING_REVIEW` on outward-facing verdicts when configured.
+Run-level release signals and release/phase-level policy decisions are related but distinct. Release-level persisted verdicts are `GO`, `NO_GO` and `NOT_EVALUATED`: `release_rollup_service.decide` and the defect criterion return only those, and `record_decision` refuses `CONDITIONAL_GO` without `conditions_for_go`, which no caller passes. `CONDITIONAL_GO` is a run-level recommendation. Insufficient evidence is a real state; do not coerce it to green. Review gating can project `PENDING_REVIEW` on outward-facing verdicts when configured.
 
 Current release decisions are append-only records with previous rows demoted, policy/evidence snapshot, denominator and reasons retained. Partial unique indexes enforce at most one current decision for release/phase scope, with a flush between demotion and promotion. Overrides and recomputation must preserve authority/history. Always check which release, phase, policy version, run set, environment and baseline the verdict describes.
 

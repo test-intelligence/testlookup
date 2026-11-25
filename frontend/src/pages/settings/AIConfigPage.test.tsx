@@ -44,6 +44,8 @@ vi.mock('@/services/appSettingsService', () => ({
   },
 }))
 
+// The Embedding card reads the search index-status (D-159); no request in a unit test.
+
 const perms = vi.hoisted(() => ({ isAdmin: true }))
 vi.mock('@/hooks/usePermissions', () => ({ usePermissions: () => ({ isAdmin: perms.isAdmin }) }))
 

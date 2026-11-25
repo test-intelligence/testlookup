@@ -11,6 +11,23 @@ export type QuarantineStatus =
   | 'REJECTED'
   | 'EXPIRED'
 
+/** A status in words (the server's own wording for its 409s), never the enum: "waiting for its recheck". */
+const QUARANTINE_STATUS_WORDS: Record<QuarantineStatus, string> = {
+  DETECTED: 'detected',
+  PROPOSED: 'proposed',
+  APPROVED: 'approved',
+  QUARANTINED: 'quarantined',
+  RECHECK_SCHEDULED: 'waiting for its recheck',
+  RELEASED: 'released',
+  RE_QUARANTINED: 'quarantined again',
+  REJECTED: 'rejected',
+  EXPIRED: 'expired',
+}
+
+export function quarantineStatusWords(status: string): string {
+  return QUARANTINE_STATUS_WORDS[status as QuarantineStatus] ?? status.toLowerCase().replace(/_/g, ' ')
+}
+
 export interface FlakyQuarantineRead {
   id: string
   project_id: string

@@ -1,8 +1,9 @@
 /**
  * Failure-kind badge + evidence popover (AI-4).
  *
- * The kind triad (US-9.1/9.2) is an AI-derived classification — every
- * surface keeps the "AI-classified" provenance copy. AI-4 upgrades the
+ * The kind triad (US-9.1/9.2) comes from the failure analysis, which is often
+ * the rules engine, so no surface calls it "AI-classified" (D-47); the basis
+ * chip in the panel says how the kind was set. AI-4 upgrades the
  * badge with an on-demand evidence popover: the deterministic checklist
  * (memory recall, infra shape, history pattern, status signal, classifier)
  * that backs the kind, with per-check verdicts and the confidence basis
@@ -35,7 +36,7 @@ export function FailureKindBadge({ kind, compact }: { kind: string | null | unde
         border: `1px solid color-mix(in srgb, ${d.color} 35%, transparent)`,
         color: 'var(--color-text-secondary)',
       }}
-      title={`AI-classified failure kind: ${d.label} — ${d.desc}`}
+      title={`Failure kind: ${d.label} — ${d.desc}`}
     >
       <span aria-hidden className="inline-block w-1.5 h-1.5 rounded-full" style={{ background: d.color }} />
       {d.label}
@@ -91,7 +92,7 @@ export function KindEvidencePanel({ evidence }: { evidence: KindEvidence }) {
           contract as every other AI surface. */}
       <AISuggestion
         bare
-        badgeText="AI-classified"
+        badgeText="Classified"
         badgeTitle="Kinds are derived by the failure analyzer from its category verdict and the failure shape — corrections feed the training loop."
         label={<FailureKindBadge kind={evidence.kind} compact />}
         confidence={evidence.confidence}
@@ -145,7 +146,7 @@ export function KindBadgeWithEvidence({
       <button
         type="button"
         aria-expanded={open}
-        aria-label="Show failure-kind evidence (AI-classified)"
+        aria-label="Show failure-kind evidence"
         className="bg-transparent border-0 p-0 m-0 cursor-pointer inline-flex"
         onClick={e => {
           // Rows hosting the badge often navigate on click — the popover
@@ -180,7 +181,7 @@ export function KindBadgeWithEvidence({
           {!isLoading && data && !data.kind_evidence && (
             <p className="text-2xs text-[var(--color-text-muted)] m-0">
               No analysis evidence recorded for this failure yet — the kind shown is derived
-              from the stored category only (AI-classified).
+              from the stored category only.
             </p>
           )}
         </div>

@@ -8,7 +8,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import ProposeQuarantineModal from './ProposeQuarantineModal'
 
 const { propose, success } = vi.hoisted(() => ({ propose: vi.fn(), success: vi.fn() }))
-vi.mock('@/services/flakyQuarantineService', () => ({ flakyQuarantineService: { propose } }))
+vi.mock('@/services/flakyQuarantineService', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/services/flakyQuarantineService')>(), flakyQuarantineService: { propose } }))
 vi.mock('react-hot-toast', () => ({ default: { success, error: vi.fn() } }))
 
 function renderModal() {

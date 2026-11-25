@@ -22,7 +22,7 @@ const ready = (p: Page) => p.locator('[data-status-banner]')
 const rows = (page: Page) => page.locator('[data-primary] tr[id^="run-row-"]')
 const search = (page: Page) => page.getByRole('searchbox', { name: 'Search runs' })
 const branch = (page: Page) => page.getByRole('combobox', { name: 'Branch' })
-const verdict = (page: Page) => page.getByRole('combobox', { name: 'AI verdict' })
+const verdict = (page: Page) => page.getByRole('combobox', { name: 'Verdict' })
 
 /** The list requests' queries (the table's read: `size=500`), in order. */
 const listQueries = (lines: string[]) =>

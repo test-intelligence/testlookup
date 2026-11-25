@@ -531,10 +531,12 @@ describe("aiVerdictOf — the recommendation the run's Analysis tab shows", () =
 
   it('every "—" has a reason a reader can hover', () => {
     for (const reason of ['in-progress', 'not-analysed', 'not-summarised', 'no-recommendation', 'not-verified', 'unavailable'] as const) {
-      expect(NO_VERDICT_TITLE[reason]).toMatch(/^(No AI verdict|AI verdict unavailable)/)
+      expect(NO_VERDICT_TITLE[reason]).toMatch(/^(No verdict|Verdict unavailable)/)
+      // D-13: the verdict may be a quick look from the rules engine; no title calls it AI.
+      expect(NO_VERDICT_TITLE[reason]).not.toMatch(/\bAI\b/)
     }
     expect(NO_VERDICT_TITLE['not-summarised']).toBe(
-      "No AI verdict on this list yet: the run was analysed but its summary is not built. Open the run's analysis to build it.",
+      "No verdict on this list yet: the run was analysed but its summary is not built. Open the run's analysis to build it.",
     )
   })
 })
@@ -568,7 +570,7 @@ describe('aiVerdictFromBatch — a batch item becomes the cell\'s verdict (FAIL-
 
   it('an id the batch answered as unavailable: "unavailable", with its own title; a missing item is a failed answer', () => {
     expect(aiVerdictFromBatch(undefined, true)).toEqual({ recommendation: null, reason: 'unavailable', title: UNAVAILABLE_RUN_TITLE })
-    expect(UNAVAILABLE_RUN_TITLE).toBe('AI verdict unavailable: the run is not available to you')
+    expect(UNAVAILABLE_RUN_TITLE).toBe('Verdict unavailable: the run is not available to you')
     expect(aiVerdictFromBatch(undefined, false)).toEqual({ recommendation: null, reason: 'unavailable' })
   })
 

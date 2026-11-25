@@ -277,6 +277,20 @@ async def test_the_embedding_index_read_is_for_a_qa_lead_and_up(api, h):
     assert body["active"]["provider"] == "default" and body["active"]["tag"] == ""
 
 
+@pytest.mark.parametrize("available", [True, False])
+async def test_the_embedding_index_says_whether_the_built_in_embedder_can_load_here(api, h, monkeypatch, available):
+    # D-159: the card said "In use" for a bundled model the server did not have. The same read now
+    # carries the probe /search/index-status uses (model file present, or a download allowed).
+    from app.services import local_embedder_guard
+
+    monkeypatch.setattr(local_embedder_guard, "embedder_status", lambda: {"available": available})
+
+    body = (await api("GET", "/ai/embedding-index", _user(UserRole.QA_LEAD))).json()
+
+    assert body["active"]["provider"] == "default"
+    assert body["embedder_available"] is available
+
+
 async def test_an_unreadable_state_is_a_503_never_in_sync(api, h, monkeypatch):
     async def unreadable(db):
         return None

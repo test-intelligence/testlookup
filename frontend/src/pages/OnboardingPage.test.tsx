@@ -283,4 +283,24 @@ describe('OnboardingPage', () => {
     expect(screen.getAllByText(/Create Project/i).length).toBeGreaterThan(0)
     expect(detectProgress).not.toHaveBeenCalled()
   })
+
+  it('D-13: with no project picked the subtitle reads "Set up your project", not "AI-powered test intelligence"', () => {
+    mockProjectState.activeProjectId = null as unknown as string
+    mockProjectState.activeProject = null
+    try {
+      render(
+        <MemoryRouter initialEntries={['/getting-started']}>
+          <Routes>
+            <Route path="/getting-started" element={<OnboardingPage />} />
+          </Routes>
+        </MemoryRouter>,
+      )
+      expect(screen.getByText('Select a project first')).toBeInTheDocument()
+      expect(screen.getByText('Set up your project')).toBeInTheDocument()
+      expect(screen.queryByText(/AI-powered/)).toBeNull()
+    } finally {
+      mockProjectState.activeProjectId = 'proj-1'
+      mockProjectState.activeProject = { id: 'proj-1', name: 'Project One' }
+    }
+  })
 })

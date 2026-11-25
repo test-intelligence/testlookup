@@ -14,7 +14,12 @@ import FailureCategoryMark from '@/components/charts/FailureCategoryMark'
 import { failureCategoryColor } from '@/components/charts/failureTaxonomy'
 import RoleActionCard from '@/components/ai/RoleActionCard'
 import ReviewStateControl from '@/components/ai/ReviewStateControl'
-import AISuggestion, { isKnownValue, normalizeProvenance } from '@/components/ai/AISuggestion'
+import AISuggestion, {
+  engineLabel,
+  isKnownValue,
+  isModelEngine,
+  normalizeProvenance,
+} from '@/components/ai/AISuggestion'
 import CorrectClassificationModal from '@/components/ai/CorrectClassificationModal'
 import { aiFeedbackService } from '@/services/aiFeedbackService'
 
@@ -242,7 +247,7 @@ export default function AIAnalysisPanel({
       setResult(analysis)
     } catch {
       setHasError(true)
-      toast.error('AI analysis failed. Check backend logs.')
+      toast.error('The analysis failed. Check the server logs.')
     } finally {
       setLoading(false)
     }
@@ -337,7 +342,7 @@ export default function AIAnalysisPanel({
           <p className="font-semibold text-[var(--color-text)]">Investigating…</p>
         </div>
         <p className="text-sm text-[var(--color-text-muted)]">
-          The ReAct agent is gathering evidence. Actual tools used will be shown when complete.
+          Analysing this failure… The checks it ran will be shown when it finishes.
         </p>
       </div>
     )
@@ -351,7 +356,12 @@ export default function AIAnalysisPanel({
           <AlertTriangle className="h-5 w-5 text-[var(--status-failed)]" />
           <p className="font-semibold text-[var(--status-failed)]">Analysis Failed</p>
         </div>
-        <p className="text-sm text-[var(--color-text-muted)] mb-4">The AI agent encountered an error. Check that your LLM (Ollama) is running.</p>
+        {/* D-13: name the configured mode; in Rules / classifier mode never mention a model. */}
+        <p className="text-sm text-[var(--color-text-muted)] mb-4">
+          {aiMode?.analysis_mode === 'rules' || aiMode?.analysis_mode === 'ml'
+            ? 'The analysis could not finish. Try again; if it keeps failing, check the server logs.'
+            : 'The analysis could not finish. Check that the configured language model is running, then try again.'}
+        </p>
         <button className="btn-secondary text-sm" onClick={() => { setHasError(false) }}>Try Again</button>
       </div>
     )
@@ -375,7 +385,15 @@ export default function AIAnalysisPanel({
   // are all optional on the wire and legitimately absent on older rows.
   const analysisId = result.analysis_id ?? null
   const provenance = normalizeProvenance(result)
-  const modelLine = [result.llm_provider, result.llm_model].filter(v => isKnownValue(v)).join(' · ')
+  // D-13: the subtitle names the engine that answered; the provider / model only when a language
+  // model did, and never "unknown · unknown" (S-A-1: the read fills a missing value with "unknown").
+  const modeUsed = provenance?.modeUsed ?? null
+  const modelBits = isModelEngine(modeUsed)
+    ? [result.llm_provider, result.llm_model].filter(v => isKnownValue(v))
+    : []
+  const modelLine = modeUsed
+    ? [`Produced by ${engineLabel(modeUsed)}`, ...modelBits].join(' · ')
+    : [result.llm_provider, result.llm_model].filter(v => isKnownValue(v)).join(' · ')
   const lowConfidence = result.low_confidence ?? result.requires_human_review
   const evidenceLinks = (result.evidence_references ?? []).map(ev => ({
     label: ev.source,
@@ -405,9 +423,8 @@ export default function AIAnalysisPanel({
             <Bot className="h-5 w-5 text-[var(--color-text)]" />
           </div>
           <div>
-            <p className="font-semibold text-[var(--color-text)]">AI Triage Result</p>
-            {/* S-A-1: the read fills a missing provider/model with "unknown"; say nothing rather than
-                "unknown · unknown". */}
+            {/* D-13: no "AI" in the title; the subtitle names the engine (rules, classifier or model). */}
+            <p className="font-semibold text-[var(--color-text)]">Triage result</p>
             {modelLine && <p className="text-xs text-[var(--color-text-muted)]">{modelLine}</p>}
           </div>
         </div>

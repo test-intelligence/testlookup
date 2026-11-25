@@ -151,7 +151,9 @@ for (const theme of THEMES) {
     const { api, errors } = await openTm(page, theme, { path: '/test-management?tab=plans', planItems: true })
     await page.getByRole('heading', { name: TM_PLAN_NAME }).click()
     const table = page.locator('table').filter({ has: page.getByRole('columnheader', { name: 'Ran against' }) })
-    const row = table.locator('tbody > tr:not([data-in-page-row])').filter({ hasText: tmCaseId(ACTIVE_CASE).slice(0, 8) })
+    // D-62: a plan row names its case by title, never a slice of its id.
+    const row = table.locator('tbody > tr:not([data-in-page-row])')
+      .filter({ has: page.getByRole('cell', { name: tmCaseTitle(ACTIVE_CASE), exact: true }) })
     await row.getByRole('button', { name: 'v1', exact: true }).click()
     await expect(table.locator('[data-plan-item-steps="1"] [data-plan-item-step]')).toHaveCount(2)
     await blur(page)

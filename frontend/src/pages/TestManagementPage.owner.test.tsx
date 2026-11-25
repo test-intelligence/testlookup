@@ -12,11 +12,12 @@ describe('Test Management owner cell', () => {
     expect(screen.queryByText('Unassigned')).toBeNull()
   })
 
-  it('falls back to the catalog assignee or author when no source owner exists', () => {
-    render(<OwnerCell owner="   " userId="12345678-abcd-4000-8000-000000000001" />)
+  it('S-E-3: an assignee or author the server could not name reads "Unknown user", never a slice of the id', () => {
+    const { container } = render(<OwnerCell owner="   " userId="12345678-abcd-4000-8000-000000000001" />)
 
-    expect(screen.getByText('12345678')).toBeTruthy()
+    expect(screen.getByText('Unknown user')).toHaveAttribute('title', '12345678-abcd-4000-8000-000000000001')
     expect(screen.queryByText('Unassigned')).toBeNull()
+    expect(container.textContent).not.toMatch(/[0-9a-f]{8}|^12/)
   })
 
   it('renders Unassigned only when neither ownership source exists', () => {
@@ -33,7 +34,7 @@ describe('Test Management owner avatar', () => {
 
   it.each([
     ['a named owner', { owner: 'Priya Nair', userId: null }, 'Priya Nair', 'PN'],
-    ['an assignee id', { owner: null, userId: '12345678-abcd-4000-8000-000000000001' }, '12345678-abcd-4000-8000-000000000001', '12'],
+    ['an assignee id', { owner: null, userId: '12345678-abcd-4000-8000-000000000001' }, '12345678-abcd-4000-8000-000000000001', '?'],
   ] as const)('%s: initials in the map colour for its name', (_name, props, key, initials) => {
     render(<OwnerCell {...props} />)
     const c = avatarColorForName(key)

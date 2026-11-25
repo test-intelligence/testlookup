@@ -1038,9 +1038,11 @@ function RunsTable({
   isQaEngineer, deepAvailability,
   page, pages, total, onPageChange,
   datetimeSortDir, onToggleDatetimeSort,
-  filtered, loading, onClearFilters,
+  filtered, loading, onClearFilters, markedRunId = null,
 }: {
   runs: TestRun[]
+  /** D-29: the run last picked in the Failure signatures panel. */
+  markedRunId?: string | null
   /** The failed builds grouped by error (FAIL-03). */
   signatures: SignatureModel
   signatureRequest: SignatureRequestState
@@ -1147,7 +1149,7 @@ function RunsTable({
               <Th>Build</Th>
               <Th>Signature</Th>
               <Th>Status</Th>
-              <Th>AI verdict</Th>
+              <Th>Verdict</Th>
               <Th numeric>Tests</Th>
               <Th numeric>Pass rate</Th>
               <ThSort
@@ -1191,11 +1193,17 @@ function RunsTable({
               return (
                 // The outlier tint is the row's DATA (its build carries a different error) and stays; the zebra's
                 // even rows were the card's own colour (no pixel), and as an inline style they blocked the hover.
+                // D-29: the build picked in the Failure signatures panel stays marked (aria-current + an accent
+                // outline) until the next pick; a 1.2 s tint ended while the smooth scroll was still moving.
                 <Tr
                   id={`run-row-${r.id}`}
                   key={r.id}
                   interactive={false}
-                  style={isOutlier ? { background: 'color-mix(in srgb, var(--status-broken) 3%, transparent)' } : undefined}
+                  aria-current={markedRunId === r.id ? 'true' : undefined}
+                  style={{
+                    ...(isOutlier ? { background: 'color-mix(in srgb, var(--status-broken) 3%, transparent)' } : {}),
+                    ...(markedRunId === r.id ? { outline: '2px solid var(--color-accent)', outlineOffset: '-2px' } : {}),
+                  }}
                 >
                   <Td>
                     <input
@@ -1658,6 +1666,20 @@ export default function RunsPage() {
     const start = (tablePage - 1) * TABLE_PAGE_SIZE
     return sortedRuns.slice(start, start + TABLE_PAGE_SIZE)
   }, [sortedRuns, tablePage])
+  // D-29: a build picked in the Failure signatures panel. The table turns to the page that holds it, marks the
+  // row, and scrolls to it once that page is drawn (the old handler did nothing for a row on another page).
+  // `seq` re-scrolls when the same build is picked again.
+  const [markedRun, setMarkedRun] = useState<{ id: string; seq: number } | null>(null)
+  const onJumpToRow = (run: TestRun) => {
+    const index = sortedRuns.findIndex((r) => r.id === run.id)
+    if (index >= 0) setTablePage(Math.floor(index / TABLE_PAGE_SIZE) + 1)
+    setMarkedRun((m) => ({ id: run.id, seq: (m?.seq ?? 0) + 1 }))
+  }
+  useEffect(() => {
+    if (!markedRun) return
+    const el = document.getElementById(`run-row-${markedRun.id}`)
+    if (typeof el?.scrollIntoView === 'function') el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }, [markedRun])
   // FAIL-03: the failure signatures of up to 50 failed builds (the visible
   // ones first, then the newest), ONE request; re-asked only when that id set
   // changes. FAIL-04: the AI verdicts of the runs on screen, ONE request.
@@ -1866,15 +1888,6 @@ export default function RunsPage() {
     }
   }
 
-  const onJumpToRow = (run: TestRun) => {
-    const el = document.getElementById(`run-row-${run.id}`)
-    if (el) {
-      el.scrollIntoView({ behavior: 'smooth', block: 'center' })
-      el.style.background = 'color-mix(in srgb, var(--status-broken) 10%, transparent)'
-      window.setTimeout(() => { el.style.background = '' }, 1200)
-    }
-  }
-
   const theme = VERDICT_THEME[verdict]
   const canBisect = buildBisectHref(model) !== null
   const signatureCount = model.signatures.groups.length
@@ -2039,7 +2052,7 @@ export default function RunsPage() {
           value={verdictFilter}
           onChange={(v) => writeFilters({ verdict: v })}
           options={VERDICT_FILTERS.map(v => ({ value: v, label: VERDICT_FILTER_LABELS[v] }))}
-          ariaLabel="AI verdict"
+          ariaLabel="Verdict"
         />
       </div>
 
@@ -2096,6 +2109,7 @@ export default function RunsPage() {
       <div data-primary="">
         <RunsTable
           runs={tableRuns}
+          markedRunId={markedRun?.id ?? null}
           signatures={model.signatures}
           signatureRequest={signatureRequest}
           verdictOf={verdicts.verdictOf}

@@ -880,7 +880,7 @@ export default function PolicyEditorPage() {
                 Enabled (opt-in)
               </label>
               <p className="text-2xs text-[var(--color-text-muted)]">
-                Weight failure kinds differently in the gate verdict. Failure kinds are AI-classified
+                Weight failure kinds differently in the gate verdict. Failure kinds come from the analysis
                 (derived from the failure-category classifier) — not ground truth. Infrastructure or
                 test-code failures within their budget are excluded from the NO-GO trigger but always
                 reported; exceeding a budget restores full counting. Product failures always count, and
@@ -945,7 +945,7 @@ export default function PolicyEditorPage() {
                                 }}
                                 className={FIELD_SM} disabled={!editable} />
                               <p className={HINT}>
-                                Only failures whose AI kind confidence meets the floor are excusable;
+                                Only failures whose kind confidence meets the floor are excusable;
                                 below-floor failures count as product. Empty = no floor (behavior unchanged).
                               </p>
                             </div>

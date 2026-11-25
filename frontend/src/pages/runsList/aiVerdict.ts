@@ -105,17 +105,17 @@ export const RECOMMENDATION_LABEL: Record<AiRecommendation, string> = {
 
 /** The "—" cell's title. */
 export const NO_VERDICT_TITLE: Record<NoVerdictReason, string> = {
-  'in-progress': 'No AI verdict: the run is still in progress',
-  'not-analysed': 'No AI verdict: this run has not been analysed',
+  'in-progress': 'No verdict: the run is still in progress',
+  'not-analysed': 'No verdict: this run has not been analysed',
   'not-summarised':
-    "No AI verdict on this list yet: the run was analysed but its summary is not built. Open the run's analysis to build it.",
-  'no-recommendation': 'No AI verdict: the analysis made no release recommendation',
-  'not-verified': 'No AI verdict: the decision report did not pass verification',
-  unavailable: 'AI verdict unavailable: the request failed',
+    "No verdict on this list yet: the run was analysed but its summary is not built. Open the run's analysis to build it.",
+  'no-recommendation': 'No verdict: the analysis made no release recommendation',
+  'not-verified': 'No verdict: the decision report did not pass verification',
+  unavailable: 'Verdict unavailable: the request failed',
 }
 
 /** The title of a run the batch answered as unavailable (unknown or not accessible: one answer). */
-export const UNAVAILABLE_RUN_TITLE = 'AI verdict unavailable: the run is not available to you'
+export const UNAVAILABLE_RUN_TITLE = 'Verdict unavailable: the run is not available to you'
 
 /**
  * One run's verdict from its `GET /runs/ai-verdicts` item. `unavailable`: the

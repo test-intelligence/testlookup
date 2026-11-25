@@ -13,8 +13,8 @@ import DecisionChip from '@/components/ui/DecisionChip'
 import { NO_VERDICT_TITLE, RECOMMENDATION_LABEL, type AiVerdict } from './aiVerdict'
 
 const REVIEW_TITLE = {
-  draft: 'AI-generated draft: awaiting human review',
-  rejected: 'The AI report was rejected by a reviewer',
+  draft: 'Draft: awaiting human review',
+  rejected: 'The report was rejected by a reviewer',
 } as const
 
 export default function AiVerdictCell({

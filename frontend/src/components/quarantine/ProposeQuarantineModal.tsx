@@ -15,7 +15,7 @@
  */
 import { useState } from 'react'
 import toast from 'react-hot-toast'
-import { flakyQuarantineService } from '@/services/flakyQuarantineService'
+import { flakyQuarantineService, quarantineStatusWords } from '@/services/flakyQuarantineService'
 import { InlineFormSection } from '@/components/ui/inPage/InlineFormSection'
 import type { InlineSlot } from '@/components/ui/inPage/useInlineSlot'
 
@@ -57,7 +57,7 @@ export default function ProposeQuarantineModal({
       toast.success(
         row.status === 'PROPOSED'
           ? 'Quarantine proposal created — pending QA Lead approval under Flaky tests › Proposed.'
-          : `Quarantine request updated — now ${row.status} (see Flaky tests).`,
+          : `Quarantine request updated: now ${quarantineStatusWords(row.status)} (see Flaky tests).`,
         { duration: 8000 },
       )
       onClose()

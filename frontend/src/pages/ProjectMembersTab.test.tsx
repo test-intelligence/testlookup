@@ -160,7 +160,7 @@ describe('ProjectMembersTab — Default QA Lead', () => {
     })
 
     expect(
-      await screen.findByText(/No project members have the QA_LEAD role yet/),
+      await screen.findByText(/No project members have the QA Lead role yet/),
     ).toBeInTheDocument()
   })
 

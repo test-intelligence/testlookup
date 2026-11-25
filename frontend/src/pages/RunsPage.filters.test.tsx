@@ -101,7 +101,7 @@ const runsParams = () => vi.mocked(useRuns).mock.calls.map(([params]) => (params
 const lastParams = () => runsParams()[runsParams().length - 1]
 const searchBox = () => screen.getByRole('searchbox', { name: 'Search runs' }) as HTMLInputElement
 const branchSelect = () => screen.queryByRole('combobox', { name: 'Branch' }) as HTMLSelectElement | null
-const verdictSelect = () => screen.getByRole('combobox', { name: 'AI verdict' }) as HTMLSelectElement
+const verdictSelect = () => screen.getByRole('combobox', { name: 'Verdict' }) as HTMLSelectElement
 const branchRequests = () => vi.mocked(getData).mock.calls.filter(([url]) => url === '/api/v1/runs/branches')
 
 beforeEach(() => {

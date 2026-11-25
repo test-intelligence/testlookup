@@ -49,7 +49,7 @@ export default function AIVersionPicker({
     <div data-ai-version-picker="" className="flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs">
       <span className="inline-flex items-center gap-1.5 text-[var(--color-text-muted)]">
         <History aria-hidden className="h-3.5 w-3.5" />
-        <span className="eyebrow uppercase">AI history</span>
+        <span className="eyebrow uppercase">Analysis history</span>
       </span>
       <span data-ai-version-meta="" className="font-medium text-[var(--color-text)]">
         {shown ? versionLabel(shown) : 'Loading versions…'}

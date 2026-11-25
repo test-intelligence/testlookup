@@ -34,6 +34,7 @@ vi.mock('@/services/appSettingsService', () => ({
 
 let isAdmin = true
 vi.mock('@/hooks/usePermissions', () => ({ usePermissions: () => ({ isAdmin }) }))
+// D-159: the card reads `embedder_available` from the search index-status (no request in a unit test).
 
 const mockToastSuccess = vi.fn()
 const mockToastError = vi.fn()
@@ -160,6 +161,13 @@ describe('the status lines', () => {
     expect(providerSelect(card).value).toBe('default')
     expect(modelInput(card).value).toBe('all-MiniLM-L6-v2')
     expect(modelInput(card).readOnly).toBe(true)
+  })
+
+  it('D-159: the server cannot load the bundled model: "Selected: …", search by meaning is off, never "In use"', async () => {
+    const card = await renderPage(config({ embedding_index: index({ embedder_available: false }) }))
+    expect(block(card)).not.toHaveTextContent('In use')
+    expect(block(card)).toHaveTextContent('Selected: Bundled MiniLM (all-MiniLM-L6-v2).')
+    expect(block(card)).toHaveTextContent('so search by meaning is off.')
   })
 
   it('configured ≠ in use: both sentences, and Re-embed now starts the build an admin sees', async () => {

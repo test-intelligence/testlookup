@@ -76,7 +76,7 @@ test('F1 Mute → a reason → Propose quarantine: the whole POST body; Cancel s
   await form.getByRole('textbox').fill('  Flaky on the shared runner  ')
   await propose.click()
   await expect(form).toHaveCount(0)
-  await expect(page.getByText('Quarantine proposal created — pending QA Lead approval on /quarantine.')).toBeVisible()
+  await expect(page.getByText('Quarantine proposed. It waits for a QA lead under Flaky tests › Proposed.')).toBeVisible()
   await networkQuiet(page, api)
   expect(world.writes).toEqual([
     {

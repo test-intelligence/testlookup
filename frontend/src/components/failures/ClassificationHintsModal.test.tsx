@@ -289,6 +289,20 @@ describe('ClassificationHintsModal — the preview', () => {
     expect(document.querySelector('[data-hint-preview]')).toHaveTextContent('No failure in the last 30 days to test against.')
   })
 
+  // D-31: on the Test name field the matched value is the test name, and the line read "a: a".
+  it('D-31: on the Test name field each example prints the name once', () => {
+    vi.useFakeTimers()
+    hooks.preview.mockReturnValue({
+      data: { ...PREVIEW, examples: [{ test_name: 'test_checkout_pays', value: 'test_checkout_pays' }] }, error: undefined,
+    })
+    renderModal()
+    fireEvent.change(within(addForm()).getByLabelText('Field'), { target: { value: 'test_name' } })
+    fireEvent.change(containsInput(), { target: { value: 'checkout' } })
+    act(() => { vi.advanceTimersByTime(PREVIEW_DEBOUNCE_MS) })
+    const box = document.querySelector('[data-hint-preview]') as HTMLElement
+    expect(within(box).getByRole('listitem')).toHaveTextContent(/^test_checkout_pays$/)
+  })
+
   it('renders a hostile matched value as text', () => {
     vi.useFakeTimers()
     hooks.preview.mockReturnValue({

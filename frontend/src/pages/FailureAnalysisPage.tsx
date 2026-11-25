@@ -48,7 +48,7 @@
  *
  * Wired actions (US-2.4):
  *   - "Mute" → manual quarantine proposal (POST /api/v1/quarantine,
- *     QA_LEAD+; lands as PROPOSED pending approval on /quarantine).
+ *     QA_LEAD+; lands as PROPOSED pending approval under Flaky tests › Proposed).
  *   - "Correct the classification" → analysis lookup by fingerprint
  *     (GET /projects/{id}/analyses/lookup) + rating=incorrect feedback
  *     (POST /feedback/{analysis_id}) feeding the training loop.
@@ -106,7 +106,7 @@ import { usePermissions } from '@/hooks/usePermissions'
 import { useSlotCloser } from '@/hooks/useSlotCloser'
 import { formatNumber, shortAgo } from '@/utils/formatters'
 import { useSuiteOptions } from '@/hooks/useSuiteOptions'
-import { flakyQuarantineService } from '@/services/flakyQuarantineService'
+import { flakyQuarantineService, quarantineStatusWords } from '@/services/flakyQuarantineService'
 import { postData } from '@/services/http'
 import {
   useFailureCategories, useFlakyTests, useTopFailing, useTrendData,
@@ -1024,14 +1024,18 @@ function FailingRowEl({
             <ChevronRight aria-hidden="true" className={clsx('h-3 w-3 transition-transform', open && 'rotate-90')} />
           </button>
           <div className="flex flex-col gap-0.5 min-w-0">
-            <Link
-              to={testSearchHref(test.test_name)}
-              title="Find this test's runs"
-              className="font-mono text-sm font-medium truncate hover:underline"
+            {/* D-44: the name toggles the row's detail (it opened Search); "Find this test's runs" is in the detail. */}
+            <button
+              type="button"
+              data-failure-name-toggle=""
+              aria-expanded={open}
+              title={open ? 'Hide the latest failure' : 'Show the latest failure'}
+              onClick={() => onToggle(row.key)}
+              className="min-w-0 truncate text-left font-mono text-sm font-medium hover:underline"
               style={{ color: 'var(--status-failed)' }}
             >
               {test.test_name}
-            </Link>
+            </button>
             {suite && <span className="text-2xs text-[var(--color-text-muted)] truncate">{suite}</span>}
             {test.failure_step && (
               <span className="text-2xs text-[var(--color-text-muted)] truncate" title={`Failed at step: ${test.failure_step}`}>
@@ -1102,6 +1106,13 @@ function FailingRowEl({
       <tr data-failure-detail="" style={{ borderBottom: '1px solid var(--color-border)' }}>
         <td colSpan={6} style={{ padding: 12, background: 'var(--color-bg)' }}>
           <FailureDetail test={test} />
+          <Link
+            to={testSearchHref(test.test_name)}
+            data-failure-find-runs=""
+            className="mt-2 inline-block text-xs font-medium text-[var(--color-accent)] hover:underline"
+          >
+            Find this test&apos;s runs
+          </Link>
         </td>
       </tr>
     )}
@@ -1190,7 +1201,7 @@ function FailureDetail({ test }: { test: TopFailingItem }) {
 function SignalCell({ row }: { row: FailingRow }) {
   const { test, flaky } = row
   if (flaky?.source === 'manual') {
-    return <Pill tone="neutral" title="Manually flagged as flaky on /my-failures (a human triage, not a measured rate)">Flagged</Pill>
+    return <Pill tone="neutral" title="Manually flagged as flaky in the Inbox (a person's triage call, not a measured rate)">Flagged</Pill>
   }
   if (flaky) {
     return (
@@ -1421,15 +1432,14 @@ export function SuspectsPanel({
 // ── Failure kind (US-9.2) ─────────────────────────────────────────────────
 // The triad — product / test_code / infrastructure (/ unknown) — is the
 // AI-derived triage axis from backend/app/services/failure_kind.py. It is
-// a classification, not ground truth, so every surface carries the
-// "AI-classified" provenance copy.
+// a classification, not ground truth, so the chip row says "Classified".
 
 // The badge (and its AI-4 evidence-popover sibling) live in the shared
 // component so RunDetail rows can carry the same treatment. Re-exported
 // here for backward compatibility with existing imports.
 export { FailureKindBadge }
 
-/** Chip row that filters the failure surfaces below by AI-classified kind.
+/** Chip row that filters the failure surfaces below by classified kind.
  *  Counts come from the backend's by-kind aggregation (which applies the
  *  BROKEN-status nudge); zero-count kinds stay visible so the triad reads
  *  as a stable mental model across windows. */
@@ -1451,7 +1461,7 @@ function KindFilterChips({
   return (
     <div
       role="group"
-      aria-label="Filter by failure kind (AI-classified)"
+      aria-label="Filter by failure kind (classified)"
       className="flex items-center gap-2 flex-wrap rounded-xl"
       style={{ background: 'var(--color-bg-card)', border: '1px solid var(--color-border)', padding: '10px 16px', marginBottom: 14 }}
     >
@@ -1462,7 +1472,7 @@ function KindFilterChips({
         className="text-2xs text-[var(--color-text-faint)]"
         title="Kinds are derived by the failure analyzer from its category verdict and the failure shape — corrections feed the training loop."
       >
-        AI-classified
+        Classified
       </span>
       <span aria-hidden className="w-px h-4 mx-1" style={{ background: 'var(--color-border)' }} />
       {chips.map(chip => {
@@ -1617,7 +1627,7 @@ function FailureCategoryCard({ categories, totalFailures, uncategorizedPct, onCo
       <div className="px-4 py-3.5">
         <p className="text-xs text-[var(--color-text-muted)] m-0 mb-3" style={{ lineHeight: 1.5 }}>
           Categories computed by the failure-analyzer{kindFilter !== 'all' && (
-            <> — filtered to AI-classified <em>{kindDef(kindFilter).label.toLowerCase()}</em> failures</>
+            <> — filtered to <em>{kindDef(kindFilter).label.toLowerCase()}</em> failures</>
           )}. Empty buckets are kept visible — the page
           tells you what didn't happen, not just what did.
         </p>
@@ -1937,7 +1947,7 @@ function Pill({ children, tone, title }: { children: React.ReactNode; tone: 'goo
 // ── Mute-test (quarantine proposal) modal — US-2.4 ────────────────────────
 // Wires the "Mute test" CTA to the existing flaky-quarantine workflow:
 // submits a manual PROPOSED row via POST /api/v1/quarantine (QA_LEAD+),
-// which then awaits approval on /quarantine. The reason is required — it
+// which then awaits approval under Flaky tests › Proposed. The reason is required — it
 // lands in the proposal's rationale and the quarantine audit trail.
 // W27 PAN-04: rendered IN THE PAGE, in a full-width row under the test's row
 // (an `InlineFormSection` named as the dialog was); Escape inside closes it.
@@ -1978,8 +1988,9 @@ function MuteTestModal({
       })
       toast.success(
         row.status === 'PROPOSED'
-          ? 'Quarantine proposal created — pending QA Lead approval on /quarantine.'
-          : `Quarantine request updated — now ${row.status} (see /quarantine).`,
+          // D-41: no route and no raw status value in the toast.
+          ? 'Quarantine proposed. It waits for a QA lead under Flaky tests › Proposed.'
+          : `Quarantine request updated: now ${quarantineStatusWords(row.status)}.`,
         { duration: 8000 },
       )
       onClose()
@@ -2000,8 +2011,8 @@ function MuteTestModal({
       description={
         <span className="text-sm">
           Proposes <code className="font-mono text-xs [overflow-wrap:anywhere]">{test.test_name}</code> for
-          quarantine. A QA Lead approves or rejects the proposal on /quarantine —
-          nothing is muted until then.
+          quarantine. A QA lead approves or rejects it under Flaky tests › Proposed.
+          Nothing is muted until then.
         </span>
       }
       onClose={onClose}
@@ -2575,9 +2586,10 @@ export default function FailureAnalysisPage() {
               allLabel="All suites"
             />
             {viewsMenu && <SavedViewsMenu {...viewsMenu} variant="ghost" />}
+            {/* D-42: the triage queue is the Inbox (the failures waiting for triage; it offers up to 30 days). */}
             <Link
-              to={`/runs?days=${days}`}
-              title="Open the triage queue filtered to this window"
+              to="/my-failures"
+              title="Open the Inbox: the failures waiting for triage"
               className="btn-primary inline-flex items-center gap-1 !px-3 !py-1.5 text-sm"
             >
               Open triage queue <ChevronRight className="h-3.5 w-3.5" aria-hidden="true" />

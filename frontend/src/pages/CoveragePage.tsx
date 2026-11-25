@@ -1503,7 +1503,8 @@ export default function CoveragePage() {
         verdict,
       }),
     },
-    { label: 'Open triage queue', icon: <ListChecks aria-hidden="true" className="h-3.5 w-3.5" />, href: `/failures?days=${days}` },
+    // D-42: "triage queue" is the Inbox everywhere; it shares the page's window.
+    { label: 'Open triage queue', icon: <ListChecks aria-hidden="true" className="h-3.5 w-3.5" />, href: '/my-failures' },
     // /coverage/suite needs a suite `name`: the list of every suite is /suites.
     { label: 'View all suites', icon: <Layers aria-hidden="true" className="h-3.5 w-3.5" />, href: '/suites' },
   ]

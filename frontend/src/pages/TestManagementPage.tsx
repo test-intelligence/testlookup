@@ -2289,7 +2289,8 @@ export function OwnerCell({ owner, userId }: { owner: string | null; userId: str
       </span>
     )
   }
-  const initials = userId.slice(0, 2).toUpperCase()
+  // S-E-3: the server names every owner it can resolve (full name, else username);
+  // an id it could not resolve (a deleted user) reads "Unknown user", never hex.
   const c = avatarColorForName(userId)
   return (
     <span className="inline-flex items-center gap-1.5 text-xs text-[var(--color-text-secondary)]">
@@ -2299,9 +2300,9 @@ export function OwnerCell({ owner, userId }: { owner: string | null; userId: str
         className="inline-flex items-center justify-center rounded-full font-bold text-2xs h-[1.8em] w-[1.8em]"
         style={{ background: c.bg, color: c.fg }}
       >
-        {initials}
+        ?
       </span>
-      <span className="truncate" title={userId}>{userId.slice(0, 8)}</span>
+      <span className="truncate" title={userId}>Unknown user</span>
     </span>
   )
 }
@@ -2433,6 +2434,10 @@ function PlanItemsView({ planId, onMutate, projectId = null, canWrite = false }:
     // W29a UIX-03: a skipped RESULT is the skipped hue (was muted grey).
     skipped: 'text-[var(--status-skipped)]',
   }
+  // S-E-3: the stored status in words, not the enum with its underscores replaced.
+  const EXEC_LABELS: Record<string, string> = {
+    not_run: 'Not run', passed: 'Passed', failed: 'Failed', blocked: 'Blocked', skipped: 'Skipped',
+  }
 
   if (isLoading) return <div className="flex justify-center py-4"><LoadingSpinner size="sm" /></div>
 
@@ -2476,10 +2481,11 @@ function PlanItemsView({ planId, onMutate, projectId = null, canWrite = false }:
             <Fragment key={item.id}>
             <tr className="table-row">
               <td className="td text-[var(--color-text-muted)]">{idx + 1}</td>
-              <td className="td text-[var(--color-text-secondary)]">{item.test_case_id.slice(0, 8)}…</td>
+              {/* D-62: the case's title (the list read's join), never a slice of its id. */}
+              <td className="td text-[var(--color-text-secondary)]" title={item.test_case_id}>{item.test_case_title || 'Deleted test case'}</td>
               <td className="td">
-                <span className={clsx('text-xs font-medium capitalize', EXEC_COLORS[item.execution_status] ?? 'text-[var(--color-text-muted)]')}>
-                  {item.execution_status.replace(/_/g, ' ')}
+                <span className={clsx('text-xs font-medium', EXEC_COLORS[item.execution_status] ?? 'text-[var(--color-text-muted)]')}>
+                  {EXEC_LABELS[item.execution_status] ?? item.execution_status.replace(/_/g, ' ')}
                 </span>
               </td>
               <td className="td whitespace-nowrap">
@@ -3409,9 +3415,9 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
                       ownerCandidates.length === 0 ? (
                         <span
                           className="text-2xs italic text-[var(--status-broken)]"
-                          title="Add a project member with role QA_LEAD before assigning."
+                          title="Add a project member with the QA Lead role before assigning."
                         >
-                          No QA_LEAD members on this project
+                          No QA Leads on this project
                         </span>
                       ) : (
                         <select
@@ -3449,7 +3455,7 @@ function TestSuitesTab({ projectId }: TestSuitesTabProps) {
                 </div>
                 {!isEmpty && suite.last_run_id && (
                   <div className="mt-2 flex items-center gap-1.5" onClick={e => e.stopPropagation()}>
-                    <span className="eyebrow uppercase text-[var(--color-text-faint)] mr-1">AI verdict:</span>
+                    <span className="eyebrow uppercase text-[var(--color-text-faint)] mr-1">Review:</span>
                     {(['confirmed', 'acknowledged', 'review_later'] as SuiteReviewState[]).map(s => (
                       <button
                         key={s}
@@ -3775,7 +3781,7 @@ function AddTestSuiteModal({
             <label htmlFor="tm-suite-owner" className="block text-xs text-[var(--color-text-muted)] mb-1">Owner</label>
             {ownerCandidates.length === 0 ? (
               <p className="text-2xs text-[var(--ui-warning-ink)] bg-[var(--status-broken-bg)] border border-[var(--status-broken-bd)] rounded px-2 py-1.5">
-                No project members have the QA_LEAD role yet. Leave unset to inherit the project's default QA lead, or add a QA_LEAD member first.
+                No project members have the QA Lead role yet. Leave unset to inherit the project's default QA lead, or add a QA Lead member first.
               </p>
             ) : (
               <select

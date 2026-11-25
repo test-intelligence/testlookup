@@ -23,6 +23,12 @@ function renderPicker(props: Partial<AIVersionPickerProps> = {}) {
 const options = (select: HTMLElement) => Array.from(select.querySelectorAll('option')).map((o) => [o.value, o.textContent])
 
 describe('AIVersionPicker', () => {
+  it('D-13: the eyebrow reads "Analysis history", not "AI history" (a version can be all rules)', () => {
+    const { container } = renderPicker()
+    expect(container.querySelector('[data-ai-version-picker]')).toHaveTextContent('Analysis history')
+    expect(container.querySelector('[data-ai-version-picker]')).not.toHaveTextContent('AI history')
+  })
+
   it('names the latest version as current and lists Current, then versions newest first', () => {
     const { container } = renderPicker()
     expect(container.querySelector('[data-ai-version-meta]')).toHaveTextContent('v2 · LLM llama3.1 (current)')

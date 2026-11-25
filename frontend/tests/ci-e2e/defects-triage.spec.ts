@@ -203,7 +203,7 @@ test('the table heading names the status tab and counts what the table shows', a
 
   await statusTab(page, 'Closed').click()
   await expect(table(page).locator('tbody tr')).toHaveCount(1)
-  await expect(heading).toHaveText(/^Closed defects\s*1 · sorted by/)
+  await expect(heading).toHaveText(/^Closed \/ invalid defects\s*1 · sorted by/)
 
   await statusTab(page, 'Resolved').click()
   await expect(page.getByText('No defects in this filter.')).toBeVisible()

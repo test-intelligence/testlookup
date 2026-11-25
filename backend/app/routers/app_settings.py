@@ -465,9 +465,22 @@ async def _embedding_index_read(db: AsyncSession, ai_cfg: dict) -> Optional[Embe
     try:
         storage_values = await _load_storage_values(db)
         body = await read_embedding_index(db, ai_config=ai_cfg, storage_values=storage_values)
-        return EmbeddingIndexRead.model_validate(body) if body is not None else None
+        read = EmbeddingIndexRead.model_validate(body) if body is not None else None
     except Exception:  # noqa: BLE001 - embedding_index: null, never a guess and never a 500
         logger.warning("embedding index state could not be read for the settings page")
+        return None
+    if read is not None and read.active.provider == "default":
+        read.embedder_available = _default_embedder_available()
+    return read
+
+
+def _default_embedder_available() -> Optional[bool]:
+    """D-159: the same probe as ``/search/index-status`` (model file present, or a download allowed)."""
+    try:
+        from app.services.local_embedder_guard import embedder_status
+
+        return bool(embedder_status().get("available"))
+    except Exception:  # noqa: BLE001 - not known is None, never a guess
         return None
 
 

@@ -2353,7 +2353,9 @@ def _frontend_no_page_modals() -> list[Violation]:
 
 _HEDGING_BLOCK_COMMENT_RE = re.compile(r"/\*.*?\*/", re.DOTALL)
 _HEDGING_LINE_COMMENT_RE = re.compile(r"//.*$", re.MULTILINE)
-_HEDGING_JSX_COMMENT_RE = re.compile(r"\{\s*/\*.*?\*/\s*\}", re.DOTALL)
+# Never across a `*/`: with `.*?` a `{` before a `/**` doc comment ran on to a much later `*/ }`
+# and blanked everything between (batch 6 review: 300 lines of AISuggestion.tsx went unseen).
+_HEDGING_JSX_COMMENT_RE = re.compile(r"\{\s*/\*(?:(?!\*/).)*\*/\s*\}", re.DOTALL)
 
 # Verdict phrasings. Each entry is (pattern, why). They are deliberately
 # narrow: they fire on copy that asserts the cause is KNOWN, and stay silent
@@ -2452,6 +2454,395 @@ def _frontend_ai_output_hedging() -> list[Violation]:
             for pattern, why in _AI_HEDGING_PATTERNS:
                 if pattern.search(line):
                     violations.append(Violation(path, lineno, why))
+    return violations
+
+
+# ── frontend.ai-word-allowlisted (product findings 2026-11-21, D-13) ─────────
+#
+# "AI" on a screen is a claim that a language model answered. The default install has no model, and
+# the rules engine's answers read "AI Triage Result", "AI-suggested", "AI-classified" until D-13. The
+# guard: a hard-coded "AI" (the word, case-sensitive) in a string literal or in JSX text of a
+# frontend/src/**/*.tsx file (tests, specs and fixtures excluded) must match an entry below. An entry
+# is (relpath, text): it tolerates every literal / JSX text of that file that EQUALS the text (spaces
+# collapsed), so moving a line is a no-op, while a new or reworded sentence with "AI" fails. An entry
+# that matches nothing is itself a violation, so a fixed string never leaves a silent hole.
+#
+# Most entries below are D-13 follow-ups (the analysis called "AI" whatever engine answered) outside
+# batch 6's rows: the list is a ratchet to shrink, not a statement that they are right.
+#
+# Blind spots, accepted: .ts files (copy models such as runsList/aiVerdict.ts) are not scanned; text
+# assembled at run time, or read from a map or the API, is not seen; the naive comment strip
+# (_strip_ts_comments) truncates a line at a `//` inside a string.
+_AI_WORD_RE = re.compile(r"\bAI\b")
+_AI_WORD_JSX_TEXT_RE = re.compile(r"[>}]([^<>{}`]*)[<{]")
+_AI_WORD_ROOT = "frontend/src"
+# Key: (relpath, the whole literal / JSX text, whitespace-collapsed). Value: why it may say "AI".
+_AI_WORD_ALLOWED: dict[tuple[str, str], str] = {
+    ('frontend/src/components/ai/AISuggestion.tsx', 'AI-suggested'):
+        "producedByWord's label for a language model's answer (or no engine recorded, model-only features)",
+    ('frontend/src/components/ai/AISuggestion.tsx', 'AI-suggested output'):
+        "producedByWord's aria-label for a language model's answer",
+    ('frontend/src/components/ai/AISuggestion.tsx', 'is not used, because the AI settings fix the engine'):
+        'names the settings page ("AI settings"), not a result',
+    ('frontend/src/components/activity/ActivityRow.tsx', 'AI agent'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/components/agents/BulkJobProgress.tsx', 'Bulk AI analysis'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/components/ai/AIAnalysisCompareSection.tsx', 'No AI analysis for this run.'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/components/ai/AIAnalysisCompareSection.tsx', 'AI analysis comparison needs two runs of the same project.'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/components/ai/AIAnalysisCompareSection.tsx', 'The AI analysis comparison is unavailable right now.'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/components/ai/AIAnalysisCompareSection.tsx', "Comparing the two runs' AI analyses…"):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/components/ai/AIAnalysisCompareSection.tsx', '(the AI narrative is being written)'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/components/ai/AIAnalysisCompareSection.tsx', 'AI analysis'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/components/ai/AIAnalysisCompareSection.tsx', 'What the AI concluded about each run, and what changed between the two analyses.'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/components/ai/AIAnalysisHistory.tsx', 'Compare AI analyses'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/components/ai/AIAnalysisHistory.tsx', 'The AI history of this run is unavailable right now.'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/components/ai/AIAnalysisPanel.tsx', 'AI summary generated'):
+        'shown only when confidence_why.is_llm_inference (a model answered)',
+    ('frontend/src/components/ai/AIAnalysisPanel.tsx', 'AI root cause analysis is available to QA engineers and above.'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/components/ai/AIAnalysisPanel.tsx', 'AI Root Cause Analysis'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/components/ai/AIAnalysisPanel.tsx', 'Uses the AI provider configured for this deployment — the failure details are sent to it'):
+        'shown only when the deployment sends failures to a configured provider (ai_offline_mode false)',
+    ('frontend/src/components/ai/AIDigestDiff.tsx', 'AI analysis differences'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/components/ai/AIVersionPicker.tsx', 'AI analysis version'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/components/ai/AIVersionSnapshot.tsx', 'The AI history is unavailable'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/components/ai/AIVersionSnapshot.tsx', '(the AI verdict before a human override)'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/components/ai/CorrectClassificationModal.tsx', 'Looking up the AI analysis…'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/components/ai/CorrectClassificationModal.tsx', 'Could not look up the AI analysis — try again in a moment.'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/components/ai/CorrectClassificationModal.tsx', 'No AI analysis recorded for this test yet. Corrections overwrite an existing AI suggestion — once the analyzer has triaged a failure of this test, you can correct it here.'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/components/ai/DecisionTrailDrawer.tsx', 'AI Decision Trail'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/components/ai/DecisionTrailDrawer.tsx', 'AI decision trail'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/components/ai/PreviousRunAICard.tsx', 'Tests whose AI conclusion changed ('):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/components/ai/TestAIHistoryStrip.tsx', 'AI analysis across runs'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/components/ai/TestAIHistoryStrip.tsx', 'AI analysis across runs (oldest → newest)'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/components/ai/TestAIVersionsPopover.tsx', 'AI analysis versions for ${runLabel}'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/components/ai/TestAIVersionsPopover.tsx', 'AI analysis on'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/components/ai/TestAIVersionsPopover.tsx', 'Close AI versions'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/components/chat/AssistantMessageExtras.tsx', 'Written by the AI copilot from the data it could read — a suggestion to verify, not a verdict.'):
+        'the chat copilot is a language model',
+    ('frontend/src/components/compliance/CompliancePackPanel.tsx', 'Generate a ZIP that reconstructs the full release decision (run snapshot, release gate policy, AI decision trail, clusters, defects, and audit events), sealed with a tamper-evident SHA-256 manifest. Each pack is retained for seven years.'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/components/defects/CreateJiraIssueModal.tsx', ', AI root cause'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/components/failures/ClassificationHintsModal.tsx', 'Hints classify new failures before the AI does. A failure that matches several uses the oldest hint. Existing analyses are not changed.'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/components/fixer/FixAttemptsSection.tsx', 'Settings → AI Agents'):
+        'names the AI Agents settings page',
+    ('frontend/src/components/investigator/InvestigatorCockpit.tsx', 'This narrative was generated by the Investigator AI agent. Verify against the linked evidence.'):
+        "the Investigator is a model-only agent; Settings → AI Agents is the page's name",
+    ('frontend/src/components/investigator/InvestigatorCockpit.tsx', 'AI-generated'):
+        "the Investigator is a model-only agent; Settings → AI Agents is the page's name",
+    ('frontend/src/components/investigator/InvestigatorCockpit.tsx', 'The Investigator agent is disabled for this project — enable it in Settings → AI Agents'):
+        "the Investigator is a model-only agent; Settings → AI Agents is the page's name",
+    ('frontend/src/components/investigator/InvestigatorCockpit.tsx', 'Settings → AI Agents'):
+        "the Investigator is a model-only agent; Settings → AI Agents is the page's name",
+    ('frontend/src/components/releases/SyncReleasesDialog.tsx', 'Offline mode is on, so releases cannot be synced from GitHub, GitLab or Jira. An administrator can turn offline mode off in Settings › AI.'):
+        'names the AI settings page (Settings › AI), where offline mode lives',
+    ('frontend/src/components/runs/UploadReportModal.tsx', 'Skip AI analysis'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/components/runs/UploadReportModal.tsx', '(faster — no AI analysis, comparison report or automatic investigation for this run; you can start the analysis later from the run page)'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/pages/AgentStatusPage.tsx', 'AI-written run summary and executive report'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/pages/AgentStatusPage.tsx', 'AI go/no-go release recommendation with risk scoring'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/pages/AgentStatusPage.tsx', 'AI Report'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/pages/AgentStatusPage.tsx', 'View AI report'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/pages/AgentStatusPage.tsx', 'The AI report could not be loaded.'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/pages/AgentStatusPage.tsx', 'No AI summary available yet.'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/pages/AgentStatusPage.tsx', 'Each AI pipeline run, with its report and agent stages'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/pages/AgentStatusPage.tsx', 'AI report'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/pages/CanonicalDetailPage.tsx', 'AI category'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/pages/CanonicalDetailPage.tsx', 'AI category is shown for the newest 2,000 runs only; older runs read “—”.'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/pages/ChatPage.tsx', 'Choose a project before using AI chat so every answer and model call stays in that project scope.'):
+        'Ask AI chat answers only with a language model',
+    ('frontend/src/pages/ChatPage.tsx', 'Ask AI conversation'):
+        'Ask AI chat answers only with a language model',
+    ('frontend/src/pages/ChatPage.tsx', 'Chat is unavailable in ML mode. Switch to LLM or Auto mode in Settings > AI Configuration.'):
+        'Ask AI chat answers only with a language model',
+    ('frontend/src/pages/ChatPage.tsx', 'Chat is unavailable in Rules mode. Switch to LLM or Auto mode in Settings > AI Configuration.'):
+        'Ask AI chat answers only with a language model',
+    ('frontend/src/pages/DeepInvestigationPage.tsx', 'No AI finding recorded for this cluster yet.'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/pages/DefectsPage.tsx', 'run an AI investigation'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/pages/dev/UxPrimitivesPage.tsx', 'AI verdicts'):
+        'dev-only primitives page',
+    ('frontend/src/pages/FailureAnalysisPage.tsx', 'Rules that classify new failures before the AI does'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/pages/inbox/ApprovalsTab.tsx', 'Approvals belong to one project. Pick the project whose AI reports, quarantine proposals, test-case reviews and defect promotions you want to decide.'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/pages/inbox/ApprovalsTab.tsx', 'AI reports'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/pages/inbox/ApprovalsTab.tsx', 'Open AI agents settings'):
+        'names the AI Agents settings page',
+    ('frontend/src/pages/inbox/CaseApprovals.tsx', 'for the case editor and its AI quality review.'):
+        'the test-case quality review runs only on a language model',
+    ('frontend/src/pages/MyFailuresPage.tsx', "AI reports, quarantine proposals and test-case reviews waiting for a decision in ${project?.name ?? 'the selected project'}."):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/pages/ReleaseGatePage.tsx', 'AI Reasoning'):
+        'shown only in LLM mode (isLLMAvailable)',
+    ('frontend/src/pages/ReviewsPage.tsx', 'Only QA leads can accept or reject AI reports. You can see the queue.'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/pages/ReviewsPage.tsx', 'No AI reports are awaiting review. A report joins this queue when its AI pipeline finishes.'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/pages/run/RunEvidenceTab.tsx', 'AI report'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/pages/RunComparePage.tsx', 'No AI comparison report exists for these runs yet. One is created when a QA engineer or above opens this comparison.'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/pages/RunComparePage.tsx', 'AI Comparison Report'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/pages/RunComparePage.tsx', 'AI analysis changes'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/pages/RunDetailPage.tsx', 'AI analysis refreshed'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/pages/RunDetailPage.tsx', 'Failed to refresh the AI analysis'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/pages/RunDetailPage.tsx', 'Refreshing AI analysis…'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/pages/RunDetailPage.tsx', 'Refresh AI analysis'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/pages/RunDetailPage.tsx', 'Export AI history'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/pages/RunDetailPage.tsx', 'Ask AI about this run'):
+        'opens Ask AI, the model-only chat',
+    ('frontend/src/pages/RunDetailPage.tsx', "The run's AI analysis failed to load"):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/pages/RunIntelligencePage.tsx', 'AI pipeline · Deep Analysis'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/pages/RunIntelligencePage.tsx', 'AI confidence'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/pages/RunIntelligencePage.tsx', ", but the per-test rows aren't available for this run — so AI clustering, root-cause analysis, and the failure breakdown can't be shown."):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/pages/RunIntelligencePage.tsx', 'Why the AI assigned this category'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/pages/RunIntelligencePage.tsx', 'The AI history failed to load'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/pages/RunIntelligencePage.tsx', 'The stored AI version failed to load'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/pages/RunIntelligencePage.tsx', 'Could not fetch AI analysis data for this run.'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/pages/settings/AgentActivityPage.tsx', 'Every run by a governed AI agent — like the Investigator — lands here with its trigger, mode, token/cost spend, and the actions it proposed or took. Trigger an investigation from the Deep Investigation page, or enable auto-triggers under Settings → AI Agents.'):
+        'governed agents such as the Investigator are model-only',
+    ('frontend/src/pages/settings/AIAgentsPage.tsx', 'AI Agents'):
+        "the AI Agents settings page's own name",
+    ('frontend/src/pages/settings/AIConfigPage.tsx', 'LLM (AI Agent)'):
+        'the LLM mode option, which is a model',
+    ('frontend/src/pages/settings/AIConfigPage.tsx', 'Could not load AI configuration'):
+        "the AI settings page's own name",
+    ('frontend/src/pages/settings/AIConfigPage.tsx', 'AI configuration saved'):
+        "the AI settings page's own name",
+    ('frontend/src/pages/settings/AIConfigPage.tsx', 'Failed to save AI configuration: ${detail}'):
+        "the AI settings page's own name",
+    ('frontend/src/pages/settings/AIConfigPage.tsx', 'Failed to save AI configuration'):
+        "the AI settings page's own name",
+    ('frontend/src/pages/settings/AIConfigPage.tsx', 'AI Configuration'):
+        "the AI settings page's own name",
+    ('frontend/src/pages/settings/AIConfigPage.tsx', 'LLM provider, model selection, and AI pipeline settings'):
+        "the AI settings page's own subtitle",
+    ('frontend/src/pages/settings/AIConfigPage.tsx', 'Choose how test failures are classified and summarized. Non-LLM modes work without any external AI service.'):
+        'sets the model modes apart from the model-free ones',
+    ('frontend/src/pages/settings/AIConfigPage.tsx', 'human labels needed). Until your team confirms or corrects more AI verdicts, ML mode largely reproduces the LLM&apos;s behavior rather than learning from your corrections. Label composition is tracked per model on the AI Evaluation dashboard.'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/pages/settings/AIEvalDashboardPage.tsx', 'AI Evaluation Dashboard'):
+        "the AI evaluation settings page's own name",
+    ('frontend/src/pages/settings/AIEvalDashboardPage.tsx', 'Measure AI output quality: precision, recall, agreement, and drift over time.'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/pages/settings/AIEvalDashboardPage.tsx', 'AI evaluation'):
+        "the AI evaluation settings page's own name",
+    ('frontend/src/pages/settings/AIEvalDashboardPage.tsx', 'Human-AI Agreement (30d)'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/pages/settings/AIEvalDashboardPage.tsx', 'Below the human-label floor the ML classifier is trained mostly on the LLM&apos;s own high-confidence verdicts — it imitates the LLM rather than learning from your corrections. Confirm or correct AI verdicts to move it to human-calibrated.'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/pages/settings/AuditDashboardPage.tsx', 'AI Analyses'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/pages/settings/ProjectDataPage.tsx', 'Drops every TestRun in this project. Cascades to test cases, AI analyses, failure clusters, and agent pipeline rows. The project’s suites and canonical test catalog are kept so the next ingest re-links cleanly.'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/pages/settings/ProjectDataPage.tsx', 'MongoDB run documents (raw results; summaries; AI payloads; decision reports)'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/pages/settings/ProjectDataPage.tsx', 'Runs the test-runs delete and then also wipes the project’s catalog, RAG-authored data, releases, policies, and baselines. The project, its members, API keys, and AI/SSO config survive — everything else is reset.'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/pages/settings/ProjectDataPage.tsx', 'AI configuration, SSO configuration'):
+        'names the stored AI settings',
+    ('frontend/src/pages/settings/RetentionPage.tsx', 'Test runs and everything derived from them: test cases, AI analyses, failure clusters, and agent pipeline rows older than the cutoff.'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/pages/settings/RetentionPage.tsx', 'AI versions kept per run (per kind)'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/pages/settings/RetentionPage.tsx', 'AI versions kept per test result'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/pages/settings/RetentionPage.tsx', 'AI history versions'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/pages/settings/RetentionPage.tsx', 'AI history caps: not reported by this server.'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/pages/settings/RetentionPage.tsx', 'AI history: keep ${perRun} per run, ${perTest} per test.'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/pages/settings/RetentionPage.tsx', 'Every AI analysis is kept as a version: the run summary and analysis digest of each run, and the analysis of each test result. The caps apply each time a version is stored, even while scheduled purging is off.'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/pages/settings/SeedDataPage.tsx', 'These controls are only available in the dev environment. Seed data includes demo users, projects, test runs, AI analysis, defects, and coverage snapshots.'):
+        'dev-only page',
+    ('frontend/src/pages/SettingsPage.tsx', 'Your account, the project, its integrations and the AI'):
+        'names the AI settings area',
+    ('frontend/src/pages/test-management/AIGenerateModal.tsx', 'Failed to start AI generation'):
+        'test-case generation runs only on a language model',
+    ('frontend/src/pages/test-management/AIGenerateModal.tsx', 'AI Generate Test Cases'):
+        'test-case generation runs only on a language model',
+    ('frontend/src/pages/test-management/AIGenerateModal.tsx', 'Describe a requirement to cover, a module or code path to exercise, or a defect to write regression cases for. The AI will generate test cases and save them as drafts in your review queue.'):
+        'test-case generation runs only on a language model',
+    ('frontend/src/pages/test-management/ApprovalsTab.tsx', 'AI review failed'):
+        'the test-case quality review runs only on a language model',
+    ('frontend/src/pages/test-management/ApprovalsTab.tsx', 'AI review complete'):
+        'the test-case quality review runs only on a language model',
+    ('frontend/src/pages/test-management/ApprovalsTab.tsx', 'The AI review completed, but the review queue could not be refreshed. The completed control remains disabled locally.'):
+        'the test-case quality review runs only on a language model',
+    ('frontend/src/pages/test-management/ApprovalsTab.tsx', 'AI Score:'):
+        'the test-case quality review runs only on a language model',
+    ('frontend/src/pages/test-management/ApprovalsTab.tsx', 'AI reviewed'):
+        'the test-case quality review runs only on a language model',
+    ('frontend/src/pages/test-management/ApprovalsTab.tsx', 'AI Review'):
+        'the test-case quality review runs only on a language model',
+    ('frontend/src/pages/test-management/CaseHistoryPanel.tsx', 'AI'):
+        'source chip of a case a language model generated',
+    ('frontend/src/pages/test-management/KnowledgeGenerationTab.tsx', 'Settings &gt; AI Configuration'):
+        'names the AI settings page',
+    ('frontend/src/pages/test-management/StrategyTab.tsx', 'Generate Test Strategy with AI'):
+        'strategy generation runs only on a language model',
+    ('frontend/src/pages/test-management/StrategyTab.tsx', 'Generate a comprehensive AI-powered test strategy for your project'):
+        'strategy generation runs only on a language model',
+    ('frontend/src/pages/test-management/StrategyTab.tsx', 'AI Generated'):
+        'strategy generation runs only on a language model',
+    ('frontend/src/pages/testCase/TestCaseBody.tsx', 'AI root cause'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/pages/testCase/TestCaseBody.tsx', 'AI analysis is only available for failed or broken tests'):
+        'D-13 follow-up, not a batch-6 row: calls the analysis "AI" whatever engine answered',
+    ('frontend/src/pages/TestManagementPage.tsx', 'AI Review'):
+        'generation, review and plan creation run only on a language model (row 17 keeps "AI Create Plan")',
+    ('frontend/src/pages/TestManagementPage.tsx', 'AI review complete'):
+        'generation, review and plan creation run only on a language model (row 17 keeps "AI Create Plan")',
+    ('frontend/src/pages/TestManagementPage.tsx', 'AI review failed'):
+        'generation, review and plan creation run only on a language model (row 17 keeps "AI Create Plan")',
+    ('frontend/src/pages/TestManagementPage.tsx', 'AI'):
+        'generation, review and plan creation run only on a language model (row 17 keeps "AI Create Plan")',
+    ('frontend/src/pages/TestManagementPage.tsx', 'AI Score:'):
+        'generation, review and plan creation run only on a language model (row 17 keeps "AI Create Plan")',
+    ('frontend/src/pages/TestManagementPage.tsx', 'Run AI analysis to score this test case and get improvement suggestions.'):
+        'generation, review and plan creation run only on a language model (row 17 keeps "AI Create Plan")',
+    ('frontend/src/pages/TestManagementPage.tsx', 'Run AI Review'):
+        'generation, review and plan creation run only on a language model (row 17 keeps "AI Create Plan")',
+    ('frontend/src/pages/TestManagementPage.tsx', 'Choose a project to run an AI review.'):
+        'generation, review and plan creation run only on a language model (row 17 keeps "AI Create Plan")',
+    ('frontend/src/pages/TestManagementPage.tsx', 'AI review needs the Tester role or above.'):
+        'generation, review and plan creation run only on a language model (row 17 keeps "AI Create Plan")',
+    ('frontend/src/pages/TestManagementPage.tsx', 'AI Generate'):
+        'generation, review and plan creation run only on a language model (row 17 keeps "AI Create Plan")',
+    ('frontend/src/pages/TestManagementPage.tsx', 'AI generated'):
+        'generation, review and plan creation run only on a language model (row 17 keeps "AI Create Plan")',
+    ('frontend/src/pages/TestManagementPage.tsx', 'AI is building the test plan in the background — refresh the list in a moment.'):
+        'generation, review and plan creation run only on a language model (row 17 keeps "AI Create Plan")',
+    ('frontend/src/pages/TestManagementPage.tsx', 'AI plan creation failed'):
+        'generation, review and plan creation run only on a language model (row 17 keeps "AI Create Plan")',
+    ('frontend/src/pages/TestManagementPage.tsx', 'AI Create Plan'):
+        'generation, review and plan creation run only on a language model (row 17 keeps "AI Create Plan")',
+}
+
+
+def _ai_word_texts(code: str) -> list[tuple[int, str]]:
+    """``(offset, text)`` of every string literal and JSX text in comment-stripped code that holds
+    the word "AI". The text is whitespace-collapsed so an entry need not copy line breaks."""
+    hits: list[tuple[int, str]] = []
+    spans: list[tuple[int, int]] = []
+    for m in _NPM_STRING_RE.finditer(code):
+        spans.append((m.start(), m.end()))
+        body = m.group(0)[1:-1]
+        word = _AI_WORD_RE.search(body)
+        if word:
+            hits.append((m.start() + 1 + word.start(), " ".join(body.split())))
+    starts = [s for s, _ in spans]
+
+    def _in_literal(offset: int) -> bool:
+        i = bisect.bisect_right(starts, offset) - 1
+        return i >= 0 and spans[i][0] < offset < spans[i][1]
+
+    # JSX text: between `>` / `}` and `<` / `{`. A stretch of CODE between two braces can match too;
+    # it counts only when an "AI" in it is outside every string literal (else the literal reported it).
+    for m in _AI_WORD_JSX_TEXT_RE.finditer(code):
+        body = m.group(1)
+        outside = [w for w in _AI_WORD_RE.finditer(body) if not _in_literal(m.start(1) + w.start())]
+        if outside:
+            hits.append((m.start(1) + outside[0].start(), " ".join(body.split())))
+    hits.sort()
+    return hits
+
+
+def _frontend_ai_word_allowlisted(
+    root: Optional[Path] = None,
+    allowed: Optional[dict[tuple[str, str], str]] = None,
+) -> list[Violation]:
+    """A hard-coded "AI" in user-visible frontend copy is on the reviewed allow-list (D-13)."""
+    root = REPO_ROOT if root is None else root
+    allowed = _AI_WORD_ALLOWED if allowed is None else allowed
+    violations: list[Violation] = []
+    used: set[tuple[str, str]] = set()
+    by_file: dict[str, set[str]] = {}
+    for rel, phrase in allowed:
+        by_file.setdefault(rel, set()).add(phrase)
+    for path in sorted(iter_files(root / _AI_WORD_ROOT, (".tsx",))):
+        name = path.name
+        rel = path.relative_to(root).as_posix()
+        if ".test." in name or ".spec." in name or "__fixtures__" in rel or "/src/test/" in rel:
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue
+        code = _strip_ts_comments(text)
+        phrases = by_file.get(rel, set())
+        for offset, literal in _ai_word_texts(code):
+            if literal in phrases:
+                used.add((rel, literal))
+                continue
+            violations.append(Violation(
+                path, code.count("\n", 0, offset) + 1,
+                f'"AI" in UI copy: "{_truncate(literal, 80)}"',
+            ))
+    for rel, phrase in sorted(set(allowed) - used):
+        violations.append(Violation(
+            root / rel, 0,
+            f'allow-list entry ({rel!r}, {phrase!r}) no longer matches any copy: delete it',
+        ))
     return violations
 
 
@@ -7556,6 +7947,23 @@ GUARDS: list[Guard] = [
             "and render the conclusion inside components/ai/AISuggestion so "
             "it carries the badge, basis and provenance (US-15.1). Pipeline "
             "STAGE names like \"Root Cause Analysis\" are already allowed."
+        ),
+    ),
+    Guard(
+        name="frontend.ai-word-allowlisted",
+        description=(
+            "A hard-coded \"AI\" in a string literal or JSX text of frontend/src/**/*.tsx "
+            "(tests excluded) that is not on the reviewed allow-list: \"AI\" claims a "
+            "language model answered."
+        ),
+        check=_frontend_ai_word_allowlisted,
+        fix_hint=(
+            "Say what produced the result: producedByWord()/engineLabel() from "
+            "components/ai/AISuggestion for an engine-dependent label, or a neutral "
+            "word (\"Triage result\", \"Failures by category\", \"Verdict\"). A use that "
+            "is true (the text shows only when a model answered, or names a feature "
+            "only a model can do) goes in _AI_WORD_ALLOWED as (relpath, text) with a "
+            "one-line reason, reviewed in the PR."
         ),
     ),
     Guard(

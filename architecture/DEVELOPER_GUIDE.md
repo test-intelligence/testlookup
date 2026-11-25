@@ -40,10 +40,10 @@ API endpoint, a pipeline agent, a UI page and a migration.
 
 ## 1. Quality gates — the invariant ratchets
 
-`make quality-gate` runs `scripts/quality_gate.py`, which enforces **67 guards**.
+`make quality-gate` runs `scripts/quality_gate.py`, which enforces **68 guards**.
 26 are *ratchets*: pre-existing violations are baselined in
 `scripts/quality-gate-baselines/` and the count can only shrink. New violations
-fail CI. The other 41 ship at zero with **no baseline file at all** — those are
+fail CI. The other 42 ship at zero with **no baseline file at all** — those are
 absolute rules, not ratchets, and are marked **†** in the tables below. Know
 these before you write code.
 
@@ -118,6 +118,7 @@ fails if a *second* deleter appears.
 | `frontend.no-page-modals` | a page modal (`role="dialog"` / `aria-modal`), a `<SidePanel>`, a `fixed` full-height edge panel, or a native `confirm()` under `frontend/src/pages` / `components`, outside the OR-03 allow-list | Open it in the page: `MasterDetail` + `DetailPane`, `InlineFormSection` (in an `InlineRowSection` under a row), `InlineConfirm` (`components/ui/inPage/`). An overlay of an OR-03 class gets an allow-list entry with its reason |
 | `frontend.refresh-intervals-from-config` † | a hand-picked SWR `refreshInterval` | `import { REFRESH_INTERVALS } from '@/config/refreshIntervals'` and take a tier — `REALTIME` / `ACTIVE` / `POLLING` / `BACKGROUND` (`0` = disabled is fine) |
 | `frontend.ai-output-hedging` † | AI output rendered as a verdict — a bare `Root cause:`, `Root Cause Summary`, "the cause is …", "is caused by" | Hedge the copy ("Suggested root cause", "likely caused by") and render the conclusion through `components/ai/AISuggestion` so it carries the badge, basis and provenance (US-15.1). Pipeline **stage** names like "Root Cause Analysis" are already allowed |
+| `frontend.ai-word-allowlisted` † | a hard-coded "AI" (the word, case-sensitive) in a string literal or JSX text of `frontend/src/**/*.tsx` (tests excluded) that is not on the reviewed allow-list. "AI" claims a language model answered; the default install has no model (D-13) | Say what produced the result: `producedByWord()` / `engineLabel()` from `components/ai/AISuggestion` for an engine-dependent label, or a neutral word ("Triage result", "Verdict"). A true use (shown only when a model answered, or a feature only a model can do) goes in `_AI_WORD_ALLOWED` as (relpath, the whole text) with a one-line reason; an entry that matches nothing fails. `.ts` copy models are not scanned |
 | `frontend.ingest-formats-match-backend` † | the upload dropdown (`reportUploadService.ts::SUPPORTED_FORMATS`) advertising a format `/ingest/file` rejects, the backend accepting a parser the UI never offers, or either registry becoming unparseable by the guard | Add or remove the format on **both** sides of the language boundary — the `SUPPORTED_FORMATS` array (value + label) and the `ReportFormat` union in `reportUploadService.ts`, and `_SUPPORTED_FORMATS` in `routers/ingest.py` (a new backend parser also needs `_detect_format` wired). If a refactor changes a registry's source shape, update the guard parser in the same change; otherwise CI fails instead of silently disabling parity enforcement |
 | `frontend.sdk-symbols-fresh` † | `frontend/src/components/live/sdkSymbols.json` differing from what `scripts/gen_sdk_symbols.py` reads out of `client/go` and `client/js` (the `/live` "Connect a test runner" snippet test checks every Go and JavaScript identifier against it) | Run `python scripts/gen_sdk_symbols.py` after an SDK change and commit the JSON, then `npx vitest run src/components/live/sdkSnippets.test.ts` in `frontend/` and fix any snippet that names a symbol the SDK no longer has |
 

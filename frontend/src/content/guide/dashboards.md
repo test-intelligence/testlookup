@@ -28,7 +28,7 @@ If a page looks wrong, check these three before anything else. Together they exp
 | **Release gate** | Is this release ready? | See [Releases and gates](/docs/releases) |
 | **Inbox** | What is assigned to me, and what is waiting for my approval? | See [Your inbox and approvals](/docs/inbox) |
 
-The AI verdict for each run is a column of the **Runs** table, and the full analysis is the run's **Analysis** tab. There is no separate AI dashboard; the old `/intelligence` address opens **Runs**.
+Each run's verdict is a column of the **Runs** table, and the full analysis is the run's **Analysis** tab. There is no separate AI dashboard; the old `/intelligence` address opens **Runs**.
 
 > **Tip.** In the **Inbox**, most auto-assignments go to a synthetic project QA-lead account. If it looks empty for a QA lead or administrator, switch the scope to the team view. See [Your inbox and approvals](/docs/inbox).
 

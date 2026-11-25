@@ -320,6 +320,8 @@ export function testLibraryWorld(options: TestLibraryOptions = {}) {
         id: `9b000000-0000-4000-8000-00000000000${list.length + 1}`,
         plan_id: planId,
         test_case_id: body.test_case_id,
+        // D-62: the server names the case (its title) beside its id.
+        test_case_title: CHECKOUT_SUITE_CASES.find((c) => c.id === body.test_case_id)?.test_name ?? null,
         order_index: list.length,
         priority_override: null,
         execution_status: 'not_run',

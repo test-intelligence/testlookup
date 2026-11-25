@@ -4,8 +4,9 @@
  * Every AI-produced conclusion in the product renders through this one
  * component so the trust contract is identical everywhere:
  *
- *   - an "AI-suggested" badge (always — an AI output is never presented as
- *     a verdict),
+ *   - a provenance badge (always; never a verdict). It says "AI-suggested" only
+ *     when a language model answered (D-13): rules read "Rule-based suggestion",
+ *     the classifier "Classifier suggestion" (`producedByWord`),
  *   - an OPTIONAL confidence + calibration-basis chip. Optional is load-
  *     bearing: the chat copilot has no confidence at all and the component
  *     must not imply one exists. When a confidence IS shown it always
@@ -145,6 +146,48 @@ export function engineLabel(mode: string | null | undefined): string {
   return ENGINE_LABELS[mode.toLowerCase()] ?? mode.replace(/_/g, ' ')
 }
 
+/** Badge text, tooltip and accessible name for what produced an output. */
+export interface ProducedBy {
+  badge: string
+  title: string
+  ariaLabel: string
+}
+
+const HEDGE = 'a suggestion for a human to confirm, not a verdict.'
+const MODEL_ENGINES = new Set(['llm', 'local_llm', 'slm', 'react_agent', 'react', 'hybrid'])
+const RULE_ENGINES = new Set(['rules', 'rule', 'rules_engine', 'heuristic'])
+const CLASSIFIER_ENGINES = new Set(['ml', 'ml_classifier', 'classifier'])
+
+/**
+ * D-13: the badge names what answered. "AI" only when a language model did; a rules or classifier
+ * result is never called AI. No engine recorded (the chat copilot, the fixer: model-only features)
+ * keeps "AI-suggested"; an engine id we do not know reads as a plain "Suggestion".
+ */
+export function producedByWord(mode: string | null | undefined): ProducedBy {
+  const m = mode?.trim().toLowerCase() ?? ''
+  if (!m || MODEL_ENGINES.has(m)) {
+    return { badge: 'AI-suggested', title: `Written by a language model: ${HEDGE}`, ariaLabel: 'AI-suggested output' }
+  }
+  if (RULE_ENGINES.has(m)) {
+    return { badge: 'Rule-based suggestion', title: `Produced by the rules engine: ${HEDGE}`, ariaLabel: 'Rule-based suggestion' }
+  }
+  if (CLASSIFIER_ENGINES.has(m)) {
+    return { badge: 'Classifier suggestion', title: `Produced by the classifier: ${HEDGE}`, ariaLabel: 'Classifier suggestion' }
+  }
+  if (m === 'hint') {
+    return { badge: 'From a project hint', title: "Set by a project hint (a QA lead's rule), not by a model.", ariaLabel: 'From a project hint' }
+  }
+  if (m === 'human_corrected') {
+    return { badge: 'Corrected by a person', title: 'A reviewer corrected this result.', ariaLabel: 'Corrected by a person' }
+  }
+  return { badge: 'Suggestion', title: `Produced by ${engineLabel(mode)}: ${HEDGE}`, ariaLabel: 'Suggestion' }
+}
+
+/** True when a language model produced the output (so a model name is worth printing). */
+export function isModelEngine(mode: string | null | undefined): boolean {
+  return MODEL_ENGINES.has(mode?.trim().toLowerCase() ?? '')
+}
+
 /**
  * D-149 / D-160: what happened to the engine that did not answer, as the middle of
  * "The {engine} {clause}, so this came from …". Only these codes reach the sentence; any other
@@ -243,8 +286,8 @@ export interface AISuggestionProps {
   /** What the AI suggested — "root cause", "failure kind", or a richer node
    *  such as a kind pill. Rendered next to the badge. */
   label?: ReactNode
-  /** Override the badge copy. Defaults to "AI-suggested" — override only
-   *  for an equally hedged phrasing ("AI-classified"), never a verdict. */
+  /** Override the badge copy. Defaults to the words for `provenance.modeUsed`
+   *  (`producedByWord`); override only with an equally hedged phrasing, never a verdict. */
   badgeText?: string
   badgeTitle?: string
   /** 0-100. Omit entirely when the surface has no confidence — the chrome
@@ -272,12 +315,15 @@ export interface AISuggestionProps {
   'data-testid'?: string
 }
 
-/** "AI-suggested" pill. Exported for surfaces that only need the marker. */
-export function AIBadge({ text = 'AI-suggested', title, compact }: {
+/** Provenance pill ("AI-suggested", "Rule-based suggestion", ...). Exported for surfaces that only need the marker. */
+export function AIBadge({ text, title, compact, mode }: {
   text?: string
   title?: string
   compact?: boolean
+  /** Engine that answered; picks the words when `text` / `title` are not given (D-13). */
+  mode?: string | null
 }) {
+  const words = producedByWord(mode)
   return (
     <span
       data-testid="ai-suggested-badge"
@@ -288,13 +334,10 @@ export function AIBadge({ text = 'AI-suggested', title, compact }: {
         border: '1px solid var(--color-border)',
         color: 'var(--color-text-secondary)',
       }}
-      title={
-        title ??
-        'Produced by the AI pipeline — a suggestion for a human to confirm, not a verdict.'
-      }
+      title={title ?? words.title}
     >
       <Bot aria-hidden className="h-2.5 w-2.5" />
-      {text}
+      {text ?? words.badge}
     </span>
   )
 }
@@ -341,11 +384,15 @@ export default function AISuggestion({
   // The sentence carries only the plain words for a known code; the full raw string goes to the
   // tooltip, never into the visible text.
   const fallbackTitle = prov?.fallbackReason ? `Reason recorded: ${prov.fallbackReason}` : undefined
+  // D-13: the badge, its tooltip and the section's accessible name say what answered.
+  const words: ProducedBy = noEngineAnswered
+    ? { badge: 'Needs review', title: 'No engine produced this output; a human should review it.', ariaLabel: 'Output for review' }
+    : producedByWord(prov?.modeUsed)
 
   return (
     <section
       data-testid={testId}
-      aria-label="AI-suggested output"
+      aria-label={words.ariaLabel}
       className={clsx(
         !bare && 'rounded-xl p-3.5',
         'space-y-2.5',
@@ -360,7 +407,7 @@ export default function AISuggestion({
       {/* Header row — badge + label on the left, confidence on the right. */}
       <div className="flex items-center justify-between gap-3 flex-wrap pb-1.5 border-b border-[var(--color-border)]">
         <span className="flex items-center gap-2 min-w-0 flex-wrap">
-          <AIBadge text={badgeText} title={badgeTitle} />
+          <AIBadge text={badgeText ?? words.badge} title={badgeTitle ?? words.title} />
           {label != null && label !== false && (
             <span className="text-2xs text-[var(--color-text-muted)] inline-flex items-center gap-1.5 min-w-0">
               {label}

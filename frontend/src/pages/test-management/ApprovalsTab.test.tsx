@@ -1,5 +1,6 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import toast from 'react-hot-toast'
 
 import { useTestCases } from '@/hooks/useTestManagement'
 import { testManagementService } from '@/services/testManagementService'
@@ -167,5 +168,8 @@ describe('ApprovalsTab (was Reviews) lifecycle queue', () => {
     expect(screen.queryByText('Review sign in')).not.toBeInTheDocument()
     expect(screen.getByRole('status')).toHaveTextContent('action was saved')
     expect(testManagementService.transitionCase).toHaveBeenCalledTimes(1)
+    // D-63: the toast says what happened in words, not the transition's API name.
+    expect(toast.success).toHaveBeenCalledWith('Changes requested')
+    expect(vi.mocked(toast.success).mock.calls.flat().join(' ')).not.toMatch(/request changes|request_changes/)
   })
 })
