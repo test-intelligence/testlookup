@@ -492,7 +492,9 @@ async def _seed_managed_test_cases(db: AsyncSession, project: Project, author: U
             status=status,
             tags=[tc_type, feature_area.lower().replace(" ", "-")],
             is_automated=is_automated,
-            automation_status="automated" if is_automated else "manual",
+            # One of AUTOMATION_STATUSES: "manual" is not, and a case holding
+            # it could not have the value chosen again in the editor.
+            automation_status="automated" if is_automated else "not_automated",
             ai_generated=False,
             version=1,
             author_id=author.id,

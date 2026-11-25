@@ -426,6 +426,12 @@ class TestTheRouteDistinguishesNeverEvaluatedFromCannotSay:
 
         monkeypatch.setattr(releases_router.release_gate_service, "current_gate", _none)
 
+        # The release exists; only its gate is missing (a missing release is "Release not found").
+        async def _exists(*a, **kw):
+            return True
+
+        monkeypatch.setattr(releases_router, "_release_exists", _exists)
+
         # Asserted at the ROUTE, not the service. The service returning None is
         # only half the contract; a handler that turned None into `{}` with a
         # 200 would report "evaluated, nothing to say" for a release nobody has
