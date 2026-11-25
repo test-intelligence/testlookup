@@ -1048,10 +1048,11 @@ def test_the_bundle_builder_does_not_recommend_checksum_only_transfer() -> None:
 def test_a_release_bundle_run_attaches_signed_provenance() -> None:
     """Scorecard Signed-Releases (0/10 on 2026-11-18) reads the release assets for
     *.intoto.jsonl / *.sig files. A release run of offline-bundle.yml now attests
-    the three files it publishes and keeps the Sigstore bundle beside them."""
+    the release files it publishes and keeps the Sigstore bundle beside them."""
     job = _workflow(OFFLINE_BUNDLE)["jobs"]["build-bundle"]
     assert job["permissions"] == {
-        "contents": "read", "id-token": "write", "attestations": "write", "artifact-metadata": "write",
+        "actions": "read", "contents": "read", "id-token": "write",
+        "attestations": "write", "artifact-metadata": "write",
     }
     steps = job["steps"]
     [attest] = [s for s in steps if "attest-build-provenance" in s.get("uses", "")]
@@ -1060,14 +1061,37 @@ def test_a_release_bundle_run_attaches_signed_provenance() -> None:
         "dist/testlookup-offline-${{ env.BUNDLE_VERSION }}.tar.gz",
         "dist/testlookup-offline-${{ env.BUNDLE_VERSION }}.tar.gz.sha256",
         "dist/SHA256SUMS",
+        "dist/release-manifest.json",
     ]
     [keep] = [s for s in steps if ".intoto.jsonl" in s.get("run", "")]
     assert keep["if"] == _RELEASE_BUNDLE_RUN
     assert keep["env"]["BUNDLE_PATH"] == "${{ steps.attest.outputs.bundle-path }}"
     [upload] = [s for s in steps if "upload-artifact" in s.get("uses", "")]
     assert "dist/*.intoto.jsonl" in upload["with"]["path"]
+    assert "dist/release-manifest.json" in upload["with"]["path"]
     sums = next(i for i, s in enumerate(steps) if "> dist/SHA256SUMS" in s.get("run", ""))
     assert sums < steps.index(attest) < steps.index(keep) < steps.index(upload)
+
+
+def test_the_online_manifest_contains_only_ci_attested_release_digests() -> None:
+    """The online installer manifest is generated only after each digest is bound to CI and source."""
+    job = _workflow(OFFLINE_BUNDLE)["jobs"]["build-bundle"]
+    pull = next(s["run"] for s in job["steps"] if s.get("name") == "Pull the release's verified images")
+    publish = next(
+        s["run"] for s in job["steps"]
+        if s.get("name") == "Publish the verified image manifest for online installs"
+    )
+
+    assert 'artifact_name="verified-images-$source_sha"' in pull
+    assert 'gh run download "${matches[0]}" --name "$artifact_name"' in pull
+    assert "release_manifest.py validate" in pull
+    assert '[ "$release_digest" = "$manifest_digest" ]' in pull
+    assert 'gh attestation verify "oci://$manifest_ref"' in pull
+    assert "--signer-workflow test-intelligence/testlookup/.github/workflows/ci.yml" in pull
+    assert "--source-ref refs/heads/main" in pull
+    assert '--source-digest "$source_sha"' in pull
+    assert "cp verified-images/release-manifest.json dist/release-manifest.json" in publish
+    assert publish.count("sha256sum") == 2
 
 
 def test_every_osv_acceptance_says_why_and_expires() -> None:

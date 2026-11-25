@@ -79,39 +79,41 @@ The lite stack omits Ollama, ChromaDB, Flower, the MCP server and the beat sched
 
 ## Release images without a clone
 
-`install.sh` installs TestLookup from published images, with nothing built from source:
+`install.sh` installs TestLookup from published images, with nothing built from source. Published releases require Docker with Compose v2, Bash, and the [GitHub CLI](https://cli.github.com/) for provenance verification:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/test-intelligence/testlookup/main/install.sh | bash
 ```
 
-It checks for Docker and Compose v2, downloads `docker-compose.release.yml`, `.env.example`, `scripts/gen-dev-env.sh` and `scripts/init-db.sql` into `./testlookup`, generates `.env` with `scripts/gen-dev-env.sh --release` (an existing `.env` is reused), and runs `docker compose -f docker-compose.release.yml up -d`. Read the script before piping it to a shell if your policy requires it.
+It checks for Docker and Compose v2, downloads `docker-compose.release.yml`, `.env.example`, `scripts/gen-dev-env.sh` and `scripts/init-db.sql` into `./testlookup`, authenticates the release checksums and exact application-image digests, generates `.env` with `scripts/gen-dev-env.sh --release` (an existing `.env` is reused), and starts Compose with a generated `docker-compose.images.yml` digest override. Read the script before piping it to a shell if your policy requires it.
 
 `--release` fills every secret with a random value and keeps the secure defaults: `APP_ENV=production` and `DEV_AUTO_LOGIN_ENABLED=false`, so there is no passwordless login. It also writes a random `INITIAL_ADMIN_PASSWORD` into `.env`. On first start the `db-migrate` service runs `alembic upgrade head` and then `scripts/create_admin.py`, which creates the user `admin` with that password on a new database only (an existing admin is never modified) and requires a password change at the first sign-in.
 
-The installer ends by saying where the admin password is, never the value, because a terminal's scrollback or a CI log keeps what is printed: it is stored in `.env` (mode 600) as `INITIAL_ADMIN_PASSWORD`. If `.env` has no `INITIAL_ADMIN_PASSWORD`, a random password is generated and printed once in `docker compose -f docker-compose.release.yml logs db-migrate`. Sign in at [localhost:3000](http://localhost:3000) and set your own password. After that first sign-in, delete the `INITIAL_ADMIN_PASSWORD` line from `.env`: it is only used to create the admin on a new database, and `.env` is passed to several services.
+The installer ends by saying where the admin password is, never the value, because a terminal's scrollback or a CI log keeps what is printed: it is stored in `.env` (mode 600) as `INITIAL_ADMIN_PASSWORD`. If `.env` has no `INITIAL_ADMIN_PASSWORD`, create an admin from a terminal with `docker compose -f docker-compose.release.yml -f docker-compose.images.yml exec backend python /app/scripts/create_admin.py`, which shows a generated password once. Sign in at [localhost:3000](http://localhost:3000) and set your own password. After that first sign-in, delete the `INITIAL_ADMIN_PASSWORD` line from `.env`: it is only used to create the admin on a new database, and `.env` is passed to several services.
 
 The installer also ends with a warning that port 3000 is plain HTTP on every network interface of the host; see [Before other people use it](#before-other-people-use-it). It stops if it cannot set `.env` to mode 600.
 
 | Variable | Default | Effect |
 |---|---|---|
 | `TL_DIR` | `testlookup` | Install directory |
-| `TL_REF` | the latest published release | Branch, tag or commit the files are downloaded from. With a release tag (`vX.Y.Z`) the images default to the same tag and the files are checked against that release's `SHA256SUMS`. With neither this nor `TESTLOOKUP_VERSION` set, the installer looks up the latest release and installs it; if the lookup fails it stops. `TL_REF=main` installs the unreleased tip: its files are not checked and its images are `latest` |
-| `TESTLOOKUP_VERSION` | the release in `TL_REF` | Image tag to run. With a release tag (`vX.Y.Z`) and no `TL_REF`, the files are downloaded from the same tag |
+| `TL_REF` | the latest published release | Branch, tag or commit the files are downloaded from. With a release tag (`vX.Y.Z`) the installer authenticates `SHA256SUMS`, `release-manifest.json`, and every application-image digest before startup. With neither this nor `TESTLOOKUP_VERSION` set, it looks up the latest release; if the lookup fails it stops. `TL_REF=main` explicitly installs the unverified tip and uses `latest` |
+| `TESTLOOKUP_VERSION` | the release in `TL_REF` | Release to install. With a release tag (`vX.Y.Z`) and no `TL_REF`, files follow the same release; when both are release tags they must match |
 | `TL_RAW_BASE` | `https://raw.githubusercontent.com/test-intelligence/testlookup` | Where the files are downloaded from (a mirror) |
-| `TL_RELEASE_BASE` | `https://github.com/test-intelligence/testlookup/releases/download` | Where a release's `SHA256SUMS` is downloaded from (a mirror) |
+| `TL_RELEASE_BASE` | `https://github.com/test-intelligence/testlookup/releases/download` | Where `SHA256SUMS`, `release-manifest.json`, and the release's Sigstore bundle are downloaded from (a mirror) |
 | `TL_PROFILE` | none | Adds a Compose profile: `demo` (seed data) or `local-llm` (Ollama and ChromaDB) |
 | `TL_NO_UP` | `0` | `1` downloads and generates `.env` but does not start anything |
 
 Pass them before `bash`, for example `curl -fsSL .../install.sh | TL_PROFILE=demo bash`. For an evaluation, `TL_PROFILE=demo` is the documented default (README, [GETTING_STARTED.md](../../GETTING_STARTED.md)): without it the first dashboard is empty until you send a report. For a team instance, leave it out. The images are about 1 GB to download (0.95 GB for linux/amd64, measured on 11 November 2026).
 
-With nothing set, the installer installs the latest published release. To install a particular release, name its tag: `curl -fsSL .../install.sh | TL_REF=vX.Y.Z bash`. Either way the installer downloads that release's `SHA256SUMS` from the GitHub release and compares the four files it fetched before it writes them into the install directory or runs anything. It stops, with nothing installed, on a mismatch, on a file the sums do not list, or when the release has no `SHA256SUMS`. For `main`, or any other branch or commit, no checksum exists and the installer says the files are not verified. The check covers the files the installer downloads, not the installer itself: to check that too, download `install.sh` and `SHA256SUMS` from the release page, run `sha256sum -c --ignore-missing SHA256SUMS`, then run the script.
+With nothing set, the installer installs the latest published release. To install a particular release, name its tag: `curl -fsSL .../install.sh | TL_REF=vX.Y.Z bash`. Either way it verifies the signed provenance of `SHA256SUMS` and `release-manifest.json`, compares the four downloaded files, checks every manifest digest against CI's signed provenance for the release commit, and writes `docker-compose.images.yml` before startup. It stops, with nothing installed or run, when any asset, signature, version binding, component, digest, or checksum is missing or mismatched. For `main`, or another branch or commit explicitly selected by the operator, it says the files and tag-addressed images are not verified. The release checks do not cover the copy of `install.sh` being executed: download it and the signed release assets first if your policy requires that additional bootstrap check.
 
 ### Image tags
 
-Images are `ghcr.io/test-intelligence/testlookup/backend`, `.../frontend` and `.../mcp`; `TESTLOOKUP_IMAGE` overrides the registry and namespace. CI publishes `latest` and the full commit SHA for every build of `main`, and the release workflow adds a `vX.Y.Z` tag to the verified images when a release is tagged. `latest` moves; for a reproducible install, pin `TESTLOOKUP_VERSION` to a release tag or commit SHA in `.env`.
+Images are `ghcr.io/test-intelligence/testlookup/backend`, `.../frontend` and `.../mcp`; `TESTLOOKUP_IMAGE` can repoint an install to a mirror while preserving each authenticated digest. CI publishes `latest` and the full commit SHA for every build of `main`, and the release workflow adds a `vX.Y.Z` alias after verification. The installer never relies on that mutable alias: `docker-compose.images.yml` names `repository@sha256:...` for every application service. Keep both `-f docker-compose.release.yml -f docker-compose.images.yml` in later Compose commands.
 
 ### Without the installer
+
+This manual path uses the tag expressions in `docker-compose.release.yml`; it does not authenticate or materialize the release digest manifest. Use `install.sh` when you need the signed digest guarantee.
 
 ```bash
 mkdir testlookup && cd testlookup && mkdir scripts
@@ -125,13 +127,13 @@ docker compose -f docker-compose.release.yml up -d
 grep '^INITIAL_ADMIN_PASSWORD=' .env     # the password for user admin
 ```
 
-Optional profiles:
+For an installer-managed directory, keep the generated digest override when enabling optional profiles:
 
 ```bash
-docker compose -f docker-compose.release.yml --profile demo up -d        # demo projects and history (reuses the existing admin)
-docker compose -f docker-compose.release.yml --profile local-llm up -d   # Ollama + ChromaDB
-docker compose -f docker-compose.release.yml exec ollama ollama pull qwen2.5:7b-instruct
-docker compose -f docker-compose.release.yml exec ollama ollama pull nomic-embed-text:v1.5
+docker compose -f docker-compose.release.yml -f docker-compose.images.yml --profile demo up -d
+docker compose -f docker-compose.release.yml -f docker-compose.images.yml --profile local-llm up -d
+docker compose -f docker-compose.release.yml -f docker-compose.images.yml exec ollama ollama pull qwen2.5:7b-instruct
+docker compose -f docker-compose.release.yml -f docker-compose.images.yml exec ollama ollama pull nomic-embed-text:v1.5
 ```
 
 The release file publishes the frontend on port 3000 of every interface and everything else on `127.0.0.1` only: the backend (8000, `BACKEND_PUBLISH_ADDR`), PostgreSQL (5433, `POSTGRES_PUBLISH_ADDR`), the S3 store (9000, `MINIO_PUBLISH_ADDR`) and Ollama (11434, `OLLAMA_PUBLISH_ADDR`). The frontend proxies `/api/`, `/ws/` and `/webhooks/` to the backend, so browsers only need port 3000.
@@ -143,20 +145,19 @@ A release `.env` already runs in production mode with random secrets; the backen
 1. Set `CORS_ORIGINS` and `PUBLIC_BASE_URL` to the URL people will open, and put a TLS-terminating reverse proxy in front of port 3000. Port 3000 is plain HTTP and is published on every network interface, so until you do this anyone on the network can read the passwords, session tokens and API keys sent to it. With the proxy on the same host, also set `FRONTEND_PUBLISH_ADDR=127.0.0.1` in `.env`: the proxy still reaches the port, and nobody can go around it.
 2. `REDIS_PASSWORD` must be set: the release stack refuses to start without it (Compose prints `REDIS_PASSWORD is required`), and in production the backend refuses to start when a Redis URL names another host and carries no password. `scripts/gen-dev-env.sh` writes one. If you built `.env` by hand, generate one with `openssl rand -hex 24`.
 3. After the first sign-in, delete the `INITIAL_ADMIN_PASSWORD` line from `.env`.
-4. Schedule backups (below) and pin `TESTLOOKUP_VERSION`.
+4. Schedule backups (below) and keep `docker-compose.images.yml` in every Compose command.
 
-Run `docker compose -f docker-compose.release.yml up -d` again after editing `.env`. If you generated `.env` without `--release` (the local/demo mode with `APP_ENV=development` and passwordless login), regenerate it with `bash scripts/gen-dev-env.sh --release --force` before a shared install; `--force` replaces every secret, so do it before any data exists.
+Run `docker compose -f docker-compose.release.yml -f docker-compose.images.yml up -d` again after editing `.env`. If you generated `.env` without `--release` (the local/demo mode with `APP_ENV=development` and passwordless login), regenerate it with `bash scripts/gen-dev-env.sh --release --force` before a shared install; `--force` replaces every secret, so do it before any data exists.
 
 ### Upgrading a release install
 
-Take a backup, set `TESTLOOKUP_VERSION` to the new tag in `.env`, then:
+Take a backup, then rerun the installer for the new release so it authenticates and replaces the digest override while preserving the existing `.env`:
 
 ```bash
-docker compose -f docker-compose.release.yml pull
-docker compose -f docker-compose.release.yml up -d
+curl -fsSL https://raw.githubusercontent.com/test-intelligence/testlookup/main/install.sh | TL_REF=vX.Y.Z bash
 ```
 
-The `db-migrate` service runs `alembic upgrade head` with the new backend image, and the backend, workers and beat wait for it to complete. From a clone you can run the same sequence with checks and a smoke test: `make preflight TAG=vX.Y.Z` then `make upgrade TAG=vX.Y.Z`, with `TL_COMPOSE` set to the install's full Compose command (for example `TL_COMPOSE="docker compose -f docker-compose.release.yml -p testlookup"`, see `scripts/ops/lib.sh`).
+The `db-migrate` service runs `alembic upgrade head` with the new backend digest, and the backend, workers and beat wait for it to complete. From a clone you can run the same sequence with checks and a smoke test: `make preflight TAG=vX.Y.Z` then `make upgrade TAG=vX.Y.Z`, with `TL_COMPOSE` set to the install's full Compose command (for example `TL_COMPOSE="docker compose -f docker-compose.release.yml -f docker-compose.images.yml -p testlookup"`, see `scripts/ops/lib.sh`).
 
 ## Air-gapped override
 

@@ -1,4 +1,4 @@
-"""Installing a release checks the downloaded files against that release's SHA256SUMS.
+"""Installing a release authenticates its files and immutable application images.
 
 ``install.sh`` downloaded the Compose file, the env template and two scripts
 and ran one of them with no integrity check, although every release publishes
@@ -6,10 +6,11 @@ and ran one of them with no integrity check, although every release publishes
 ``.github/workflows/offline-bundle.yml``, attached to the GitHub release).
 
 The rule: when the ref being installed is a release tag (``vX.Y.Z`` in
-``TL_REF`` or ``TESTLOOKUP_VERSION``), the installer downloads that release's
-``SHA256SUMS`` and compares every file it fetched BEFORE it writes into the
-install directory or runs anything it downloaded. A mismatch, a file the sums
-do not list, or a missing sums file stops the install. For an untagged ref
+``TL_REF`` or ``TESTLOOKUP_VERSION``), the installer authenticates that
+release's ``SHA256SUMS`` and immutable image manifest, compares every file it
+fetched, verifies each application-image digest, and generates a Compose
+override BEFORE it writes into the install directory or runs anything it
+downloaded. A mismatch or missing release asset stops the install. For an untagged ref
 (``TL_REF=main``, the unreleased tip, only when asked for) there is nothing to
 compare with, and it says so. With no ref and no version given, the installer
 looks up the latest published release and installs that one, checked the same
@@ -21,6 +22,7 @@ No network: the fake release is a directory read through ``file://`` URLs
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import shutil
 import subprocess
@@ -37,6 +39,8 @@ ROOT = Path(__file__).resolve().parents[3]
 INSTALLER = ROOT / "install.sh"
 TAG = "v9.9.9"
 FILES = ("docker-compose.release.yml", ".env.example", "scripts/gen-dev-env.sh", "scripts/init-db.sql")
+SOURCE_SHA = "a" * 40
+DIGESTS = {"backend": "1" * 64, "frontend": "2" * 64, "mcp": "3" * 64}
 #: Stands in for the real generator: proves whether a downloaded script ran.
 FAKE_GENERATOR = '#!/usr/bin/env bash\ncd "$(dirname "$0")/.."\necho "MARKER=the-downloaded-script-ran" > .env\n'
 _TIMEOUT_S = 300  # a hang guard, not a speed bound: process start-up is slow on Windows
@@ -77,10 +81,34 @@ def _release(tmp_path: Path, ref: str, *, sums: bool = True, tamper: str | None 
         published = tmp_path / "served" / "releases" / ref
         published.mkdir(parents=True)
         (published / "SHA256SUMS").write_bytes("".join(lines).encode())
+        manifest = {
+            "schema_version": 1,
+            "source_sha": SOURCE_SHA,
+            "version": ref,
+            "images": {
+                component: {
+                    "source_ref": f"ghcr.io/test-intelligence/testlookup/{component}@sha256:{DIGESTS[component]}"
+                }
+                for component in ("backend", "frontend", "mcp")
+            },
+        }
+        (published / "release-manifest.json").write_text(
+            json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        (published / f"testlookup-offline-{ref.removeprefix('v')}.intoto.jsonl").write_text(
+            '{"fake":"signed provenance bundle"}\n', encoding="utf-8"
+        )
     stubs = tmp_path / "stubs"
     stubs.mkdir()
     (stubs / "docker").write_bytes(b"#!/usr/bin/env bash\nexit 0\n")
     (stubs / "docker").chmod(0o755)
+    (stubs / "gh").write_text(
+        "#!/usr/bin/env bash\n"
+        "printf '%s\\n' \"$*\" >> \"$FAKE_GH_LOG\"\n"
+        "if [ -n \"${FAKE_GH_FAIL_ON:-}\" ] && [[ \"$*\" == *\"$FAKE_GH_FAIL_ON\"* ]]; then exit 1; fi\n",
+        encoding="utf-8",
+    )
+    (stubs / "gh").chmod(0o755)
     env = bash_environment(_BASH)
     env["PATH"] = str(stubs) + os.pathsep + env.get("PATH", "")
     env.update(
@@ -88,8 +116,9 @@ def _release(tmp_path: Path, ref: str, *, sums: bool = True, tamper: str | None 
         TL_RELEASE_BASE=(tmp_path / "served" / "releases").as_uri(),
         TL_DIR="install",
         TL_NO_UP="1",
+        FAKE_GH_LOG=str(tmp_path / "gh.log"),
     )
-    for name in ("TL_REF", "TESTLOOKUP_VERSION", "TL_PROFILE"):
+    for name in ("TL_REF", "TESTLOOKUP_VERSION", "TESTLOOKUP_IMAGE", "TL_PROFILE"):
         env.pop(name, None)
     return env
 
@@ -118,7 +147,77 @@ def test_a_release_install_checks_every_file_then_runs(tmp_path):
     for relative in FILES:
         assert (installed / relative).is_file(), relative
     assert "the-downloaded-script-ran" in (installed / ".env").read_text(encoding="utf-8")
-    assert f"TESTLOOKUP_VERSION={TAG} " in result.stdout, "the start command must pin the release's images"
+    assert "docker compose -f docker-compose.release.yml -f docker-compose.images.yml" in result.stdout
+
+
+def test_a_release_uses_only_authenticated_digest_refs_for_every_application_service(tmp_path):
+    env = _release(tmp_path, TAG)
+    env["TL_REF"] = TAG
+    result = _install(tmp_path, env)
+    assert result.returncode == 0, result.stderr
+
+    override = yaml.safe_load((tmp_path / "install" / "docker-compose.images.yml").read_text(encoding="utf-8"))
+    release = yaml.safe_load((ROOT / "docker-compose.release.yml").read_text(encoding="utf-8"))
+    expected_components = {}
+    for service, definition in release["services"].items():
+        image_ref = definition.get("image", "")
+        for component in ("backend", "frontend", "mcp"):
+            if f"/{component}:${{TESTLOOKUP_VERSION:-latest}}" in image_ref:
+                expected_components[service] = component
+    assert set(override["services"]) == set(expected_components), (
+        "every tag-addressed application service in the release Compose file needs a digest override"
+    )
+    for service, component in expected_components.items():
+        assert override["services"][service]["image"] == (
+            f"ghcr.io/test-intelligence/testlookup/{component}@sha256:{DIGESTS[component]}"
+        )
+    assert all("@sha256:" in service["image"] for service in override["services"].values())
+
+    checks = (tmp_path / "gh.log").read_text(encoding="utf-8")
+    assert "attestation verify" in checks
+    assert "SHA256SUMS" in checks and "release-manifest.json" in checks
+    for component in ("backend", "frontend", "mcp"):
+        assert f"oci://ghcr.io/test-intelligence/testlookup/{component}@sha256:{DIGESTS[component]}" in checks
+    assert f"--source-digest {SOURCE_SHA}" in checks
+
+
+def test_a_manifest_without_trusted_provenance_stops_before_installing_or_running(tmp_path):
+    env = _release(tmp_path, TAG)
+    env["TL_REF"] = TAG
+    env["FAKE_GH_FAIL_ON"] = "release-manifest.json"
+    result = _install(tmp_path, env)
+    assert result.returncode != 0
+    assert "image manifest does not have trusted TestLookup release provenance" in result.stderr
+    assert not (tmp_path / "install" / ".env").exists()
+    assert not (tmp_path / "install" / "scripts").exists()
+    assert not (tmp_path / "install" / "docker-compose.images.yml").exists()
+
+
+def test_a_custom_registry_keeps_the_authenticated_digests(tmp_path):
+    env = _release(tmp_path, TAG)
+    env["TL_REF"] = TAG
+    env["TESTLOOKUP_IMAGE"] = "registry.example:5000/team/testlookup"
+    result = _install(tmp_path, env)
+    assert result.returncode == 0, result.stderr
+
+    services = yaml.safe_load(
+        (tmp_path / "install" / "docker-compose.images.yml").read_text(encoding="utf-8")
+    )["services"]
+    assert services["backend"]["image"] == (
+        f"registry.example:5000/team/testlookup/backend@sha256:{DIGESTS['backend']}"
+    )
+    assert services["frontend"]["image"].endswith(f"/frontend@sha256:{DIGESTS['frontend']}")
+    assert services["mcp"]["image"].endswith(f"/mcp@sha256:{DIGESTS['mcp']}")
+
+
+def test_release_files_and_requested_image_release_must_match(tmp_path):
+    env = _release(tmp_path, TAG)
+    env["TL_REF"] = TAG
+    env["TESTLOOKUP_VERSION"] = "v9.9.8"
+    result = _install(tmp_path, env)
+    assert result.returncode != 0
+    assert "must match the release files" in result.stderr
+    assert not (tmp_path / "install").exists()
 
 
 def test_a_changed_file_stops_the_install_before_anything_runs(tmp_path):
@@ -175,7 +274,8 @@ def test_the_default_install_is_the_latest_release_checked_and_pinned(tmp_path):
     assert result.returncode == 0, result.stderr
     assert f"Latest release: {TAG}" in result.stdout
     assert f"Checked 4 downloaded files against the {TAG} SHA256SUMS" in result.stdout
-    assert f"TESTLOOKUP_VERSION={TAG} " in result.stdout, "the images must be the release's, not latest"
+    assert "docker compose -f docker-compose.release.yml -f docker-compose.images.yml" in result.stdout
+    assert f"TESTLOOKUP_VERSION={TAG} " not in result.stdout, "release startup must use digests, not the tag"
     assert "untagged ref" not in result.stderr
 
 
