@@ -82,6 +82,7 @@ jobs:
     # `version` is given AND the run was dispatched from main); everything else
     # stays read-only.
     permissions:
+      actions: read
       contents: read
       id-token: write
       attestations: write
@@ -108,24 +109,49 @@ jobs:
       # offline-bundle.sh --skip-build saves those exact images.
       - name: Pull the release's verified images
         if: env.RELEASE_TAG != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           [ "$(tr -d '[:space:]' < VERSION)" = "$BUNDLE_VERSION" ] \
             || { echo "::error::VERSION at $RELEASE_TAG is not $BUNDLE_VERSION"; exit 1; }
           source_sha="$(git rev-parse HEAD)"
+          artifact_name="verified-images-$source_sha"
+          artifact_json="$(gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts?name=$artifact_name&per_page=100")"
+          mapfile -t candidates < <(jq -r '.artifacts[] | select(.expired == false) | .workflow_run.id' <<<"$artifact_json" | sort -u)
+          matches=()
+          for candidate in "${candidates[@]}"; do
+            run_json="$(gh api "/repos/$GITHUB_REPOSITORY/actions/runs/$candidate")"
+            if [[ "$(jq -r '.head_sha' <<<"$run_json")" == "$source_sha" && "$(jq -r '.conclusion' <<<"$run_json")" == "success" && "$(jq -r '.event' <<<"$run_json")" == "push" && "$(jq -r '.head_branch' <<<"$run_json")" == "main" && "$(jq -r '.path' <<<"$run_json")" == ".github/workflows/ci.yml" ]]; then matches+=("$candidate"); fi
+          done
+          [[ "${#matches[@]}" -eq 1 ]] \
+            || { echo "::error::expected exactly one successful main ci.yml image manifest for $source_sha"; exit 1; }
+          gh run download "${matches[0]}" --name "$artifact_name" --dir verified-images
+          python3 scripts/release/release_manifest.py validate \
+            --manifest verified-images/release-manifest.json \
+            --expected-source-sha "$source_sha"
+          [ "$(jq -r '.version' verified-images/release-manifest.json)" = "$RELEASE_TAG" ] \
+            || { echo "::error::CI image manifest version does not match $RELEASE_TAG"; exit 1; }
           registry="ghcr.io/test-intelligence/testlookup"
           digest_of() { docker buildx imagetools inspect "$1" --format '{{json .Manifest}}' | jq -r '.digest'; }
           : > release-images.txt
           for component in backend frontend mcp; do
+            manifest_ref="$(jq -r ".images.$component.source_ref" verified-images/release-manifest.json)"
+            manifest_digest="${manifest_ref##*@}"
             release_digest="$(digest_of "$registry/$component:$RELEASE_TAG" || true)"
             commit_digest="$(digest_of "$registry/$component:$source_sha" || true)"
             [[ "$release_digest" =~ ^sha256:[0-9a-f]{64}$ ]] \
               || { echo "::error::$registry/$component:$RELEASE_TAG does not exist; run Promote verified release first"; exit 1; }
-            [ "$release_digest" = "$commit_digest" ] \
-              || { echo "::error::$registry/$component:$RELEASE_TAG ($release_digest) is not CI's image of $source_sha ($commit_digest)"; exit 1; }
-            docker pull "$registry/$component@$release_digest"
-            docker tag "$registry/$component@$release_digest" "testlookup/$component:$BUNDLE_VERSION"
-            printf '%s\t%s@%s\n' "$component" "$registry/$component" "$release_digest" >> release-images.txt
+            [ "$release_digest" = "$commit_digest" ] && [ "$release_digest" = "$manifest_digest" ] \
+              || { echo "::error::$registry/$component:$RELEASE_TAG ($release_digest) is not CI's verified digest ($manifest_digest) for $source_sha ($commit_digest)"; exit 1; }
+            gh attestation verify "oci://$manifest_ref" \
+              --repo test-intelligence/testlookup \
+              --signer-workflow test-intelligence/testlookup/.github/workflows/ci.yml \
+              --source-ref refs/heads/main \
+              --source-digest "$source_sha"
+            docker pull "$manifest_ref"
+            docker tag "$manifest_ref" "testlookup/$component:$BUNDLE_VERSION"
+            printf '%s\t%s\n' "$component" "$manifest_ref" >> release-images.txt
           done
           cat release-images.txt
 
@@ -187,6 +213,18 @@ jobs:
             echo "$component: ${recorded##*@}"
           done < release-images.txt
 
+      # The online installer consumes the same immutable refs as the offline
+      # bundle. The step above downloaded these exact bytes from the unique
+      # successful main CI run and matched every promoted alias to them; sign
+      # that original manifest with the other release assets below.
+      - name: Publish the verified image manifest for online installs
+        if: env.RELEASE_TAG != ''
+        run: |
+          set -euo pipefail
+          cp verified-images/release-manifest.json dist/release-manifest.json
+          test "$(sha256sum verified-images/release-manifest.json | cut -d' ' -f1)" = \
+            "$(sha256sum dist/release-manifest.json | cut -d' ' -f1)"
+
       # M-14: checksums of install.sh and every file it downloads, from the
       # git blobs raw.githubusercontent.com serves for this ref.
       - name: Installer checksums
@@ -197,7 +235,7 @@ jobs:
           done > dist/SHA256SUMS
           cat dist/SHA256SUMS
 
-      # Signed SLSA build provenance for the three release files, recorded in
+      # Signed SLSA build provenance for the four release files, recorded in
       # Sigstore's public log and this repository's attestations. The bundle is
       # also kept as testlookup-offline-<version>.intoto.jsonl so it can be
       # attached to the GitHub release with the files it covers: OpenSSF
@@ -225,6 +263,7 @@ jobs:
             dist/testlookup-offline-${{ env.BUNDLE_VERSION }}.tar.gz
             dist/testlookup-offline-${{ env.BUNDLE_VERSION }}.tar.gz.sha256
             dist/SHA256SUMS
+            dist/release-manifest.json
 
       - name: Keep the provenance bundle with the release files
         if: env.RELEASE_TAG != '' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
@@ -272,6 +311,7 @@ jobs:
             dist/testlookup-offline-${{ env.BUNDLE_VERSION }}.tar.gz
             dist/testlookup-offline-${{ env.BUNDLE_VERSION }}.tar.gz.sha256
             dist/SHA256SUMS
+            dist/release-manifest.json
             dist/*.intoto.jsonl
           retention-days: ${{ env.RELEASE_TAG && 30 || 5 }}
           if-no-files-found: error

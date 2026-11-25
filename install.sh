@@ -3,19 +3,21 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/test-intelligence/testlookup/main/install.sh | bash
 #
-# It downloads the pinned-image release stack, generates a local .env with
-# random secrets, and brings the stack up with `docker compose`. Nothing is
-# built from source — it pulls pre-built images from GHCR.
+# It downloads the pinned-image release stack, verifies the release's signed
+# image manifest, generates a local .env with random secrets, and brings the
+# stack up with `docker compose`. Nothing is built from source — published
+# releases pull the exact image digests CI built and attested.
 #
 # Environment overrides:
 #   TL_DIR=<path>            install directory          (default ./testlookup)
 #   TL_REF=<branch|sha|tag>  raw-file ref to download   (default: the latest
 #                            published release)
-#   TESTLOOKUP_VERSION=<tag> image tag to run           (default: that release)
+#   TESTLOOKUP_VERSION=<tag> release to run             (default: that release)
 #                            A release tag (vX.Y.Z) in either one installs that
 #                            release: the other follows it unless you set it
-#                            too, and the downloaded files are checked against
-#                            the release's SHA256SUMS before anything runs.
+#                            too. Published releases require GitHub CLI (`gh`):
+#                            downloaded files and exact image digests are
+#                            authenticated before anything runs.
 #                            With neither set, the installer asks GitHub which
 #                            release is the latest and installs that one, files
 #                            and images together, checked the same way. The
@@ -28,7 +30,7 @@
 #   TL_NO_UP=1               download + gen .env only, don't `up`
 #   TL_RAW_BASE=<url>        where the files come from (a mirror; default
 #                            https://raw.githubusercontent.com/test-intelligence/testlookup)
-#   TL_RELEASE_BASE=<url>    where a release's SHA256SUMS comes from (default
+#   TL_RELEASE_BASE=<url>    where release verification assets come from (default
 #                            https://github.com/test-intelligence/testlookup/releases/download)
 #
 # The checksum step protects the files this script downloads. It cannot check
@@ -46,6 +48,11 @@ LATEST_RELEASE_URL="${TL_LATEST_RELEASE_URL:-https://api.github.com/repos/test-i
 REF="${TL_REF:-}"
 DIR="${TL_DIR:-testlookup}"
 COMPOSE_FILE="docker-compose.release.yml"
+IMAGE_MANIFEST="release-manifest.json"
+IMAGE_OVERRIDE_FILE="docker-compose.images.yml"
+ATTESTATION_REPOSITORY="test-intelligence/testlookup"
+RELEASE_SIGNER="test-intelligence/testlookup/.github/workflows/offline-bundle.yml"
+IMAGE_SIGNER="test-intelligence/testlookup/.github/workflows/ci.yml"
 # Every file this script downloads. The release's SHA256SUMS lists each one.
 FILES=("$COMPOSE_FILE" ".env.example" "scripts/gen-dev-env.sh" "scripts/init-db.sql")
 
@@ -57,6 +64,12 @@ fetch() {  # fetch <remote-path> <local-path>
   local url="${REPO_RAW}/${REF}/$1"
   mkdir -p "$(dirname "$2")"
   $DL "$2" "$url" || die "failed to download $url"
+}
+
+fetch_release_asset() {  # fetch_release_asset <asset-name> <local-path>
+  local url="${RELEASE_DOWNLOADS}/${REF}/$1"
+  mkdir -p "$(dirname "$2")"
+  $DL "$2" "$url"
 }
 
 is_release_tag() {  # vX.Y.Z, the form the release workflow accepts
@@ -94,7 +107,8 @@ sha256_of() {  # sha256_of <file> -> hex digest; fails when no tool is installed
 verify_release_files() {
   local stage="$1" sums="$1/SHA256SUMS" url="${RELEASE_DOWNLOADS}/${REF}/SHA256SUMS"
   local path want got
-  $DL "$sums" "$url" || die "could not download the checksums for $REF ($url). Nothing was installed or run. Check that $REF is a published release with a SHA256SUMS file; to install the unreleased tip without a checksum, set TL_REF=main."
+  fetch_release_asset "SHA256SUMS" "$sums" \
+    || die "could not download the checksums for $REF ($url). Nothing was installed or run. Check that $REF is a published release with a SHA256SUMS file; to install the unreleased tip without a checksum, set TL_REF=main."
   for path in "${FILES[@]}"; do
     want="$(tr -d '\r' < "$sums" | awk -v p="$path" '$2 == p || $2 == ("*" p) { print $1; exit }')"
     [ -n "$want" ] || die "the checksums for $REF do not list $path. Nothing was installed or run."
@@ -103,6 +117,136 @@ verify_release_files() {
     [ "$got" = "$want" ] || die "checksum mismatch for $path from $REF (expected $want, got $got). The download is not the released file. Nothing was installed or run."
   done
   say "Checked ${#FILES[@]} downloaded files against the $REF SHA256SUMS"
+}
+
+# Read one scalar from the canonical JSON emitted by release_manifest.py.
+# The signed manifest is still treated as untrusted input: every extracted
+# value is checked below before it reaches gh, Compose, or a generated file.
+manifest_scalar() {  # manifest_scalar <manifest> <field>
+  awk -v key="\"$2\":" '
+    $1 == key {
+      count += 1
+      value = $0
+      sub(/^[^:]+:[[:space:]]*"/, "", value)
+      sub(/",?[[:space:]]*$/, "", value)
+    }
+    END {
+      if (count != 1 || value == "") exit 1
+      print value
+    }
+  ' "$1"
+}
+
+manifest_image_ref() {  # manifest_image_ref <manifest> <component>
+  awk -v component="\"$2\":" '
+    $1 == component && $2 == "{" { component_count += 1; inside = 1; next }
+    inside && $1 == "\"source_ref\":" {
+      ref_count += 1
+      value = $0
+      sub(/^[^:]+:[[:space:]]*"/, "", value)
+      sub(/",?[[:space:]]*$/, "", value)
+      inside = 0
+    }
+    inside && $0 ~ /^    },?[[:space:]]*$/ { inside = 0 }
+    END {
+      if (component_count != 1 || ref_count != 1 || value == "") exit 1
+      print value
+    }
+  ' "$1"
+}
+
+verify_release_provenance() {  # verify_release_provenance <staging-dir>
+  local stage="$1" manifest="$1/$IMAGE_MANIFEST"
+  local bundle_name="testlookup-offline-${REF#v}.intoto.jsonl"
+  local bundle="$1/$bundle_name" manifest_version source_sha component ref ref_count
+
+  fetch_release_asset "$IMAGE_MANIFEST" "$manifest" \
+    || die "could not download the authenticated image manifest for $REF. Nothing was installed or run."
+  fetch_release_asset "$bundle_name" "$bundle" \
+    || die "could not download the signed provenance bundle for $REF. Nothing was installed or run."
+
+  gh attestation verify "$stage/SHA256SUMS" \
+    --repo "$ATTESTATION_REPOSITORY" \
+    --signer-workflow "$RELEASE_SIGNER" \
+    --source-ref refs/heads/main \
+    --bundle "$bundle" >/dev/null \
+    || die "the $REF SHA256SUMS does not have trusted TestLookup release provenance. Nothing was installed or run."
+  gh attestation verify "$manifest" \
+    --repo "$ATTESTATION_REPOSITORY" \
+    --signer-workflow "$RELEASE_SIGNER" \
+    --source-ref refs/heads/main \
+    --bundle "$bundle" >/dev/null \
+    || die "the $REF image manifest does not have trusted TestLookup release provenance. Nothing was installed or run."
+
+  manifest_version="$(manifest_scalar "$manifest" version)" \
+    || die "the authenticated image manifest has no single version. Nothing was installed or run."
+  [ "$manifest_version" = "$REF" ] \
+    || die "the authenticated image manifest is for $manifest_version, not $REF. Nothing was installed or run."
+  source_sha="$(manifest_scalar "$manifest" source_sha)" \
+    || die "the authenticated image manifest has no single source SHA. Nothing was installed or run."
+  [[ "$source_sha" =~ ^[0-9a-f]{40}$ ]] \
+    || die "the authenticated image manifest has an invalid source SHA. Nothing was installed or run."
+  ref_count="$(awk '$1 == "\"source_ref\":" { count += 1 } END { print count + 0 }' "$manifest")"
+  [ "$ref_count" -eq 3 ] \
+    || die "the authenticated image manifest must contain exactly three image references. Nothing was installed or run."
+
+  for component in backend frontend mcp; do
+    ref="$(manifest_image_ref "$manifest" "$component")" \
+      || die "the authenticated image manifest has no single $component reference. Nothing was installed or run."
+    [[ "$ref" =~ ^ghcr\.io/test-intelligence/testlookup/${component}@sha256:[0-9a-f]{64}$ ]] \
+      || die "the authenticated image manifest has an invalid $component digest reference. Nothing was installed or run."
+    gh attestation verify "oci://$ref" \
+      --repo "$ATTESTATION_REPOSITORY" \
+      --signer-workflow "$IMAGE_SIGNER" \
+      --source-ref refs/heads/main \
+      --source-digest "$source_sha" >/dev/null \
+      || die "the $component digest in the $REF manifest does not have trusted CI provenance for $source_sha. Nothing was installed or run."
+    case "$component" in
+      backend) BACKEND_IMAGE_REF="$ref" ;;
+      frontend) FRONTEND_IMAGE_REF="$ref" ;;
+      mcp) MCP_IMAGE_REF="$ref" ;;
+    esac
+  done
+  say "Authenticated the $REF manifest and all three CI image digests"
+}
+
+write_release_image_override() {  # write_release_image_override <path>
+  local destination="$1" prefix="${TESTLOOKUP_IMAGE:-}"
+  if [ -n "$prefix" ]; then
+    prefix="${prefix%/}"
+    [[ "$prefix" =~ ^[A-Za-z0-9][A-Za-z0-9._:/-]*$ ]] \
+      && [[ "$prefix" != *"//"* && "$prefix" != *"://"* && "$prefix" != *"@"* ]] \
+      || die "TESTLOOKUP_IMAGE must be a registry/namespace without whitespace, a tag, or a digest. Nothing was installed or run."
+    BACKEND_IMAGE_REF="$prefix/backend@${BACKEND_IMAGE_REF##*@}"
+    FRONTEND_IMAGE_REF="$prefix/frontend@${FRONTEND_IMAGE_REF##*@}"
+    MCP_IMAGE_REF="$prefix/mcp@${MCP_IMAGE_REF##*@}"
+  fi
+
+  cat > "$destination" <<EOF
+# Generated by install.sh from the authenticated $REF release manifest.
+# Keep this override in every Compose command so application images stay pinned.
+services:
+  db-budget-check:
+    image: $BACKEND_IMAGE_REF
+  minio-setup:
+    image: $BACKEND_IMAGE_REF
+  db-migrate:
+    image: $BACKEND_IMAGE_REF
+  backend:
+    image: $BACKEND_IMAGE_REF
+  worker:
+    image: $BACKEND_IMAGE_REF
+  worker-children:
+    image: $BACKEND_IMAGE_REF
+  beat:
+    image: $BACKEND_IMAGE_REF
+  seed-init:
+    image: $BACKEND_IMAGE_REF
+  frontend:
+    image: $FRONTEND_IMAGE_REF
+  mcp:
+    image: $MCP_IMAGE_REF
+EOF
 }
 
 main() {
@@ -127,8 +271,8 @@ main() {
   # Compose file and the images it starts come from the same release.
   #
   # With neither set, install the latest published release, not the tip of
-  # main: a release's files are checked against its SHA256SUMS and its images
-  # carry its tag, while main changes under you and `latest` is whatever was
+  # main: a release's files and exact image digests are authenticated, while
+  # main changes under you and `latest` is whatever was
   # pushed last (security review 2026-11-20, TL-06). When the lookup fails the
   # install stops and says how to name a release; it never falls back to main
   # by itself. An image tag that is not a release (TESTLOOKUP_VERSION=<sha>)
@@ -148,6 +292,12 @@ main() {
   else
     IMAGE_VERSION="latest"
   fi
+  if is_release_tag "$REF"; then
+    [ -z "${TESTLOOKUP_VERSION:-}" ] || [ "$TESTLOOKUP_VERSION" = "$REF" ] \
+      || die "TESTLOOKUP_VERSION ($TESTLOOKUP_VERSION) must match the release files in TL_REF ($REF). Nothing was installed or run."
+    command -v gh >/dev/null 2>&1 \
+      || die "GitHub CLI (gh) is required to authenticate a published release. Install it from https://cli.github.com/ and run this command again. Nothing was installed or run."
+  fi
 
   # ── Download the release artifacts ─────────────────────────────────────────
   say "Installing TestLookup into ./$DIR (ref: $REF, images: $IMAGE_VERSION)"
@@ -164,6 +314,8 @@ main() {
   done
   if is_release_tag "$REF"; then
     verify_release_files "$STAGE"
+    verify_release_provenance "$STAGE"
+    write_release_image_override "$STAGE/$IMAGE_OVERRIDE_FILE"
   else
     warn "no checksum is available for an untagged ref ($REF): the downloaded files are not verified. Install a release with TL_REF=vX.Y.Z to check them against its SHA256SUMS."
   fi
@@ -171,6 +323,12 @@ main() {
     mkdir -p "$(dirname "$path")"
     cp "$STAGE/$path" "$path" || die "could not write $path"
   done
+  IMAGE_OVERRIDE=""
+  if is_release_tag "$REF"; then
+    cp "$STAGE/$IMAGE_OVERRIDE_FILE" "$IMAGE_OVERRIDE_FILE" \
+      || die "could not write $IMAGE_OVERRIDE_FILE"
+    IMAGE_OVERRIDE="$IMAGE_OVERRIDE_FILE"
+  fi
   chmod +x scripts/gen-dev-env.sh 2>/dev/null || true
 
   # ── Generate .env (random local secrets) ───────────────────────────────────
@@ -187,10 +345,16 @@ main() {
   # ── Bring the stack up ─────────────────────────────────────────────────────
   PROFILE_ARGS=""
   [ -n "${TL_PROFILE:-}" ] && PROFILE_ARGS="--profile ${TL_PROFILE}"
+  COMPOSE_ARGS="-f $COMPOSE_FILE"
+  [ -n "$IMAGE_OVERRIDE" ] && COMPOSE_ARGS="$COMPOSE_ARGS -f $IMAGE_OVERRIDE"
 
   if [ "${TL_NO_UP:-0}" = "1" ]; then
     say "TL_NO_UP set — skipping 'up'. Start it yourself with:"
-    echo "    cd $DIR && TESTLOOKUP_VERSION=$IMAGE_VERSION $DC -f $COMPOSE_FILE $PROFILE_ARGS up -d"
+    if [ -n "$IMAGE_OVERRIDE" ]; then
+      echo "    cd $DIR && $DC $COMPOSE_ARGS $PROFILE_ARGS up -d"
+    else
+      echo "    cd $DIR && TESTLOOKUP_VERSION=$IMAGE_VERSION $DC $COMPOSE_ARGS $PROFILE_ARGS up -d"
+    fi
     exit 0
   fi
 
@@ -201,12 +365,16 @@ main() {
   if grep -q '^INITIAL_ADMIN_PASSWORD=.' .env; then
     PASSWORD_HINT="in .env (readable by you only): grep '^INITIAL_ADMIN_PASSWORD=' .env"
   else
-    PASSWORD_HINT="not set (.env has no INITIAL_ADMIN_PASSWORD), so no admin was created. Create one, with a password shown once in your terminal: $DC -f $COMPOSE_FILE exec backend python /app/scripts/create_admin.py"
+    PASSWORD_HINT="not set (.env has no INITIAL_ADMIN_PASSWORD), so no admin was created. Create one, with a password shown once in your terminal: $DC $COMPOSE_ARGS exec backend python /app/scripts/create_admin.py"
   fi
 
   say "Pulling images and starting the stack (first boot pulls a few GB)…"
   # shellcheck disable=SC2086
-  TESTLOOKUP_VERSION="$IMAGE_VERSION" $DC -f "$COMPOSE_FILE" $PROFILE_ARGS up -d
+  if [ -n "$IMAGE_OVERRIDE" ]; then
+    $DC $COMPOSE_ARGS $PROFILE_ARGS up -d
+  else
+    TESTLOOKUP_VERSION="$IMAGE_VERSION" $DC $COMPOSE_ARGS $PROFILE_ARGS up -d
+  fi
 
   cat <<EOF
 
@@ -229,20 +397,20 @@ WARNING: plain HTTP, reachable from your network
   encrypted. Anyone on the same network can open it, and can read the
   passwords, session tokens and API keys sent to it.
     This machine only : add FRONTEND_PUBLISH_ADDR=127.0.0.1 to ./$DIR/.env, then
-                        $DC -f $COMPOSE_FILE up -d
+                        $DC $COMPOSE_ARGS up -d
     Other people      : put a TLS-terminating reverse proxy in front of port
                         3000 and keep FRONTEND_PUBLISH_ADDR=127.0.0.1, see
                         "Before other people use it" in docs/operations/deploy-compose.md
 
 Useful commands (run from ./$DIR):
-  $DC -f $COMPOSE_FILE ps           # service status
-  $DC -f $COMPOSE_FILE logs -f      # follow logs
-  $DC -f $COMPOSE_FILE down         # stop (keeps data)
+  $DC $COMPOSE_ARGS ps           # service status
+  $DC $COMPOSE_ARGS logs -f      # follow logs
+  $DC $COMPOSE_ARGS down         # stop (keeps data)
 
 EOF
   if [ "${TL_PROFILE:-}" = "demo" ]; then
     echo "Demo projects load in the background once the database is ready:"
-    echo "  $DC -f $COMPOSE_FILE logs -f seed-init"
+    echo "  $DC $COMPOSE_ARGS logs -f seed-init"
   else
     echo "Want demo data? Re-run with: curl -fsSL <install.sh URL> | TL_PROFILE=demo bash"
   fi

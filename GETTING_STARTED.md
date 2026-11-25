@@ -7,7 +7,7 @@ This walkthrough takes you from nothing to your own test results in TestLookup o
 - Docker Engine or Docker Desktop with Compose v2 (`docker compose version`), and Bash. On Windows, run every command from Git Bash or WSL.
 - About 8 GB of free memory for the core services; local models need more ([sizing](user-guide/sizing.md)).
 - Free ports 3000, 8000, 8002, 5433, 6379, 9000 and 27017. The Compose services use fixed container names, so only one copy of TestLookup runs on a machine; see [local development](docs/operations/development.md) if another checkout already runs one.
-- Option A also needs `curl` or `wget`. Option B also needs Git and GNU Make, and its sample-upload step runs `curl` and `python3` on your machine.
+- Option A also needs `curl` or `wget` and the [GitHub CLI](https://cli.github.com/) to authenticate the release manifest and images. Option B also needs Git and GNU Make, and its sample-upload step runs `curl` and `python3` on your machine.
 
 ## 2. Start TestLookup
 
@@ -19,7 +19,7 @@ Choose one option, not both.
 curl -fsSL https://raw.githubusercontent.com/test-intelligence/testlookup/main/install.sh | TL_PROFILE=demo bash
 ```
 
-The installer downloads `docker-compose.release.yml` into `./testlookup`, writes a production-mode `.env` with random secrets, pulls the images from `ghcr.io/test-intelligence/testlookup` and starts them. The images are about 1 GB to download (0.95 GB for linux/amd64, measured on 11 November 2026); on a 100 Mbit/s connection, expect about 5 minutes until the dashboard answers. The demo projects (three projects with history) load in the background once the database is ready: `docker compose -f docker-compose.release.yml logs -f seed-init`, run from `./testlookup`, shows progress. Leave out `TL_PROFILE=demo` for an empty instance. Other options are in the [Compose guide](docs/operations/deploy-compose.md#release-images-without-a-clone).
+The installer downloads `docker-compose.release.yml` into `./testlookup`, authenticates the release's exact application-image digests, writes a production-mode `.env` with random secrets, and starts the images with `docker-compose.images.yml` layered on top. The images are about 1 GB to download (0.95 GB for linux/amd64, measured on 11 November 2026); on a 100 Mbit/s connection, expect about 5 minutes until the dashboard answers. The demo projects (three projects with history) load in the background after the database is ready: `docker compose -f docker-compose.release.yml -f docker-compose.images.yml logs -f seed-init`, run from `./testlookup`, shows progress. Leave out `TL_PROFILE=demo` for an empty instance. Other options are in the [Compose guide](docs/operations/deploy-compose.md#release-images-without-a-clone).
 
 **Option B: build from a clone (development).**
 
@@ -105,7 +105,7 @@ docker compose logs --tail=100 backend worker beat
 make stop                                     # stops everything; data is kept
 ```
 
-These commands are for Option B. With Option A, run `docker compose -f docker-compose.release.yml ps`, `... logs` and `... down` from `./testlookup` instead; the `make` targets need a clone.
+These commands are for Option B. With Option A, run `docker compose -f docker-compose.release.yml -f docker-compose.images.yml ps`, `... logs` and `... down` from `./testlookup` instead; the `make` targets need a clone.
 
 A green smoke check proves the services answer, not that every queue and model works; an upload that reaches a finished run is the stronger check. `make clean CONFIRM=yes` deletes all data volumes and is not a routine shutdown.
 
