@@ -387,7 +387,14 @@ it to your registry under the same naming contract as everything else
 ${EXTERNAL_MD}
 \`MANIFEST.json\` lists them under \`external_prerequisites\`.
 
-## Quick start (air-gapped host)
+## Quick start (after publisher authentication)
+
+This README is inside the tarball and cannot authenticate the tarball that
+contained it. Before extraction, verify the outer archive against your
+publisher's signature with a trust root provisioned independently of the
+transfer. For official releases, follow \`user-guide/air-gapped-install.md\` and
+verify the release's signed provenance. A checksum delivered beside an artifact
+detects corruption; it does not establish who published the artifact.
 
 \`\`\`bash
 tar xzf ${BUNDLE_NAME}.tar.gz && cd $BUNDLE_NAME
@@ -459,6 +466,8 @@ echo "  bundle : $TARBALL"
 echo "  size   : $(du -h "$TARBALL" 2>/dev/null | cut -f1 || wc -c < "$TARBALL") "
 echo "  sha256 : $BUNDLE_SHA  (also in ${TARBALL}.sha256)"
 echo ""
-echo "  Transfer both files to the air-gapped site, then:"
-echo "    sha256sum -c ${BUNDLE_NAME}.tar.gz.sha256"
-echo "    tar xzf ${BUNDLE_NAME}.tar.gz && cd ${BUNDLE_NAME} && ./import-bundle.sh --help"
+echo "  SECURITY: the checksum is not publisher authentication."
+echo "  Sign custom builds with your organisation's artifact identity before transfer."
+echo "  On the receiving side, authenticate the tarball against a separately"
+echo "  provisioned trust root before running checksum, tar, or import commands."
+echo "  Procedure: user-guide/air-gapped-install.md"
