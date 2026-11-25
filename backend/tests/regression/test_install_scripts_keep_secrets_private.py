@@ -8,9 +8,9 @@ Four gaps in the Compose install path:
   password in a file other local users might read, with no message;
 * ``scripts/ops/backup.sh`` wrote the backup (password hashes, encrypted
   integration secrets) with the caller's umask;
-* nothing told the operator that the release frontend is plain HTTP on every
-  interface, or that ``INITIAL_ADMIN_PASSWORD`` can be deleted from ``.env``
-  after the first sign-in.
+* the release frontend exposed its plain HTTP login on every interface, and
+  nothing told the operator that ``INITIAL_ADMIN_PASSWORD`` can be deleted
+  from ``.env`` after the first sign-in.
 """
 from __future__ import annotations
 
@@ -151,11 +151,11 @@ def _final_message(script: str) -> str:
     return script[start:script.index("\nEOF", start)]
 
 
-def test_the_installer_warns_that_the_web_port_is_plain_http():
+def test_the_installer_explains_that_the_web_port_is_local_plain_http():
     message = _final_message((ROOT / "install.sh").read_text(encoding="utf-8"))
-    assert "plain HTTP" in message
-    assert "every network interface" in message
-    assert "FRONTEND_PUBLISH_ADDR=127.0.0.1" in message
+    assert "LOCAL HTTP ONLY" in message
+    assert "bound to 127.0.0.1 by default" in message
+    assert "TLS-terminating" in message
     assert "http://localhost:3000" in message, "positive case: the dashboard address is still printed"
 
 
@@ -164,19 +164,20 @@ def test_the_installer_says_to_delete_the_first_admin_password():
     assert re.search(r"delete the INITIAL_ADMIN_PASSWORD line", message)
 
 
-def test_the_release_compose_header_carries_the_same_warning():
+def test_the_release_frontend_defaults_to_loopback():
     compose = (ROOT / "docker-compose.release.yml").read_text(encoding="utf-8")
     header = compose[: compose.index("\nservices:")]
-    assert "PLAIN HTTP" in header and "FRONTEND_PUBLISH_ADDR=127.0.0.1" in header
-    # The default itself is unchanged: every interface unless the operator narrows it.
-    # (Host port 3000; the container side is 8080 since nginx runs as a non-root user.)
-    assert '"${FRONTEND_PUBLISH_ADDR:+${FRONTEND_PUBLISH_ADDR}:}3000:8080"' in compose
+    assert "LOCAL HTTP BY DEFAULT" in header and "127.0.0.1:3000" in header
+    # Host port 3000 and an explicit bind-address override remain available;
+    # the container side is 8080 because nginx runs as a non-root user.
+    assert '"${FRONTEND_PUBLISH_ADDR:-127.0.0.1}:3000:8080"' in compose
 
 
 def test_the_compose_guide_closes_the_plain_port_in_the_tls_step():
     guide = (ROOT / "docs/operations/deploy-compose.md").read_text(encoding="utf-8")
     section = guide[guide.index("### Before other people use it"):]
     section = section[: section.index("\n### ", 5)]
-    assert "FRONTEND_PUBLISH_ADDR=127.0.0.1" in section
+    assert "Keep the default loopback binding" in section
+    assert "TLS-terminating reverse proxy" in section
     assert "INITIAL_ADMIN_PASSWORD" in section
     assert "REDIS_PASSWORD" in section

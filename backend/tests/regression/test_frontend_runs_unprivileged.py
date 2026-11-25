@@ -191,7 +191,7 @@ def test_the_network_policy_admits_the_container_port() -> None:
 def test_the_release_stack_publishes_the_same_host_port() -> None:
     frontend = _compose("docker-compose.release.yml")["frontend"]
     assert frontend["ports"] == [
-        f"${{FRONTEND_PUBLISH_ADDR:+${{FRONTEND_PUBLISH_ADDR}}:}}3000:{CONTAINER_PORT}"
+        f"${{FRONTEND_PUBLISH_ADDR:-127.0.0.1}}:3000:{CONTAINER_PORT}"
     ]
     assert "user" not in frontend, "the image sets its own user"
 

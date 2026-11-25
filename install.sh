@@ -392,14 +392,12 @@ After that first sign-in, delete the INITIAL_ADMIN_PASSWORD line from
 ./$DIR/.env: it is only used to create the admin on a new database, and
 leaving it there keeps an unused password in a file several services read.
 
-WARNING: plain HTTP, reachable from your network
-  Port 3000 is published on every network interface of this host and is not
-  encrypted. Anyone on the same network can open it, and can read the
-  passwords, session tokens and API keys sent to it.
-    This machine only : add FRONTEND_PUBLISH_ADDR=127.0.0.1 to ./$DIR/.env, then
-                        $DC $COMPOSE_ARGS up -d
-    Other people      : put a TLS-terminating reverse proxy in front of port
-                        3000 and keep FRONTEND_PUBLISH_ADDR=127.0.0.1, see
+LOCAL HTTP ONLY
+  Port 3000 is not encrypted, but it is bound to 127.0.0.1 by default so
+  machines on the network cannot connect to it directly.
+    This machine only : open http://localhost:3000 as shown above
+    Other people      : keep the loopback binding and put a TLS-terminating
+                        reverse proxy on this host in front of port 3000; see
                         "Before other people use it" in docs/operations/deploy-compose.md
 
 Useful commands (run from ./$DIR):

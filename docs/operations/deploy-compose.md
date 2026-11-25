@@ -91,7 +91,7 @@ It checks for Docker and Compose v2, downloads `docker-compose.release.yml`, `.e
 
 The installer ends by saying where the admin password is, never the value, because a terminal's scrollback or a CI log keeps what is printed: it is stored in `.env` (mode 600) as `INITIAL_ADMIN_PASSWORD`. If `.env` has no `INITIAL_ADMIN_PASSWORD`, create an admin from a terminal with `docker compose -f docker-compose.release.yml -f docker-compose.images.yml exec backend python /app/scripts/create_admin.py`, which shows a generated password once. Sign in at [localhost:3000](http://localhost:3000) and set your own password. After that first sign-in, delete the `INITIAL_ADMIN_PASSWORD` line from `.env`: it is only used to create the admin on a new database, and `.env` is passed to several services.
 
-The installer also ends with a warning that port 3000 is plain HTTP on every network interface of the host; see [Before other people use it](#before-other-people-use-it). It stops if it cannot set `.env` to mode 600.
+The installer also explains that port 3000 is plain HTTP bound to `127.0.0.1` by default and points shared deployments to [Before other people use it](#before-other-people-use-it). It stops if it cannot set `.env` to mode 600.
 
 | Variable | Default | Effect |
 |---|---|---|
@@ -136,13 +136,13 @@ docker compose -f docker-compose.release.yml -f docker-compose.images.yml exec o
 docker compose -f docker-compose.release.yml -f docker-compose.images.yml exec ollama ollama pull nomic-embed-text:v1.5
 ```
 
-The release file publishes the frontend on port 3000 of every interface and everything else on `127.0.0.1` only: the backend (8000, `BACKEND_PUBLISH_ADDR`), PostgreSQL (5433, `POSTGRES_PUBLISH_ADDR`), the S3 store (9000, `MINIO_PUBLISH_ADDR`) and Ollama (11434, `OLLAMA_PUBLISH_ADDR`). The frontend proxies `/api/`, `/ws/` and `/webhooks/` to the backend, so browsers only need port 3000.
+The release file publishes every port on `127.0.0.1` by default: the frontend (3000, `FRONTEND_PUBLISH_ADDR`), backend (8000, `BACKEND_PUBLISH_ADDR`), PostgreSQL (5433, `POSTGRES_PUBLISH_ADDR`), the S3 store (9000, `MINIO_PUBLISH_ADDR`) and Ollama (11434, `OLLAMA_PUBLISH_ADDR`). The frontend proxies `/api/`, `/ws/` and `/webhooks/` to the backend, so browsers only need port 3000. A publish-address variable is an explicit opt-in to another interface; the release stack does not add TLS when one is set.
 
 ### Before other people use it
 
 A release `.env` already runs in production mode with random secrets; the backend refuses to start if any of them is a placeholder. For a shared host also:
 
-1. Set `CORS_ORIGINS` and `PUBLIC_BASE_URL` to the URL people will open, and put a TLS-terminating reverse proxy in front of port 3000. Port 3000 is plain HTTP and is published on every network interface, so until you do this anyone on the network can read the passwords, session tokens and API keys sent to it. With the proxy on the same host, also set `FRONTEND_PUBLISH_ADDR=127.0.0.1` in `.env`: the proxy still reaches the port, and nobody can go around it.
+1. Set `CORS_ORIGINS` and `PUBLIC_BASE_URL` to the `https://` URL people will open, and put a TLS-terminating reverse proxy on this host in front of `127.0.0.1:3000`. Keep the default loopback binding: the proxy can reach it, but network clients cannot bypass TLS and send passwords, session tokens or API keys directly to the plain HTTP port. Set `FRONTEND_PUBLISH_ADDR` only when a deliberately secured network path requires another bind address; the release stack does not provide TLS on that port.
 2. `REDIS_PASSWORD` must be set: the release stack refuses to start without it (Compose prints `REDIS_PASSWORD is required`), and in production the backend refuses to start when a Redis URL names another host and carries no password. `scripts/gen-dev-env.sh` writes one. If you built `.env` by hand, generate one with `openssl rand -hex 24`.
 3. After the first sign-in, delete the `INITIAL_ADMIN_PASSWORD` line from `.env`.
 4. Schedule backups (below) and keep `docker-compose.images.yml` in every Compose command.

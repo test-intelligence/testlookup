@@ -91,5 +91,5 @@ def test_the_frontend_image_and_host_port_are_unchanged():
     """Host port 3000 as before. The container side is 8080 since nginx runs
     as a non-root user (test_frontend_runs_unprivileged.py)."""
     frontend = _services("docker-compose.release.yml")["frontend"]
-    assert frontend["ports"] == ["${FRONTEND_PUBLISH_ADDR:+${FRONTEND_PUBLISH_ADDR}:}3000:8080"]
+    assert frontend["ports"] == ["${FRONTEND_PUBLISH_ADDR:-127.0.0.1}:3000:8080"]
     assert "user" not in frontend
