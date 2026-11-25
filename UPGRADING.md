@@ -158,7 +158,7 @@ Members below QA_LEAD see a webhook's target URL as `https://host/...`.
 | Promote a cluster to a defect with a `severity` other than CRITICAL, HIGH, MEDIUM or LOW (any case) | 422 | stored as sent |
 | Create or update a notification preference with an event name that does not exist | 422 | stored, never fired |
 | Create or update a release or phase with a `status` in mixed case | stored lower-case | stored as sent |
-| Create or edit a test case with a `priority` other than critical, high, medium, low or P0 to P3 | 422 | stored as sent |
+| Create or edit a test case with a `priority` other than critical, high, medium, low or P0 to P3 | 422, unless the edit sends the value the case already has | stored as sent |
 | Create or edit a test case with an `automation_status` outside the four values, a `test_type` with other characters or over 50, or a `severity` over 20 characters | 422 | stored, or a database error |
 | Create or edit a test case with `priority`, `severity`, `test_type` or `automation_status` in upper or mixed case | stored lower-case (`P1` as `high`) | stored as sent |
 | `GET /test-management/plans?status=` or `GET /search?status=` with a value that is not a status | 422 | 200 with an empty list |

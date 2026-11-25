@@ -407,6 +407,15 @@ async def get_release(
     return details
 
 
+async def _release_exists(db: AsyncSession, release_id: str) -> bool:
+    """Whether ``release_id`` names a release (a malformed id names none)."""
+    try:
+        wanted = uuid.UUID(str(release_id))
+    except ValueError:
+        return False
+    return (await db.execute(select(Release.id).where(Release.id == wanted))).scalar_one_or_none() is not None
+
+
 @router.get("/{release_id}/gate")
 async def get_release_gate(
     release_id: str,
@@ -426,6 +435,11 @@ async def get_release_gate(
     """
     gate = await release_gate_service.current_gate(db, release_id)
     if gate is None:
+        if not await _release_exists(db, release_id):
+            # An administrator passes the release guard without its existence
+            # check, so a release that does not exist read as "not evaluated
+            # yet" (found live, 2026-11-25).
+            raise HTTPException(status_code=404, detail="Release not found")
         raise HTTPException(status_code=404, detail="This release has not been evaluated yet")
     reasons = gate.get("blocking_reasons") or []
     if reasons:

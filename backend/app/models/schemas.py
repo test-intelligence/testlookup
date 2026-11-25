@@ -4415,6 +4415,14 @@ def case_test_type(value: Any) -> Any:
     return word
 
 
+#: The four fields ``case_*`` normalise, with their rule.
+def case_field_rules() -> dict:
+    return {
+        "priority": case_priority, "severity": case_severity, "test_type": case_test_type,
+        "automation_status": case_automation_status,
+    }
+
+
 def case_automation_status(value: Any) -> Any:
     word = _case_word(value)
     if word is not None and word not in AUTOMATION_STATUSES:
@@ -4473,29 +4481,12 @@ class ManagedTestCaseCreate(BaseModel):
 
 
 class ManagedTestCaseUpdate(BaseModel):
+    # No vocabulary validators here, unlike ``ManagedTestCaseCreate``: this model
+    # also carries a version restore and a bulk edit, which must be able to put
+    # back a value stored before the rules existed (a seeded "manual" automation
+    # status). ``update_managed_test_case`` applies the rules to an edit, and
+    # only to a value the edit actually changes.
     expected_version: int = Field(..., ge=1)
-
-    # The same rules the CSV / Excel import applies (``test_case_import_service``):
-    # validators, not Literals, so the published OpenAPI schema stays the same.
-    @field_validator("priority", mode="before")
-    @classmethod
-    def _known_priority(cls, value: Any) -> Any:
-        return case_priority(value)
-
-    @field_validator("severity", mode="before")
-    @classmethod
-    def _bounded_severity(cls, value: Any) -> Any:
-        return case_severity(value)
-
-    @field_validator("test_type", mode="before")
-    @classmethod
-    def _well_formed_type(cls, value: Any) -> Any:
-        return case_test_type(value)
-
-    @field_validator("automation_status", mode="before")
-    @classmethod
-    def _known_automation_status(cls, value: Any) -> Any:
-        return case_automation_status(value)
     title: Optional[str] = Field(None, min_length=3, max_length=500)
     description: Optional[str] = Field(None, max_length=MAX_LONG_TEXT)
     objective: Optional[str] = Field(None, max_length=MAX_LONG_TEXT)

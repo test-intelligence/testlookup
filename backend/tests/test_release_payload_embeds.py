@@ -223,6 +223,7 @@ async def test_a_verdict_with_no_reason_spends_nothing_and_adds_no_key(monkeypat
 @pytest.mark.asyncio
 async def test_a_never_evaluated_release_is_still_a_404(monkeypatch):
     monkeypatch.setattr(router_mod.release_gate_service, "current_gate", AsyncMock(return_value=None))
+    monkeypatch.setattr(router_mod, "_release_exists", AsyncMock(return_value=True))
 
     with pytest.raises(HTTPException) as exc:
         await router_mod.get_release_gate(release_id=str(uuid.uuid4()), db=object(), _=None)
