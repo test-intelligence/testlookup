@@ -39,7 +39,7 @@ const triggered: unknown[] = []
 
 const AGENTS = agentsHandlers(triggered)
 
-const report = (p: Page) => p.getByRole('region', { name: 'AI report' })
+const report = (p: Page) => p.getByRole('region', { name: 'Run report' })
 const ready = (p: Page) => report(p).getByText(AI_REPORT_SUMMARY)
 
 test.use({ viewport: { width: 1440, height: 900 }, timezoneId: 'UTC', locale: 'en-US', reducedMotion: 'reduce' })
@@ -69,7 +69,7 @@ async function foldGeometry(page: Page) {
   }, MAIN)
 }
 
-test('a run on screen: one picker, the AI report full width within the fold, the stages collapsed', async ({ page }) => {
+test('a run on screen: one picker, the run report full width within the fold, the stages collapsed', async ({ page }) => {
   const { api, errors } = await openRollout(page, `/agents?run=${RUN_ID}`, { handlers: AGENTS, ready })
   await networkQuiet(page, api)
   const geometry = await foldGeometry(page)
@@ -81,7 +81,7 @@ test('a run on screen: one picker, the AI report full width within the fold, the
 
   // The template: one primary content, inside the fold, as wide as the page.
   expect(geometry.primaries, 'one primary content element').toBe(1)
-  await expect(page.locator('[data-primary]')).toHaveAttribute('aria-label', 'AI report')
+  await expect(page.locator('[data-primary]')).toHaveAttribute('aria-label', 'Run report')
   expect(geometry.primaryTop as number).toBeLessThanOrEqual(FOLD_BUDGET_PX)
   expect(geometry.primaryWidth, 'the report spans the page, not a column of it').toBe(geometry.pageWidth)
 

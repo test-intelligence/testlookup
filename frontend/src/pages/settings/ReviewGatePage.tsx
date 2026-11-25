@@ -1,7 +1,7 @@
 /**
  * Settings › AI › Review gate (W23c AGT-10): `/settings/review-gate`, admin-only.
  *
- * When unreviewed AI reports stop leaving TestLookup. Until a date is set the gate only COUNTS what it would
+ * When unreviewed reports stop leaving TestLookup. Until a date is set the gate only COUNTS what it would
  * have withheld (D17: unset on upgrade = audit only); the owner picks the date from those counts.
  *
  *  - Current state: a neutral badge (Audit only / Enforced) and the server's sentence filled with the server's

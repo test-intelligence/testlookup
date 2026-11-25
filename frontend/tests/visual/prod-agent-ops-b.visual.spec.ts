@@ -30,7 +30,7 @@ for (const theme of THEMES_WITH_PAPER) {
   test(`the bulk-job panel mid-way, and the Re-trigger question — ${theme}`, async ({ page }) => {
     const tracked = retriggerWorld()
     const { api, errors } = await openRollout(page, `/runs?bulk_job=${BULK_JOB_IDS[0]}`, { theme, handlers: tracked.handlers, ready: runsReady })
-    const panel = page.getByRole('region', { name: 'Bulk AI analysis' })
+    const panel = page.getByRole('region', { name: 'Bulk analysis' })
     await expect(panel).toContainText('2 completed · 1 passed · 1 failed · 2 running · 1 not started')
     await expect(panel.getByRole('meter', { name: 'Pipelines started of those queued' })).toBeVisible()
     await blur(page)
@@ -44,7 +44,7 @@ for (const theme of THEMES_WITH_PAPER) {
     await page.getByRole('button', { name: 'More actions' }).click()
     await page.getByRole('menuitem', { name: `Re-trigger all matching (${runs().length})` }).click()
     const confirm = page.getByTestId('runs-retrigger-confirm')
-    await expect(confirm).toContainText(`Re-trigger the AI pipeline for ${runs().length} runs matching this filter?`)
+    await expect(confirm).toContainText(`Re-trigger the analysis pipeline for ${runs().length} runs matching this filter?`)
     await blur(page)
     await visualRegion(page, 'runs-retrigger-confirm', theme, confirm)
     expect(world.state.writes).toEqual([])

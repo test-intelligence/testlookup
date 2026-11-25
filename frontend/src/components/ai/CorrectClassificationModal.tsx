@@ -123,16 +123,16 @@ export default function CorrectClassificationModal({
       <div className="max-w-2xl">
         {isLoading && !skipLookup ? (
           <p className="mt-4 text-sm text-[var(--color-text-muted)]">
-            Looking up the AI analysis…
+            Looking up the analysis…
           </p>
         ) : isError && !skipLookup ? (
           <p className="mt-4 text-sm" style={{ color: 'var(--gate-no-go)' }}>
-            Could not look up the AI analysis — try again in a moment.
+            Could not look up the analysis — try again in a moment.
           </p>
         ) : !analysisId ? (
           <p className="mt-4 text-sm text-[var(--color-text-secondary)]">
-            No AI analysis recorded for this test yet. Corrections overwrite an
-            existing AI suggestion — once the analyzer has triaged a failure of
+            No analysis recorded for this test yet. Corrections overwrite an
+            existing suggestion — once the analyzer has triaged a failure of
             this test, you can correct it here.
           </p>
         ) : (

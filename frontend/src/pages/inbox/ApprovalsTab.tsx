@@ -48,7 +48,7 @@ export default function ApprovalsTab() {
     return (
       <ProjectRequiredEmptyState
         icon={<ClipboardCheck className="h-10 w-10" />}
-        description="Approvals belong to one project. Pick the project whose AI reports, quarantine proposals, test-case reviews and defect promotions you want to decide."
+        description="Approvals belong to one project. Pick the project whose run reports, quarantine proposals, test-case reviews and defect promotions you want to decide."
       />
     )
   }
@@ -62,7 +62,7 @@ function Approvals({ projectId }: { projectId: string }) {
   const show = (which: Exclude<ApprovalSource, 'all'>) => source === 'all' || source === which
   const options: ChipOption<ApprovalSource>[] = [
     { id: 'all', label: 'All', count: counts.total },
-    { id: 'reports', label: 'AI reports', count: counts.reports },
+    { id: 'reports', label: 'Run reports', count: counts.reports },
     { id: 'quarantine', label: 'Quarantine proposals', count: counts.quarantine },
     { id: 'cases', label: 'Test cases', count: counts.cases },
     ...(isQaLead
@@ -85,7 +85,7 @@ function Approvals({ projectId }: { projectId: string }) {
 
       <div data-primary="" className="space-y-6">
         {show('reports') && (
-          <ApprovalSection id="reports" title="AI reports" count={counts.reports} heading={source === 'all'}>
+          <ApprovalSection id="reports" title="Run reports" count={counts.reports} heading={source === 'all'}>
             <ReviewsBody />
           </ApprovalSection>
         )}

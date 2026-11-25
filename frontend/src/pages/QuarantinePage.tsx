@@ -533,6 +533,9 @@ function QuarantineRow({
  * person, so it never reads "Detected automatically".
  */
 function proposerLine(row: Pick<FlakyQuarantineRead, 'proposed_by_name' | 'detection_method'>): string {
+  // An agent action is proposed by the agent and approved by a person in one step: the person approved it
+  // (and owns the row), so it never reads "Proposed by <approver>" (older rows recorded the approver here).
+  if (row.detection_method === 'agent_action') return 'Proposed by an agent'
   if (row.proposed_by_name) return `Proposed by ${row.proposed_by_name}`
   return row.detection_method === 'manual' ? 'Proposed manually' : 'Detected automatically'
 }

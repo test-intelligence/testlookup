@@ -134,7 +134,7 @@ describe('AIAnalysisPanel', () => {
     permissions.canTriggerLlm = false
     const { aiService } = await import('@/services/aiService')
     render(<AIAnalysisPanel {...DEFAULT_PROPS} />)
-    expect(screen.getByText('AI root cause analysis is available to QA engineers and above.')).toBeInTheDocument()
+    expect(screen.getByText('Root cause analysis is available to QA engineers and above.')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /Analyse Root Cause/i })).toBeNull()
     expect(aiService.getAnalysis).not.toHaveBeenCalled()
   })
@@ -156,9 +156,10 @@ describe('AIAnalysisPanel', () => {
       expect(await screen.findByRole('button', { name: /Analyse Root Cause/i })).toBeInTheDocument()
     })
 
-    it('shows AI Root Cause Analysis heading', async () => {
+    it('shows the Root Cause Analysis heading, with no "AI" (D-13: the default engine is rules)', async () => {
       render(<AIAnalysisPanel {...DEFAULT_PROPS} />)
-      expect(await screen.findByText('AI Root Cause Analysis')).toBeInTheDocument()
+      expect(await screen.findByText('Root Cause Analysis')).toBeInTheDocument()
+      expect(screen.queryByText(/\bAI\b/)).toBeNull()
     })
   })
 

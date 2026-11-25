@@ -275,7 +275,7 @@ export default function RunComparePage() {
           {!compare.ai_report && !canTriggerLlm && (
             <p data-ai-report-not-generated="" className="text-xs text-[var(--color-text-muted)] m-0 flex items-center gap-1.5">
               <Info className="h-3.5 w-3.5 shrink-0" />
-              No AI comparison report exists for these runs yet. One is created when a QA engineer or above opens this comparison.
+              No comparison report exists for these runs yet. One is created when a QA engineer or above opens this comparison.
             </p>
           )}
           {/* W03 AIH-03/04: both runs' AI analyses side by side and what changed between them. */}
@@ -469,7 +469,7 @@ function AIReportPanel({ report }: { report: RunCompareAIReport }) {
       <div className="flex items-center gap-2">
         <Sparkles className="h-4 w-4 text-[var(--color-accent)]" />
         <div className="min-w-0">
-          <div className="text-sm font-semibold text-[var(--color-text)]">AI Comparison Report</div>
+          <div className="text-sm font-semibold text-[var(--color-text)]">Comparison Report</div>
           <p className="text-xs text-[var(--color-text-muted)] m-0">
             {report.status === 'queued'
               ? report.message || 'Report generation is queued.'
@@ -488,7 +488,7 @@ function AIReportPanel({ report }: { report: RunCompareAIReport }) {
           {/* W03 AIH-03: the v2 report's AI-analysis changes (computed server-side, deterministic). */}
           {(report.ai_changes ?? []).length > 0 && (
             <div data-ai-report-changes="">
-              <MiniList title="AI analysis changes" items={report.ai_changes ?? []} max={12} />
+              <MiniList title="Analysis changes" items={report.ai_changes ?? []} max={12} />
             </div>
           )}
         </>

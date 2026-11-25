@@ -583,6 +583,9 @@ generate_ai_strategy_task(self, project_id: str, author_id: str, project_context
 
 Scheduled task (beat 00:05 UTC): one coverage snapshot a project a UTC day (W08 TRND-07).
 
+``project_id`` limits the sweep to that one (live) project: a committed history import queues it, so
+the imported days get their points the same day instead of at the next 00:05 UTC.
+
 For every active project: yesterday and every MISSING day of the last 30,
 computed from live data and UPSERTED (``coverage_snapshot_service``), so a
 second run rewrites a day and never duplicates it; today's partial day is
@@ -593,12 +596,12 @@ the history read is at most its cache TTL stale.
 
 ```python
 celery_app.task(name='app.worker.tasks.take_coverage_snapshot', queue='default', soft_time_limit=1500, time_limit=1800)
-take_coverage_snapshot()
+take_coverage_snapshot(project_id: str | None=None)
 ```
 
 ## reindex_search
 
-[backend/app/worker/tasks.py:4489](../../backend/app/worker/tasks.py#L4489)
+[backend/app/worker/tasks.py:4495](../../backend/app/worker/tasks.py#L4495)
 
 Background task: reindex test cases into ChromaDB for semantic search.
 Uses incremental indexing by default; pass full=True for complete rebuild.
@@ -610,7 +613,7 @@ reindex_search(self, project_id: str | None=None, full: bool=False)
 
 ## rebuild_embedding_generation
 
-[backend/app/worker/tasks.py:4793](../../backend/app/worker/tasks.py#L4793)
+[backend/app/worker/tasks.py:4799](../../backend/app/worker/tasks.py#L4799)
 
 Build the TARGET embedding generation, one ≤ 480 s slice per invocation.
 
@@ -627,7 +630,7 @@ rebuild_embedding_generation(self, generation_tag: str, fence: int)
 
 ## retire_embedding_generations
 
-[backend/app/worker/tasks.py:4918](../../backend/app/worker/tasks.py#L4918)
+[backend/app/worker/tasks.py:4924](../../backend/app/worker/tasks.py#L4924)
 
 Drop the collections of generations retired ≥ RETIRE_GRACE_SECONDS ago.
 
@@ -643,7 +646,7 @@ retire_embedding_generations(self)
 
 ## purge_search_usage_events
 
-[backend/app/worker/tasks.py:4958](../../backend/app/worker/tasks.py#L4958)
+[backend/app/worker/tasks.py:4964](../../backend/app/worker/tasks.py#L4964)
 
 Nightly: delete ``search_query_events`` older than the fixed 30-day window.
 
@@ -658,7 +661,7 @@ purge_search_usage_events(self)
 
 ## sync_knowledge_source
 
-[backend/app/worker/tasks.py:4974](../../backend/app/worker/tasks.py#L4974)
+[backend/app/worker/tasks.py:4980](../../backend/app/worker/tasks.py#L4980)
 
 Fetch content for a KnowledgeSource, chunk, index in ChromaDB, and update sync state.
 
@@ -669,7 +672,7 @@ sync_knowledge_source(self, source_id: str, trigger: str='manual')
 
 ## resync_stale_knowledge_sources
 
-[backend/app/worker/tasks.py:5003](../../backend/app/worker/tasks.py#L5003)
+[backend/app/worker/tasks.py:5009](../../backend/app/worker/tasks.py#L5009)
 
 Periodic task: find stale/failed sources and enqueue individual sync tasks.
 
@@ -688,7 +691,7 @@ resync_stale_knowledge_sources(self)
 
 ## refresh_perf_baselines
 
-[backend/app/worker/tasks.py:5059](../../backend/app/worker/tasks.py#L5059)
+[backend/app/worker/tasks.py:5065](../../backend/app/worker/tasks.py#L5065)
 
 Nightly sweep that extends each per-test duration baseline with
 the newest observations from the TestCase table.
@@ -702,7 +705,7 @@ refresh_perf_baselines(self)
 
 ## deliver_webhook
 
-[backend/app/worker/tasks.py:5091](../../backend/app/worker/tasks.py#L5091)
+[backend/app/worker/tasks.py:5097](../../backend/app/worker/tasks.py#L5097)
 
 Deliver a single webhook subscription event.
 
@@ -718,7 +721,7 @@ deliver_webhook(self, delivery_id: str, dispatch_token: str | None=None)
 
 ## run_flaky_quarantine_maintenance
 
-[backend/app/worker/tasks.py:5151](../../backend/app/worker/tasks.py#L5151)
+[backend/app/worker/tasks.py:5157](../../backend/app/worker/tasks.py#L5157)
 
 Nightly housekeeping for the flaky auto-quarantine workflow.
 
@@ -748,7 +751,7 @@ run_flaky_quarantine_maintenance(self)
 
 ## train_flaky_confidence_model
 
-[backend/app/worker/tasks.py:5221](../../backend/app/worker/tasks.py#L5221)
+[backend/app/worker/tasks.py:5227](../../backend/app/worker/tasks.py#L5227)
 
 Nightly retrain of the FLK-P3 flaky-confidence model from human
 quarantine approve/reject decisions.
@@ -767,7 +770,7 @@ train_flaky_confidence_model(self)
 
 ## train_ml_classifier
 
-[backend/app/worker/tasks.py:5263](../../backend/app/worker/tasks.py#L5263)
+[backend/app/worker/tasks.py:5269](../../backend/app/worker/tasks.py#L5269)
 
 Train the failure classifier once (``services/ml/trainer.train_classifier``).
 
@@ -789,7 +792,7 @@ train_ml_classifier(self, triggered_by: str='beat')
 
 ## run_integration_health_probes
 
-[backend/app/worker/tasks.py:5375](../../backend/app/worker/tasks.py#L5375)
+[backend/app/worker/tasks.py:5381](../../backend/app/worker/tasks.py#L5381)
 
 Periodic task: probe all configured integrations and record health status.
 
@@ -805,7 +808,7 @@ run_integration_health_probes(self)
 
 ## enrich_run_ocp_metadata
 
-[backend/app/worker/tasks.py:5417](../../backend/app/worker/tasks.py#L5417)
+[backend/app/worker/tasks.py:5423](../../backend/app/worker/tasks.py#L5423)
 
 Fetch the OpenShift pod metadata of a run the sentinel ingest committed.
 
@@ -824,7 +827,7 @@ enrich_run_ocp_metadata(self, run_id: str)
 
 ## sync_jira_defect_statuses
 
-[backend/app/worker/tasks.py:5466](../../backend/app/worker/tasks.py#L5466)
+[backend/app/worker/tasks.py:5472](../../backend/app/worker/tasks.py#L5472)
 
 Periodic task: mirror Jira issue status onto linked OPEN defects.
 
@@ -841,7 +844,7 @@ sync_jira_defect_statuses(self)
 
 ## dispatch_scheduled_digests
 
-[backend/app/worker/tasks.py:5499](../../backend/app/worker/tasks.py#L5499)
+[backend/app/worker/tasks.py:5505](../../backend/app/worker/tasks.py#L5505)
 
 Periodic task: find all digest subscriptions due for delivery and dispatch.
 
@@ -856,7 +859,7 @@ dispatch_scheduled_digests(self)
 
 ## dispatch_weekly_flaky_debt_reviews
 
-[backend/app/worker/tasks.py:5928](../../backend/app/worker/tasks.py#L5928)
+[backend/app/worker/tasks.py:5934](../../backend/app/worker/tasks.py#L5934)
 
 Weekly beat (Mondays 07:10 UTC): send each channel-mapped team its
 flaky-debt review draft through its team notification channel. Teams
@@ -876,7 +879,7 @@ dispatch_weekly_flaky_debt_reviews(self)
 
 ## close_stale_live_sessions
 
-[backend/app/worker/tasks.py:5964](../../backend/app/worker/tasks.py#L5964)
+[backend/app/worker/tasks.py:5970](../../backend/app/worker/tasks.py#L5970)
 
 Periodic safety net for live sessions whose clients forget to send a
 ``run_complete`` event.
@@ -902,7 +905,7 @@ close_stale_live_sessions(self, idle_minutes: int=15)
 
 ## reap_stuck_agent_pipelines
 
-[backend/app/worker/tasks.py:6094](../../backend/app/worker/tasks.py#L6094)
+[backend/app/worker/tasks.py:6100](../../backend/app/worker/tasks.py#L6100)
 
 Reclaim pipelines whose worker stopped renewing its lease (E7.3).
 
@@ -932,7 +935,7 @@ reap_stuck_agent_pipelines(self, stale_minutes: int=30)
 
 ## flag_orphan_test_suites
 
-[backend/app/worker/tasks.py:6255](../../backend/app/worker/tasks.py#L6255)
+[backend/app/worker/tasks.py:6261](../../backend/app/worker/tasks.py#L6261)
 
 Detect and structured-log orphan ``TestSuite`` rows for ops review.
 
@@ -962,7 +965,7 @@ flag_orphan_test_suites(self, min_age_minutes: int=60)
 
 ## reconcile_canonical_deletions
 
-[backend/app/worker/tasks.py:6354](../../backend/app/worker/tasks.py#L6354)
+[backend/app/worker/tasks.py:6360](../../backend/app/worker/tasks.py#L6360)
 
 Nightly safety net for canonical-deletion detection (Phase I follow-up).
 
@@ -989,7 +992,7 @@ reconcile_canonical_deletions(self)
 
 ## drain_active_live_sessions
 
-[backend/app/worker/tasks.py:6437](../../backend/app/worker/tasks.py#L6437)
+[backend/app/worker/tasks.py:6443](../../backend/app/worker/tasks.py#L6443)
 
 Phase 4.5 — drain every active live session's Redis event buffer
 into Postgres ``test_cases`` rows.
@@ -1011,7 +1014,7 @@ drain_active_live_sessions(self)
 
 ## backfill_placeholder_test_cases
 
-[backend/app/worker/tasks.py:6468](../../backend/app/worker/tasks.py#L6468)
+[backend/app/worker/tasks.py:6474](../../backend/app/worker/tasks.py#L6474)
 
 Retroactively synthesize placeholder TestCase rows.
 
@@ -1035,7 +1038,7 @@ backfill_placeholder_test_cases(self, max_runs_per_project: int=500)
 
 ## backfill_suite_executions
 
-[backend/app/worker/tasks.py:6524](../../backend/app/worker/tasks.py#L6524)
+[backend/app/worker/tasks.py:6530](../../backend/app/worker/tasks.py#L6530)
 
 EXEC-02: time every run that predates ``suite_executions`` -- one-shot, chunked, re-entrant.
 
@@ -1060,7 +1063,7 @@ backfill_suite_executions(self, chunk_size: int=500, max_chunks: int=40, time_bu
 
 ## backfill_ai_run_versions
 
-[backend/app/worker/tasks.py:6708](../../backend/app/worker/tasks.py#L6708)
+[backend/app/worker/tasks.py:6714](../../backend/app/worker/tasks.py#L6714)
 
 AIH-01: give every run analysed before AI history existed its first versions -- one-shot,
 chunked, re-entrant.
@@ -1086,7 +1089,7 @@ backfill_ai_run_versions(self, chunk_size: int=100, max_chunks: int=40, time_bud
 
 ## auto_recover_completed_live_runs
 
-[backend/app/worker/tasks.py:6745](../../backend/app/worker/tasks.py#L6745)
+[backend/app/worker/tasks.py:6751](../../backend/app/worker/tasks.py#L6751)
 
 Recover REAL per-test rows from ``TestRun.event_archive`` for
 completed live_stream runs whose ``test_cases`` table is empty.
@@ -1111,7 +1114,7 @@ auto_recover_completed_live_runs(self, lookback_hours: int=24, max_runs: int=100
 
 ## backfill_unassigned_failures
 
-[backend/app/worker/tasks.py:6816](../../backend/app/worker/tasks.py#L6816)
+[backend/app/worker/tasks.py:6822](../../backend/app/worker/tasks.py#L6822)
 
 Retroactively assign FAILED/BROKEN TestCases left unassigned.
 
@@ -1136,7 +1139,7 @@ backfill_unassigned_failures(self, max_runs_per_project: int=200)
 
 ## notify_test_suite_owner
 
-[backend/app/worker/tasks.py:6940](../../backend/app/worker/tasks.py#L6940)
+[backend/app/worker/tasks.py:6946](../../backend/app/worker/tasks.py#L6946)
 
 Dispatch the "test is failing repeatedly" notification email.
 
@@ -1151,7 +1154,7 @@ notify_test_suite_owner(self, *, to_email: str, owner_name: str, test_name: str,
 
 ## run_duplicate_detection
 
-[backend/app/worker/tasks.py:7039](../../backend/app/worker/tasks.py#L7039)
+[backend/app/worker/tasks.py:7045](../../backend/app/worker/tasks.py#L7045)
 
 Phase 4 — tiered duplicate authored-test-case detection per project.
 
@@ -1180,7 +1183,7 @@ run_duplicate_detection(self, project_id: str | None=None, enable_semantic: bool
 
 ## persist_ai_eval_shadow_pair
 
-[backend/app/worker/tasks.py:7366](../../backend/app/worker/tasks.py#L7366)
+[backend/app/worker/tasks.py:7372](../../backend/app/worker/tasks.py#L7372)
 
 Persist one sampled live pair as a pending labelling candidate.
 
@@ -1191,7 +1194,7 @@ persist_ai_eval_shadow_pair(self, *, project_id: str, agent_id: str, sample_key:
 
 ## run_scheduled_agent_eval
 
-[backend/app/worker/tasks.py:7411](../../backend/app/worker/tasks.py#L7411)
+[backend/app/worker/tasks.py:7417](../../backend/app/worker/tasks.py#L7417)
 
 Evaluate the agent stack against the golden datasets, on a schedule (F-11).
 
@@ -1215,7 +1218,7 @@ run_scheduled_agent_eval(self, change_id: str | None=None)
 
 ## run_weekly_agent_quality_drift
 
-[backend/app/worker/tasks.py:7502](../../backend/app/worker/tasks.py#L7502)
+[backend/app/worker/tasks.py:7508](../../backend/app/worker/tasks.py#L7508)
 
 Run G5 and commit capability review pins once each Monday.
 
@@ -1226,7 +1229,7 @@ run_weekly_agent_quality_drift(self)
 
 ## run_candidate_evaluation
 
-[backend/app/worker/tasks.py:7596](../../backend/app/worker/tasks.py#L7596)
+[backend/app/worker/tasks.py:7602](../../backend/app/worker/tasks.py#L7602)
 
 Replay one queued candidate evaluation (W16 AGT-09 b).
 
@@ -1242,7 +1245,7 @@ run_candidate_evaluation(self, run_id: str)
 
 ## reconcile_stale_eval_runs
 
-[backend/app/worker/tasks.py:7636](../../backend/app/worker/tasks.py#L7636)
+[backend/app/worker/tasks.py:7642](../../backend/app/worker/tasks.py#L7642)
 
 Every 10 min: a replay silent for 15 min -> ``partial`` / ``worker_lost``;
 a ``queued`` one never delivered -> ``failed``. Never re-dispatched.
@@ -1254,7 +1257,7 @@ reconcile_stale_eval_runs(self)
 
 ## golden_match_shadow_pairs
 
-[backend/app/worker/tasks.py:7669](../../backend/app/worker/tasks.py#L7669)
+[backend/app/worker/tasks.py:7675](../../backend/app/worker/tasks.py#L7675)
 
 Nightly (03:50 UTC, after the 03:10 ML training): label pending
 ``root_cause:`` shadow pairs from the test case's OWN human feedback
@@ -1267,7 +1270,7 @@ golden_match_shadow_pairs(self)
 
 ## expire_unlabelled_shadow_pairs
 
-[backend/app/worker/tasks.py:7702](../../backend/app/worker/tasks.py#L7702)
+[backend/app/worker/tasks.py:7708](../../backend/app/worker/tasks.py#L7708)
 
 Nightly (02:50 UTC, after the 02:40 search-usage purge): delete PENDING
 shadow pairs older than 30 days, deployment-wide, in committed batches
@@ -1280,7 +1283,7 @@ expire_unlabelled_shadow_pairs(self)
 
 ## generate_report_export
 
-[backend/app/worker/tasks.py:7720](../../backend/app/worker/tasks.py#L7720)
+[backend/app/worker/tasks.py:7726](../../backend/app/worker/tasks.py#L7726)
 
 VIZ-607: render one background report export and store the file.
 
@@ -1298,7 +1301,7 @@ generate_report_export(export_id: str)
 
 ## sweep_report_exports
 
-[backend/app/worker/tasks.py:7736](../../backend/app/worker/tasks.py#L7736)
+[backend/app/worker/tasks.py:7742](../../backend/app/worker/tasks.py#L7742)
 
 VIZ-607: delete report export files and rows past their 7 days.
 
@@ -1311,7 +1314,7 @@ sweep_report_exports()
 
 ## run_retention_purges
 
-[backend/app/worker/tasks.py:7756](../../backend/app/worker/tasks.py#L7756)
+[backend/app/worker/tasks.py:7762](../../backend/app/worker/tasks.py#L7762)
 
 Hourly retention purge sweep (the ``:00`` beat), or a single-project
 execute-mode purge when enqueued from the router with ``project_id``.
@@ -1329,7 +1332,7 @@ run_retention_purges(self, project_id: str | None=None)
 
 ## calibrate_flaky_classifiers
 
-[backend/app/worker/tasks.py:7784](../../backend/app/worker/tasks.py#L7784)
+[backend/app/worker/tasks.py:7790](../../backend/app/worker/tasks.py#L7790)
 
 Measure how well the flaky classifier actually works, per project.
 
@@ -1348,7 +1351,7 @@ calibrate_flaky_classifiers(self, project_id: str | None=None)
 
 ## recompute_flaky_scores
 
-[backend/app/worker/tasks.py:7858](../../backend/app/worker/tasks.py#L7858)
+[backend/app/worker/tasks.py:7864](../../backend/app/worker/tasks.py#L7864)
 
 Recompute the continuous flakiness score per project (roadmap Phase 2).
 
@@ -1366,7 +1369,7 @@ recompute_flaky_scores(self, project_id: str | None=None)
 
 ## recompute_systemic_clusters
 
-[backend/app/worker/tasks.py:7923](../../backend/app/worker/tasks.py#L7923)
+[backend/app/worker/tasks.py:7929](../../backend/app/worker/tasks.py#L7929)
 
 Rebuild systemic co-failure clusters per project (roadmap Phase 3).
 
@@ -1383,7 +1386,7 @@ recompute_systemic_clusters(self, project_id: str | None=None)
 
 ## screen_new_test_fingerprints
 
-[backend/app/worker/tasks.py:8004](../../backend/app/worker/tasks.py#L8004)
+[backend/app/worker/tasks.py:8010](../../backend/app/worker/tasks.py#L8010)
 
 Tier 1 of roadmap Phase 6: screen the new and directly-modified.
 
@@ -1405,7 +1408,7 @@ screen_new_test_fingerprints(self, project_id: str | None=None)
 
 ## sweep_flaky_detection
 
-[backend/app/worker/tasks.py:8087](../../backend/app/worker/tasks.py#L8087)
+[backend/app/worker/tasks.py:8093](../../backend/app/worker/tasks.py#L8093)
 
 Tier 2 of roadmap Phase 6: the continuous whole-corpus pass.
 
@@ -1428,7 +1431,7 @@ sweep_flaky_detection(self, project_id: str | None=None)
 
 ## delete_run_everywhere
 
-[backend/app/worker/tasks.py:8168](../../backend/app/worker/tasks.py#L8168)
+[backend/app/worker/tasks.py:8174](../../backend/app/worker/tasks.py#L8174)
 
 Delete ONE run across all five stores. Irreversible.
 
@@ -1458,7 +1461,7 @@ delete_run_everywhere(self, run_id: str, job_id: str | None=None, reason: str=''
 
 ## sweep_deletion_exports
 
-[backend/app/worker/tasks.py:8467](../../backend/app/worker/tasks.py#L8467)
+[backend/app/worker/tasks.py:8473](../../backend/app/worker/tasks.py#L8473)
 
 The export janitor (W22b ACT-03 E-10, every 15 minutes): expire
 uncollected archives (their jobs end ``expired``, nothing deleted), fail
@@ -1472,7 +1475,7 @@ sweep_deletion_exports(self)
 
 ## execute_criteria_deletion_task
 
-[backend/app/worker/tasks.py:8485](../../backend/app/worker/tasks.py#L8485)
+[backend/app/worker/tasks.py:8491](../../backend/app/worker/tasks.py#L8491)
 
 Replay a frozen candidate set, one run at a time.
 
@@ -1494,7 +1497,7 @@ execute_criteria_deletion_task(self, job_id: str, project_id: str, requested_by_
 
 ## reconcile_active_releases
 
-[backend/app/worker/tasks.py:8785](../../backend/app/worker/tasks.py#L8785)
+[backend/app/worker/tasks.py:8791](../../backend/app/worker/tasks.py#L8791)
 
 Sweep for projects with no active release, repair them, and REPORT.
 
@@ -1522,7 +1525,7 @@ reconcile_active_releases(self)
 
 ## reconcile_primary_releases
 
-[backend/app/worker/tasks.py:8877](../../backend/app/worker/tasks.py#L8877)
+[backend/app/worker/tasks.py:8883](../../backend/app/worker/tasks.py#L8883)
 
 Repair drift between ``test_runs.primary_release_id`` and the link table.
 
@@ -1544,7 +1547,7 @@ reconcile_primary_releases(self)
 
 ## reconcile_release_sort_keys
 
-[backend/app/worker/tasks.py:8964](../../backend/app/worker/tasks.py#L8964)
+[backend/app/worker/tasks.py:8970](../../backend/app/worker/tasks.py#L8970)
 
 Fill in ``releases.sort_key`` for rows that have none.
 
@@ -1567,7 +1570,7 @@ reconcile_release_sort_keys(self)
 
 ## run_agent_invocation
 
-[backend/app/worker/tasks.py:9033](../../backend/app/worker/tasks.py#L9033)
+[backend/app/worker/tasks.py:9039](../../backend/app/worker/tasks.py#L9039)
 
 Run one agent invoked through ``POST /api/v1/agents/{agent_id}/invoke`` (E1.2).
 
@@ -1584,7 +1587,7 @@ run_agent_invocation(self, invocation_id: str)
 
 ## detect_cross_run_insights
 
-[backend/app/worker/tasks.py:9298](../../backend/app/worker/tasks.py#L9298)
+[backend/app/worker/tasks.py:9304](../../backend/app/worker/tasks.py#L9304)
 
 Scheduled task (beat, hourly at :40): the cross-run insights (W23a FAIL-11).
 
@@ -1601,7 +1604,7 @@ detect_cross_run_insights(self)
 
 ## check_run_cadences
 
-[backend/app/worker/tasks.py:9327](../../backend/app/worker/tasks.py#L9327)
+[backend/app/worker/tasks.py:9333](../../backend/app/worker/tasks.py#L9333)
 
 Scheduled task (beat, every 15 min at :07 / :22 / :37 / :52): the
 expected run cadences (W23a TRND-03).
@@ -1619,7 +1622,7 @@ check_run_cadences(self)
 
 ## export_project_data
 
-[backend/app/worker/tasks.py:9354](../../backend/app/worker/tasks.py#L9354)
+[backend/app/worker/tasks.py:9360](../../backend/app/worker/tasks.py#L9360)
 
 Build, sign, store and verify one project export (``project_data_jobs`` row ``job_id``).
 
@@ -1636,7 +1639,7 @@ export_project_data(job_id: str)
 
 ## import_project_data
 
-[backend/app/worker/tasks.py:9368](../../backend/app/worker/tasks.py#L9368)
+[backend/app/worker/tasks.py:9374](../../backend/app/worker/tasks.py#L9374)
 
 Import one uploaded export as a NEW project, in ONE transaction (``project_data_jobs`` row ``job_id``).
 Claim-guarded like the export; a failure rolls the whole project back and is recorded on the row.
@@ -1648,7 +1651,7 @@ import_project_data(job_id: str)
 
 ## sweep_project_data_jobs
 
-[backend/app/worker/tasks.py:9377](../../backend/app/worker/tasks.py#L9377)
+[backend/app/worker/tasks.py:9383](../../backend/app/worker/tasks.py#L9383)
 
 The project-data janitor (hourly at :35): expire exports past 72 hours (the ONLY expiry path),
 remove uploads and objects no job may keep, fail jobs a dead worker left ``running``, re-send jobs
@@ -1661,7 +1664,7 @@ sweep_project_data_jobs()
 
 ## run_suite_membership_parity
 
-[backend/app/worker/tasks.py:9401](../../backend/app/worker/tasks.py#L9401)
+[backend/app/worker/tasks.py:9407](../../backend/app/worker/tasks.py#L9407)
 
 Compare the legacy suite memberships with the canonical model (beat daily at 06:15 UTC, or "Compare now").
 
@@ -1679,7 +1682,7 @@ run_suite_membership_parity(self, trigger: str='beat', requested_by_id: str | No
 
 ## export_subject_data
 
-[backend/app/worker/tasks.py:9429](../../backend/app/worker/tasks.py#L9429)
+[backend/app/worker/tasks.py:9435](../../backend/app/worker/tasks.py#L9435)
 
 Build, sign, store and verify one person's data export (``subject_rights_jobs`` row ``job_id``).
 
@@ -1694,7 +1697,7 @@ export_subject_data(job_id: str)
 
 ## erase_subject_data
 
-[backend/app/worker/tasks.py:9441](../../backend/app/worker/tasks.py#L9441)
+[backend/app/worker/tasks.py:9447](../../backend/app/worker/tasks.py#L9447)
 
 Run the erasure phases after the lock-out (``subject_rights_jobs`` row ``job_id``): Postgres, objects,
 Redis, done — each committed on the job row, each idempotent. Claim-guarded; a phase that raises leaves the
@@ -1707,7 +1710,7 @@ erase_subject_data(job_id: str)
 
 ## sweep_subject_rights_jobs
 
-[backend/app/worker/tasks.py:9451](../../backend/app/worker/tasks.py#L9451)
+[backend/app/worker/tasks.py:9457](../../backend/app/worker/tasks.py#L9457)
 
 The subject-rights janitor (hourly at :50): expire exports past 72 hours (the ONLY expiry path), remove
 the objects of failed / expired exports, fail an export a dead worker left ``running``, re-send a queued
@@ -1720,7 +1723,7 @@ sweep_subject_rights_jobs()
 
 ## watch_drop_folders
 
-[backend/app/worker/tasks.py:9614](../../backend/app/worker/tasks.py#L9614)
+[backend/app/worker/tasks.py:9620](../../backend/app/worker/tasks.py#L9620)
 
 Scheduled task (beat, every minute): the drop-folder polling watcher (W34 STRAT-13).
 

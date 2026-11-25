@@ -163,7 +163,7 @@ export default function TestCaseBody({ runId, testId, compact = false }: TestCas
         </div>
 
         <div className="min-w-0 space-y-2">
-          <h2 className="text-sm font-semibold text-[var(--color-text-secondary)]">AI root cause</h2>
+          <h2 className="text-sm font-semibold text-[var(--color-text-secondary)]">Root cause</h2>
           {isFailed ? (
             <AIAnalysisPanel
               testCaseId={tc.id}
@@ -175,7 +175,7 @@ export default function TestCaseBody({ runId, testId, compact = false }: TestCas
             />
           ) : (
             <div className="card text-center py-10 text-[var(--color-text-muted)]">
-              <p className="text-sm">AI analysis is only available for failed or broken tests</p>
+              <p className="text-sm">Analysis is only available for failed or broken tests</p>
             </div>
           )}
         </div>

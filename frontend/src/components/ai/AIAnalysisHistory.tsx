@@ -40,7 +40,7 @@ function DiffDrawer({ runId, versions, viewed, compare, onClose }: {
     <div
       data-ai-diff-drawer=""
       role="region"
-      aria-label="Compare AI analyses"
+      aria-label="Compare analyses"
       className="mt-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-bg-secondary)] p-3"
     >
       <div className="mb-2 flex items-center gap-2">
@@ -99,7 +99,7 @@ export default function AIAnalysisHistory({ runId }: { runId: string }) {
       <div className="rounded-xl border border-[var(--color-border)] bg-[var(--color-bg-card)] px-4 py-2.5">
         {history.error ? (
           <p data-ai-history-unavailable="" className="m-0 flex items-center gap-2 text-xs text-[var(--color-text-muted)]">
-            The AI history of this run is unavailable right now.
+            The analysis history of this run is unavailable right now.
             <button
               type="button"
               onClick={() => void history.mutate()}

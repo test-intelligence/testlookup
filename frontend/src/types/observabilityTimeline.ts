@@ -59,7 +59,7 @@ export const UNTIMED_REASON_LABELS = {
 
 /** The card's region name (never "Timeline" or "Evidence" alone: those name a region / a tab already). */
 export const CARD_TITLE = 'Observability evidence'
-export const HEADER_SENTENCE = 'Evidence the AI analysis already fetched — nothing is fetched when you open this card.'
+export const HEADER_SENTENCE = 'Evidence the analysis already fetched — nothing is fetched when you open this card.'
 /** `offline_now` — labelled "now", never presented as the state at analysis time. */
 export const OFFLINE_NOW_SENTENCE = 'AI offline mode is on, so analyses fetch no observability evidence.'
 /** The heading of a lane's untimed list. */

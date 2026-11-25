@@ -156,7 +156,7 @@ The deep-investigation buttons are offered only while **Deep Investigation** is 
 
 ## Pipeline runs
 
-**Pipeline runs** (`/agents`, listed under **AI** in the settings index) lists every AI pipeline run in the projects you can see, newest first. Pick a run under **Test suite & build** to see only its pipelines and to enable **Trigger pipeline**. The badge next to it shows the analysis mode in use (**LLM Mode**, **ML Mode**, **Rules Mode** or **Auto Mode**).
+**Pipeline runs** (`/agents`, listed under **AI** in the settings index) lists every analysis pipeline run in the projects you can see, newest first. Pick a run under **Test suite & build** to see only its pipelines and to enable **Trigger pipeline**. The badge next to it shows the analysis mode in use (**LLM Mode**, **ML Mode**, **Rules Mode** or **Auto Mode**).
 
 Each pipeline shows its type, run, suite, start time, duration and status (**IN PROGRESS**, **COMPLETED**, **FAILED** or **PASSED**), plus **DEGRADED** when a stage fell back, **awaiting review** when its report is waiting for a human decision, and **retrying** while it retries. Select one to read its **AI Report** (**View AI report**), its **Agent stages** (each stage, its timing, the compute graph and the raw stage records) and its **Workflow Progress**.
 
@@ -165,11 +165,11 @@ With the `QA_ENGINEER` role or above you can act on a pipeline from its row:
 - **Retry** is offered on a **FAILED** pipeline and on a **COMPLETED** one marked **DEGRADED**. The server decides what happens. If the analysis configuration is the same as when the pipeline started, the pipeline **resumes** and keeps the stages it already completed (the row reads "Resumed (attempt 2/5)"). If the configuration changed since then (for example the confidence threshold or the timeout under **Settings › AI**), it **starts a new run** instead. A pipeline that was rejected in review, finished successfully, or reached its attempt limit is not retried: the row says why and offers **Start a new run**.
 - **Stop** is offered while a pipeline is in progress, and asks you to confirm. A queued pipeline stops at once. A running one shows **stopping** and ends at its next stage boundary. A stopped pipeline ends **FAILED** and is not resumed: its row offers **Start a new run** instead of **Retry**.
 
-Both actions are recorded in the project's activity ("AI analysis for … was retried", "… was cancelled").
+Both actions are recorded in the project's activity ("Analysis for … was retried", "… was cancelled").
 
 The same report and stages for one run are on that run's **Evidence** tab. Anyone with access to the project can read this page.
 
-Above the AI report, one line names the workflow the pipeline ran and why: `Workflow wf.my-fork@3 · project default`, `· built-in`, `· chosen for this run`, or `· built-in — the default was unavailable` (hover for the reason). Pipelines from before this line existed show none.
+Above the run report, one line names the workflow the pipeline ran and why: `Workflow wf.my-fork@3 · project default`, `· built-in`, `· chosen for this run`, or `· built-in — the default was unavailable` (hover for the reason). Pipelines from before this line existed show none.
 
 ## Audit and Compare
 
@@ -206,7 +206,7 @@ Only a fork of the same project can be its default, and only for its own base: a
 
 ## The Investigator and the Fixer
 
-Two further agents can act on a project's failures beyond the analysis pipeline: the **Investigator** (reasons about clusters of failures) and the **Fixer** (proposes validated fixes for flaky tests as draft pull requests). The Investigator also starts on its own when a test newly fails, except for a run uploaded with **Skip AI analysis**. Their policies, autonomy levels and budgets are per project under **Admin → AI → AI agents**, and what they did is under **Agent activity**; see [Settings and administration](/docs/administration#ai).
+Two further agents can act on a project's failures beyond the analysis pipeline: the **Investigator** (reasons about clusters of failures) and the **Fixer** (proposes validated fixes for flaky tests as draft pull requests). The Investigator also starts on its own when a test newly fails, except for a run uploaded with **Skip analysis**. Their policies, autonomy levels and budgets are per project under **Admin → AI → AI agents**, and what they did is under **Agent activity**; see [Settings and administration](/docs/administration#ai).
 
 ### The trust ladder in practice
 
@@ -222,7 +222,7 @@ Decision-report items in the same queue are acknowledged rather than executed: a
 
 - Every AI-produced category or explanation can be **corrected**; the correction is stored alongside the original.
 - Decision reports carry their evidence, so a reviewer can check the reasoning rather than the wording.
-- Every AI report is a **review request**: a QA lead can accept or reject it from the Inbox's **Approvals** tab, and the report carries a banner saying whether it is a draft, accepted, rejected or superseded. An administrator can make review mandatory before a report is distributed. See [Your inbox and approvals](/docs/inbox#approvals).
+- Every run report is a **review request**: a QA lead can accept or reject it from the Inbox's **Approvals** tab, and the report carries a banner saying whether it is a draft, accepted, rejected or superseded. An administrator can make review mandatory before a report is distributed. See [Your inbox and approvals](/docs/inbox#approvals).
 - Nothing an agent produces is treated as final by the release gate — see [Releases and gates](/docs/releases).
 
 ## Related

@@ -37,12 +37,12 @@ export const WOULD_REFUSE_WINDOW_DAYS = 30
 
 /** The page's sentences; `{runs}`, `{decisions}`, `{date}` are filled by the page. */
 export const GATE_SENTENCES = {
-  unset: "Audit only — nothing is withheld. {runs} runs' AI reports would have been withheld in the last 30 days ({decisions} distribution attempts).",
-  scheduled: "Audit only until {date} — then unreviewed AI reports are withheld. {runs} runs' AI reports would have been withheld in the last 30 days ({decisions} distribution attempts).",
-  date: 'Enforced since {date}: unreviewed AI reports are withheld on the channels below.',
+  unset: "Audit only — nothing is withheld. {runs} runs' reports would have been withheld in the last 30 days ({decisions} distribution attempts).",
+  scheduled: "Audit only until {date} — then unreviewed run reports are withheld. {runs} runs' reports would have been withheld in the last 30 days ({decisions} distribution attempts).",
+  date: 'Enforced since {date}: unreviewed run reports are withheld on the channels below.',
   env: 'Enforced by the server setting REVIEW_GATE_ENFORCED — the date below does not apply while it is on.',
   not_measured: 'Not measured: the audit log could not be read.',
-  past_date_warning: 'Setting a date in the past enforces the gate at once: CI reads PENDING_REVIEW for every unreviewed AI decision, and PDF and shared links of unreviewed reports are refused.',
+  past_date_warning: 'Setting a date in the past enforces the gate at once: CI reads PENDING_REVIEW for every unreviewed decision, and PDF and shared links of unreviewed reports are refused.',
 } as const
 
 /** detail = {code, message} on a 403 / 422 of the PUT (`extractErrorMessage` reads the message). */

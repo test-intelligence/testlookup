@@ -376,7 +376,7 @@ describe('CanonicalDetailPage — AI category per run', () => {
       ai_truncated: false,
     })
     const headers = Array.from(container.querySelectorAll('thead th')).map((th) => th.textContent)
-    expect(headers.slice(0, 4)).toEqual(['Status', 'Run', 'Duration', 'AI category'])
+    expect(headers.slice(0, 4)).toEqual(['Status', 'Run', 'Duration', 'Failure category'])
 
     const cells = Array.from(container.querySelectorAll<HTMLElement>('td[data-canonical-ai]'))
     expect(cells.map((td) => td.dataset.canonicalAi)).toEqual(['PRODUCT_BUG', 'uncategorized', ''])
@@ -400,7 +400,7 @@ describe('CanonicalDetailPage — AI category per run', () => {
   it('says when only the newest rows carry the AI category', async () => {
     const { container } = await renderWith({ items: [row(1, { ai: AI }), row(2, { ai: null })], total: 2500, ai_truncated: true })
     expect(container.querySelector('[data-canonical-ai-truncated]')).toHaveTextContent(
-      'AI category is shown for the newest 2,000 runs only',
+      'Failure category is shown for the newest 2,000 runs only',
     )
   })
 

@@ -106,7 +106,7 @@ export default function AIVersionSnapshot({ runId, version }: { runId: string; v
     return (
       <div data-ai-snapshot="" data-ai-snapshot-version={version} className="space-y-3">
         {banner}
-        <EmptyState title="The AI history is unavailable" description="The stored versions could not be read. Try again in a moment." />
+        <EmptyState title="The analysis history is unavailable" description="The stored versions could not be read. Try again in a moment." />
       </div>
     )
   }
@@ -137,7 +137,7 @@ export default function AIVersionSnapshot({ runId, version }: { runId: string; v
         <p className="m-0 text-base font-semibold text-[var(--color-text)]">
           {verdict?.recommendation ?? 'No verdict was recorded'}
           {verdict?.risk_score != null && <span className="ml-2 text-xs font-normal text-[var(--color-text-muted)]">risk {verdict.risk_score}/100</span>}
-          {verdict?.overridden && <span className="ml-2 text-2xs font-normal text-[var(--color-text-muted)]">(the AI verdict before a human override)</span>}
+          {verdict?.overridden && <span className="ml-2 text-2xs font-normal text-[var(--color-text-muted)]">(the verdict before a human override)</span>}
         </p>
         <p className="m-0 mt-1 text-2xs text-[var(--color-text-muted)]">
           {digest.analysed_tests} analysed test{digest.analysed_tests === 1 ? '' : 's'}

@@ -276,7 +276,7 @@ const ROUTES: FoldRoute[] = [
     route: '/agents',
     path: `/agents?run=${RUN_ID}`,
     handlers: () => agentsHandlers(),
-    ready: (p) => p.getByRole('region', { name: 'AI report' }).getByText(AI_REPORT_SUMMARY),
+    ready: (p) => p.getByRole('region', { name: 'Run report' }).getByText(AI_REPORT_SUMMARY),
     // 1,288 / 1,288.
     budget: 1_300,
     table: false,

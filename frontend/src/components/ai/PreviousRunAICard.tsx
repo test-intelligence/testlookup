@@ -261,7 +261,7 @@ export default function PreviousRunAICard({
           {testRows.length > 0 && (
             <div data-previous-tests-changed="">
               <p className="m-0 eyebrow uppercase text-[var(--color-text-muted)]">
-                Tests whose AI conclusion changed ({testRows.length})
+                Tests whose conclusion changed ({testRows.length})
               </p>
               <ul className="m-0 list-none p-0">
                 {testRows.slice(0, MAX_TEST_ROWS).map((row) => (

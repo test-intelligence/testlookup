@@ -56,7 +56,7 @@ test('a QA lead: the Defects source lists the pending defect, with why it waits,
   await expect(row.getByRole('link', { name: 'Open run' })).toHaveAttribute('href', `/runs/${PENDING_DEFECT_RUN_ID}?tab=analysis`)
   await expect(section(page).getByRole('link', { name: 'Open Defects' })).toHaveAttribute('href', /^\/defects/)
   // One source at a time: the other three are not shown.
-  for (const other of ['AI reports', 'Quarantine proposals', 'Test cases']) {
+  for (const other of ['Run reports', 'Quarantine proposals', 'Test cases']) {
     await expect(page.locator('[data-primary]').getByRole('region', { name: other })).toHaveCount(0)
   }
   await networkQuiet(page, api)

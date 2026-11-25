@@ -128,7 +128,7 @@ export const PENDING_ACTIONS_FIXTURE: AgentActionList = list([
     proposing_review_state: 'pending_review',
     target: { kind: 'test_case', id: 'tc-a1', label: 'payment-refund', href: `/runs/${RUN}?tab=tests` },
     approvable: false,
-    approve_blocked_reason: 'Accept the AI report first: an approved action runs only on an accepted report.',
+    approve_blocked_reason: 'Accept the run report first: an approved action runs only on an accepted report.',
   }),
   agentActionFixture({
     id: 'act-d1',

@@ -40,7 +40,7 @@ The deep pipeline ends with a critic that checks the report against the plan the
 
 > **Important.** If that verification fails, the report is **withheld** rather than published, and the run is marked `partial`. A missing report is a deliberate signal, not a glitch.
 
-Every AI report is also a **review request** for a human. Until a QA lead accepts it, the report carries a **Draft: awaiting human review** banner; see [Your inbox and approvals](/docs/inbox#ai-reports).
+Every run report is also a **review request** for a human. Until a QA lead accepts it, the report carries a **Draft: awaiting human review** banner; see [Your inbox and approvals](/docs/inbox#run-reports).
 
 ## Freshness and regeneration
 
@@ -95,7 +95,7 @@ Hours saved is the sum of three parts, each *count × minutes ÷ 60*:
 | **Quarantine** | Runs whose every failing test was in an active quarantine at the time (a proxy for "runs not blocked") | 30 per run |
 | **Dedup** | Duplicate failures absorbed into an existing cluster (cluster size minus one) | 15 per duplicate |
 
-The full-time equivalent divides the hours by 173.2 working hours a month. AI analyses are shown for context but not multiplied into any part, so a failure is not counted twice.
+The full-time equivalent divides the hours by 173.2 working hours a month. Analyses are shown for context but not multiplied into any part, so a failure is not counted twice.
 
 Read it honestly:
 

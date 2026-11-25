@@ -21,7 +21,7 @@ import { formatDay, formatNumber } from '@/utils/formatters'
 
 export const PAGE_TITLE = 'Review gate'
 export const PAGE_SUBTITLE =
-  'When unreviewed AI reports stop leaving TestLookup. Until a date is set nothing is withheld; would-be refusals are only counted.'
+  'When unreviewed reports stop leaving TestLookup. Until a date is set nothing is withheld; would-be refusals are only counted.'
 export const STATE_TITLE = 'Current state'
 export const DATE_TITLE = 'Enforcement date'
 export const CHANNELS_TITLE = 'Gated channels'
@@ -149,7 +149,7 @@ export function stateLines(gate: ReviewGateRead): string[] {
   }
   let line = fill(template, { date, runs: formatNumber(summary.runs), decisions: formatNumber(summary.decisions) })
   // The shared template is plural; one run or one attempt reads in the singular (W23c demo: "1 runs' AI reports").
-  if (summary.runs === 1) line = line.replace(" 1 runs' AI reports", " 1 run's AI reports")
+  if (summary.runs === 1) line = line.replace(" 1 runs' reports", " 1 run's reports")
   if (summary.decisions === 1) line = line.replace('(1 distribution attempts)', '(1 distribution attempt)')
   return [line]
 }

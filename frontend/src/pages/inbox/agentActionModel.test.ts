@@ -140,11 +140,11 @@ describe('the confirm and undo questions', () => {
 })
 
 describe('the review fact and the links', () => {
-  it('states the proposing report and links only an awaiting one to AI reports', () => {
-    expect(reviewFact(row({ proposing_review_state: 'accepted' }))).toEqual({ text: 'AI report: accepted', linkToReports: false })
-    expect(reviewFact(row({ proposing_review_state: 'pending_review' }))).toEqual({ text: 'AI report: awaiting review', linkToReports: true })
-    expect(reviewFact(row({ proposing_review_state: 'rejected' })).text).toBe('AI report: rejected')
-    expect(reviewFact(row({ proposing_review_state: 'none' })).text).toBe('no AI report')
+  it('states the proposing report and links only an awaiting one to Run reports', () => {
+    expect(reviewFact(row({ proposing_review_state: 'accepted' }))).toEqual({ text: 'Run report: accepted', linkToReports: false })
+    expect(reviewFact(row({ proposing_review_state: 'pending_review' }))).toEqual({ text: 'Run report: awaiting review', linkToReports: true })
+    expect(reviewFact(row({ proposing_review_state: 'rejected' })).text).toBe('Run report: rejected')
+    expect(reviewFact(row({ proposing_review_state: 'none' })).text).toBe('no run report')
   })
 
   it('takes only an internal path from the server, else builds the run page from ids', () => {

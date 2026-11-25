@@ -205,11 +205,11 @@ describe('UploadReportModal', () => {
     expect(screen.getByRole('button', { name: 'Close' }), 'the X waits too').toBeDisabled()
   })
 
-  it('says that Skip AI analysis also skips the automatic investigation, and sends run_ai=false (D-0006)', async () => {
+  it('says that Skip analysis also skips the automatic investigation, and sends run_ai=false (D-0006)', async () => {
     const { input, uploadBtn } = setup()
-    const skip = screen.getByRole('checkbox', { name: /Skip AI analysis/ })
+    const skip = screen.getByRole('checkbox', { name: /Skip analysis/ })
     const label = skip.closest('label') as HTMLElement
-    expect(label.textContent).toContain('no AI analysis, comparison report or automatic investigation for this run')
+    expect(label.textContent).toContain('no analysis, comparison report or automatic investigation for this run')
     selectFile(input, new File(['<testsuite/>'], 'junit.xml', { type: 'text/xml' }))
     fireEvent.click(skip)
     fireEvent.click(uploadBtn())

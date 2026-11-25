@@ -145,13 +145,13 @@ export default function TestAIVersionsPopover({
       data-test-ai-popover=""
       data-run-id={runId ?? ''}
       role="region"
-      aria-label={`AI analysis versions for ${runLabel}`}
+      aria-label={`Analysis versions for ${runLabel}`}
       className="space-y-2 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-card)] p-3 text-xs shadow-lg"
     >
       <div className="flex items-start gap-2">
         <div className="min-w-0 flex-1 space-y-1">
           <p className="eyebrow uppercase text-[var(--color-text-muted)]">
-            AI analysis on {runLabel}
+            Analysis on {runLabel}
           </p>
           <div data-test-ai-current="" className="flex flex-wrap items-center gap-1.5">
             <AICategoryChip category={ai.category} />
@@ -175,7 +175,7 @@ export default function TestAIVersionsPopover({
         <button
           type="button"
           onClick={onClose}
-          aria-label="Close AI versions"
+          aria-label="Close analysis versions"
           className="shrink-0 text-[var(--color-text-muted)] hover:text-[var(--color-text)]"
         >
           <X className="h-3.5 w-3.5" />

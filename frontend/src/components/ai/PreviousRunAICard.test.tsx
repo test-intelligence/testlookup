@@ -141,10 +141,10 @@ describe('PreviousRunAICard — the other states', () => {
     expect(card.querySelector('[data-previous-change-baseline]')).toBeNull()
   })
 
-  it('the baseline was never analysed: "#58 has no AI analysis to compare"', () => {
+  it('the baseline was never analysed: "#58 has no analysis to compare"', () => {
     state.compare = { ...aiCompare(), diff: null, narrative: null, reason: 'baseline_not_analysed' }
     const { card } = renderCard()
-    expect(card.querySelector('[data-previous-empty]')).toHaveTextContent('#58 has no AI analysis to compare.')
+    expect(card.querySelector('[data-previous-empty]')).toHaveTextContent('#58 has no analysis to compare.')
     expect(card.querySelector('[data-previous-baseline]')).toHaveTextContent('Compared with #58')
   })
 

@@ -101,7 +101,7 @@ test('a chip opens that run\'s stored versions: v1 rules · v2 LLM · v3 human c
   )
 
   // Closing.
-  await popover.getByRole('button', { name: 'Close AI versions' }).click()
+  await popover.getByRole('button', { name: 'Close analysis versions' }).click()
   await expect(popover).toHaveCount(0)
 
   await networkQuiet(page, api)

@@ -229,9 +229,9 @@ export function previousRunEmptyText(
     case 'no_previous_run':
       return `No previous run on branch ${context.branch || 'no branch'} for this suite yet.`
     case 'baseline_not_analysed':
-      return `${context.baseline ? runLabel(context.baseline) : 'The previous run'} has no AI analysis to compare.`
+      return `${context.baseline ? runLabel(context.baseline) : 'The previous run'} has no analysis to compare.`
     case 'current_not_analysed':
-      return 'This run has no AI analysis to compare yet.'
+      return 'This run has no analysis to compare yet.'
     default:
       return context.message || 'There is nothing to compare this run with.'
   }

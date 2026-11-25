@@ -87,8 +87,8 @@ export default function DecisionTrailDrawer({ runId, open, onClose, slot }: Prop
 
   return (
     <InlineFormSection
-      title="AI Decision Trail"
-      ariaLabel="AI decision trail"
+      title="Decision Trail"
+      ariaLabel="Decision trail"
       headingLevel={3}
       closeLabel="Close decision trail"
       onClose={onClose}

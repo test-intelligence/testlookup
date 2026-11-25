@@ -146,7 +146,7 @@ describe('TestCaseBody — the answer first (P4)', () => {
     setCase(failedCase({ status: 'PASSED', error_message: null, execution: { status: 'PASSED' } }))
     renderBody()
     expect(within(primary()).queryByTestId('ai-panel')).toBeNull()
-    expect(within(primary()).getByText('AI analysis is only available for failed or broken tests')).toBeInTheDocument()
+    expect(within(primary()).getByText('Analysis is only available for failed or broken tests')).toBeInTheDocument()
   })
 
   it('deletes the metadata grid that repeated the chips (§5): its fields live in Details', () => {

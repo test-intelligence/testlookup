@@ -21,7 +21,7 @@ import { BULK_JOB_IDS, bulkJobWorld, retriggerWorld, GATE_REFUSAL_SENTENCE } fro
 test.use({ viewport: { width: 1440, height: 900 }, timezoneId: 'UTC', locale: 'en-US', reducedMotion: 'reduce' })
 
 const ready = (p: Page) => p.locator('[data-status-banner]')
-const panel = (p: Page) => p.getByRole('region', { name: 'Bulk AI analysis' })
+const panel = (p: Page) => p.getByRole('region', { name: 'Bulk analysis' })
 const failedRuns = runs().filter((run) => run.status === 'FAILED')
 const POLL = { timeout: 20_000 }
 
@@ -40,7 +40,7 @@ test('Re-trigger all matching: the list\'s filter, one request, a panel that cou
   await expect(page.locator('[data-primary] tr[id^="run-row-"]')).toHaveCount(failedRuns.length)
   await moreActions(page, `Re-trigger all matching (${failedRuns.length})`)
   const confirm = page.getByTestId('runs-retrigger-confirm')
-  await expect(confirm).toContainText(`Re-trigger the AI pipeline for ${failedRuns.length} runs matching this filter?`)
+  await expect(confirm).toContainText(`Re-trigger the analysis pipeline for ${failedRuns.length} runs matching this filter?`)
   expect(world.state.writes, 'the question sends nothing').toEqual([])
   await confirm.getByRole('button', { name: 'Re-trigger' }).click()
 

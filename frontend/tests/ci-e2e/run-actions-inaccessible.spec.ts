@@ -1,7 +1,7 @@
 /**
  * D-0023 (GPT-6): a run the user cannot open (another project's, or one that does not exist: the server answers both
  * with the same 404) showed "Could not load Run Intelligence" under enabled **Analyze failures**, **Trigger pipeline**,
- * **Deep investigation** and **Refresh AI analysis**. The server refused each of them; the page should not offer them.
+ * **Deep investigation** and **Refresh analysis**. The server refused each of them; the page should not offer them.
  * Now a settled 404 is **Run not found** with no tabs and no actions (owner decision Q6), and while the run is still
  * loading the run's actions are disabled.
  *
@@ -22,7 +22,7 @@ const FOREIGN_RUN_ID = '34343434-3434-4343-8343-343434343434'
 const NOT_FOUND = { detail: 'Test run not found' }
 /** Every read of the foreign run, as the server answers a non-member: `require_run_access`'s 404. */
 const FOREIGN_READS = new RegExp(`^/api/v1/.*${FOREIGN_RUN_ID}`)
-const RUN_ACTIONS = ['Trigger pipeline', 'Deep investigation', 'Refresh AI analysis']
+const RUN_ACTIONS = ['Trigger pipeline', 'Deep investigation', 'Refresh analysis']
 /** Auto mode with deep investigation on (`RUN_PAGE` answers Rules, where Analyze failures gives way to a note). */
 const AUTO_MODE: ApiHandlers = [
   ['/api/v1/settings/ai/mode', () => ({ analysis_mode: 'auto', ai_offline_mode: false, deep_investigation_enabled: true })],
@@ -53,7 +53,7 @@ test('D-0023: a run that answers 404 opens as Run not found, with no tabs and no
   await expect(page.getByRole('tablist', { name: 'Run sections' })).toHaveCount(0)
   await expect(deepRegion(page)).toHaveCount(0)
   await expect(page.getByText('Could not load Run Intelligence')).toHaveCount(0)
-  await expect(page.getByRole('region', { name: 'AI report' })).toHaveCount(0)
+  await expect(page.getByRole('region', { name: 'Run report' })).toHaveCount(0)
   await networkQuiet(page, api)
   expectNoWrites(api)
   assertHermetic(api, errors)

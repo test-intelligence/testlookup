@@ -141,7 +141,7 @@ export default function AIDigestDiff({
 }) {
   const model = buildDiffModel(diff, { mode })
   return (
-    <section data-ai-diff="" data-ai-diff-mode={model.mode} aria-label="AI analysis differences" className="space-y-3">
+    <section data-ai-diff="" data-ai-diff-mode={model.mode} aria-label="Analysis differences" className="space-y-3">
       <p className="m-0 text-2xs text-[var(--color-text-muted)]">
         <span className="font-medium text-[var(--color-text-secondary)]">{fromLabel}</span>
         {' -> '}

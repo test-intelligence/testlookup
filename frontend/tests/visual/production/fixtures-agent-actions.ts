@@ -26,7 +26,7 @@ const ACTION_PATH = new RegExp(`^/api/v1/projects/${P}/agent-actions/[^/]+$`)
 /** The decider every outcome names (the fixture user). */
 export const DECIDER = USER.full_name
 
-const REVIEW_BLOCKED = 'Accept the AI report first: an approved action runs only on an accepted report.'
+const REVIEW_BLOCKED = 'Accept the run report first: an approved action runs only on an accepted report.'
 export const REVIEW_REASON_CODES = ['wrong_category', 'unsupported_claim', 'missing_evidence', 'contradiction', 'stale_data', 'other']
 
 type Row = Record<string, unknown> & { id: string; status: string }

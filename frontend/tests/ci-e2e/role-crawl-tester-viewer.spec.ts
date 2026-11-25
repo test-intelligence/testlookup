@@ -131,7 +131,7 @@ const ROUTES: CrawlRoute[] = [
       { name: 'a rule\'s Delete', floor: 'QA_LEAD', trigger: (p) => attributionRow(p).getByRole('button', { name: /^Delete/ }) },
     ],
   },
-  { route: '/agents', path: `/agents?run=${RUN_ID}`, handlers: () => agentsHandlers(), ready: (p) => p.getByRole('region', { name: 'AI report' }) },
+  { route: '/agents', path: `/agents?run=${RUN_ID}`, handlers: () => agentsHandlers(), ready: (p) => p.getByRole('region', { name: 'Run report' }) },
   {
     route: '/test-management',
     path: '/test-management',

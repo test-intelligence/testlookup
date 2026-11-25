@@ -46,7 +46,7 @@ export default function RunEvidenceTab({ runId }: { runId: string }) {
     <div className="space-y-4">
       <RunDecisionReport runId={runId} />
 
-      <section aria-label="AI report" data-primary="" className="space-y-3">
+      <section aria-label="Run report" data-primary="" className="space-y-3">
         {pipelines.length > 1 && (
           <label className="flex items-center gap-2 text-xs text-[var(--color-text-muted)]">
             <span>Pipeline</span>

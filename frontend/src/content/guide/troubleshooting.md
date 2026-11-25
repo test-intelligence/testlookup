@@ -85,11 +85,11 @@ Ask AI needs analysis in **Auto** or **LLM** mode and the `ask_ai_chat` flag on.
 **Ask AI says the project's AI budget for the month is used up.**
 The project reached its LLM cost budget. An administrator can raise it under **Admin → AI → LLM cost budget**.
 
-**Root cause (AI) refuses to run.**
+**Root cause refuses to run.**
 Deep investigation needs the `QA_ENGINEER` role and **Deep Investigation** ticked under **Settings › AI**. It runs in every analysis mode, **Rules** included.
 
 **An export or shared link is refused because the report is pending review.**
-Your administrator has made human review of AI reports mandatory. A QA lead accepts the report under **Inbox → Approvals**, then try again.
+Your administrator has made human review of run reports mandatory. A QA lead accepts the report under **Inbox → Approvals**, then try again.
 
 ## Workflow pages that say they are off
 

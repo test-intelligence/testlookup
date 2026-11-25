@@ -192,7 +192,7 @@ test.describe('/runs/:id at 1440 x 900', () => {
     await expect(form).toHaveCount(0)
 
     await page.locator('section[aria-label="Release verdict"]').getByRole('button', { name: 'Decision trail' }).click()
-    const trail = page.getByRole('region', { name: 'AI decision trail' })
+    const trail = page.getByRole('region', { name: 'Decision trail' })
     await expect(trail).toBeVisible()
     await expectNoOverlay(page)
     expect(await precedes(page.locator('section[aria-label="Release verdict"]'), trail), 'under the verdict banner').toBe(true)

@@ -223,7 +223,7 @@ _REJECTION = {"rejection": {"reason_code": "unsupported_claim"}}
     (_row("rejected", error_code="superseded"), QUARANTINE, "superseded",
      "Replaced by a newer proposal for the same target."),
     (_row("failed", error_code="review_not_accepted"), QUARANTINE, "not_executed_review",
-     "Not executed: the AI report was not accepted."),
+     "Not executed: the run report was not accepted."),
     (_row("failed", error_code="policy_denied"), QUARANTINE, "not_executed_policy",
      "Not executed: this action type does not run in Act mode in this project."),
     (_row("failed", error_code="act_mode_required"), QUARANTINE, "not_executed_policy",

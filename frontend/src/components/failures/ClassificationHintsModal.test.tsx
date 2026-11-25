@@ -76,7 +76,7 @@ describe('ClassificationHintsModal — the list', () => {
     expect(screen.getByRole('region', { name: 'Classification hints' })).toBeInTheDocument()
     expect(screen.queryByRole('dialog')).toBeNull()
     expect(document.querySelector('[aria-modal]')).toBeNull()
-    expect(screen.getByText(/Hints classify new failures before the AI does\. A failure that matches several uses the oldest hint\. Existing analyses are not changed\./)).toBeInTheDocument()
+    expect(screen.getByText(/Hints classify new failures before the analyzer does\. A failure that matches several uses the oldest hint\. Existing analyses are not changed\./)).toBeInTheDocument()
     const row = document.querySelector('[data-hint-row="h1"]') as HTMLElement
     expect(within(row).getByText('error message contains "ECONNREFUSED" → Infrastructure')).toBeInTheDocument()
     expect(within(row).getByText('The staging DB restarts nightly')).toBeInTheDocument()

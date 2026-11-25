@@ -38,7 +38,7 @@ test('a QA lead previews and adds a hint; the list shows it', async ({ page }) =
   await openButton(page).click()
   const dialog = opened(page, 'Classification hints')
   await expect(dialog).toBeVisible()
-  await expect(dialog).toContainText('Hints classify new failures before the AI does.')
+  await expect(dialog).toContainText('Hints classify new failures before the analyzer does.')
   await expect(dialog.locator('[data-hints-empty]')).toHaveText('No hints yet.')
   expect(requestsTo(api, HINTS)).toEqual([`GET ${HINTS}`])
 

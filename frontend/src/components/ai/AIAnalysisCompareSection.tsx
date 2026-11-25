@@ -37,7 +37,7 @@ function SideColumn({ side, title, runName, data }: { side: 'baseline' | 'curren
       <div className="eyebrow uppercase text-[var(--color-text-muted)]">{title}</div>
       <div className="text-sm font-semibold text-[var(--color-text)]">{runName}</div>
       {!data ? (
-        <p className="m-0 mt-1 text-xs text-[var(--color-text-muted)]">No AI analysis for this run.</p>
+        <p className="m-0 mt-1 text-xs text-[var(--color-text-muted)]">No analysis for this run.</p>
       ) : (
         <div className="mt-1.5 space-y-1.5 text-xs">
           <p className="m-0">
@@ -112,16 +112,16 @@ export default function AIAnalysisCompareSection({
 
   let body: React.ReactNode
   if (!sameProject) {
-    body = <Note kind="different_projects">AI analysis comparison needs two runs of the same project.</Note>
+    body = <Note kind="different_projects">Analysis comparison needs two runs of the same project.</Note>
   } else if (compare.error) {
     body = (
       <Note kind="unavailable">
-        The AI analysis comparison is unavailable right now.{' '}
+        The analysis comparison is unavailable right now.{' '}
         <button type="button" onClick={() => void compare.mutate()} className="text-[var(--color-accent)] underline underline-offset-2">Retry</button>
       </Note>
     )
   } else if (!data) {
-    body = <Note kind="loading">Comparing the two runs' AI analyses…</Note>
+    body = <Note kind="loading">Comparing the two runs' analyses…</Note>
   } else {
     body = (
       <div className="space-y-3">
@@ -147,7 +147,7 @@ export default function AIAnalysisCompareSection({
         {data.narrative && (
           <p className="m-0 text-2xs text-[var(--color-text-muted)]">
             Narrative: <span data-ai-compare-narrative-label="" className="font-medium text-[var(--color-text-secondary)]">{data.narrative.label}</span>
-            {data.narrative.report_status === 'queued' && ' (the AI narrative is being written)'}
+            {data.narrative.report_status === 'queued' && ' (the narrative is being written)'}
           </p>
         )}
       </div>
@@ -157,15 +157,15 @@ export default function AIAnalysisCompareSection({
   return (
     <section
       data-ai-compare-section=""
-      aria-label="AI analysis"
+      aria-label="Analysis"
       className="space-y-3 rounded-md border border-[var(--color-border)] bg-[var(--color-bg-card)] p-3"
     >
       <div className="flex items-center gap-2">
         <Sparkles aria-hidden className="h-4 w-4 text-[var(--color-accent)]" />
         <div className="min-w-0">
-          <div className="text-sm font-semibold text-[var(--color-text)]">AI analysis</div>
+          <div className="text-sm font-semibold text-[var(--color-text)]">Analysis</div>
           <p className="m-0 text-xs text-[var(--color-text-muted)]">
-            What the AI concluded about each run, and what changed between the two analyses.
+            What the analysis concluded about each run, and what changed between the two analyses.
           </p>
         </div>
       </div>

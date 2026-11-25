@@ -183,7 +183,7 @@ export default function MyFailuresPage() {
       ? `What you did and what involves you (mentions, your test cases, defects assigned to you) across ${scopeLabel}.`
       : tab === 'approvals'
       ? singleProjectId
-        ? `AI reports, quarantine proposals and test-case reviews waiting for a decision in ${project?.name ?? 'the selected project'}.`
+        ? `Run reports, quarantine proposals and test-case reviews waiting for a decision in ${project?.name ?? 'the selected project'}.`
         : 'Approvals belong to one project: pick it to see what is waiting for a decision.'
       : user
         ? effectiveScope === 'team'

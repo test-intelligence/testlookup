@@ -11,7 +11,7 @@ The sidebar is grouped into sections. What you see depends on your role: a viewe
 | **Home** | `/overview` | | Everyone |
 | **Inbox** | `/my-failures` | Assigned to me, Approvals | Everyone |
 | **Runs** | `/runs` | History, Live, Compare | Everyone |
-| **Failures** | `/failures` | Failures, Defects, Root cause (AI) | Everyone |
+| **Failures** | `/failures` | Failures, Defects, Root cause | Everyone |
 | **Flaky tests** | `/flaky` | Detected, Proposed, Quarantined, History | Everyone |
 | **Trends** | `/trends` | Trends, Coverage, Explorer | Everyone |
 | **Suites** | `/suites` | | Everyone |

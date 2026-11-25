@@ -1613,7 +1613,7 @@ function FailureCategoryCard({ categories, totalFailures, uncategorizedPct, onCo
               type="button"
               data-testid="open-classification-hints"
               onClick={onOpenHints}
-              title="Rules that classify new failures before the AI does"
+              title="Rules that classify new failures before the analyzer does"
               className="inline-flex items-center gap-1 rounded-md border border-[var(--color-border)] px-2 py-0.5 text-xs text-[var(--color-text-secondary)] hover:border-[var(--color-border-light)] hover:text-[var(--color-text)] whitespace-nowrap"
             >
               <Tags className="h-3 w-3" aria-hidden="true" /> Classification hints

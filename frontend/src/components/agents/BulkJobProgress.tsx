@@ -81,7 +81,7 @@ export default function BulkJobProgress({ jobId, canCancel, onSettled, onClose }
   const lines = job ? progressLines(job) : null
   const title = (
     <span className="inline-flex flex-wrap items-center gap-2">
-      Bulk AI analysis
+      Bulk analysis
       {job && lines && (
         <>
           <span
@@ -102,7 +102,7 @@ export default function BulkJobProgress({ jobId, canCancel, onSettled, onClose }
   return (
     <InlineFormSection
       title={title}
-      ariaLabel="Bulk AI analysis"
+      ariaLabel="Bulk analysis"
       showClose={false}
       autoFocus={false}
       onClose={onClose}

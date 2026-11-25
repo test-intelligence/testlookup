@@ -20,6 +20,8 @@ import pytest
 
 TODAY = date(2026, 9, 21)
 P1, P2, P3 = (uuid.UUID(int=n) for n in (1, 2, 3))
+#: Every statement a fake session executed (the project-list read is the first).
+_STATEMENTS: list = []
 
 
 class _Session:
@@ -43,6 +45,7 @@ class _Session:
 
     async def execute(self, statement, params=None):
         self.journal.append(("execute", self.index))
+        _STATEMENTS.append(statement)
         ids = self.project_ids
         return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: list(ids)))
 
@@ -151,3 +154,24 @@ def test_one_project_s_failure_is_logged_and_the_sweep_goes_on(task, monkeypatch
     # P2 committed nothing; P1 and P3 did.
     commits = [step[1] for step in task.journal if isinstance(step, tuple) and step[0] == "commit"]
     assert commits == [1, 3]
+
+
+def test_a_project_id_limits_the_sweep_to_that_live_project(task):
+    # D-34 follow-up: a committed history import queues this task for its ONE project, so the imported days
+    # get their points the same day. The project-list read is scoped to it (and still to live projects).
+    from sqlalchemy.dialects import postgresql
+
+    _STATEMENTS.clear()
+    task.tasks.take_coverage_snapshot.apply(kwargs={"project_id": str(P2)}).get()
+    sql = str(_STATEMENTS[0].compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}))
+    assert "projects.is_active IS true" in sql
+    assert "projects.id =" in sql and P2.hex in sql.replace("-", "")
+
+
+def test_with_no_project_id_the_read_is_every_live_project(task):
+    from sqlalchemy.dialects import postgresql
+
+    _STATEMENTS.clear()
+    _run(task)
+    sql = str(_STATEMENTS[0].compile(dialect=postgresql.dialect(), compile_kwargs={"literal_binds": True}))
+    assert "projects.is_active IS true" in sql and "projects.id =" not in sql

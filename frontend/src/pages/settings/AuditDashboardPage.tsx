@@ -170,7 +170,7 @@ export default function AuditDashboardPage() {
               </div>
               <div className="bg-[var(--color-bg-secondary)] rounded-lg p-4 text-center">
                 <div className="text-2xl font-bold text-[var(--status-flaky)]">{obs.ai_analyses_count}</div>
-                <div className="text-xs text-[var(--color-text-muted)] mt-1">AI Analyses</div>
+                <div className="text-xs text-[var(--color-text-muted)] mt-1">Analyses</div>
               </div>
               <div className="bg-[var(--color-bg-secondary)] rounded-lg p-4 text-center">
                 <div className="text-2xl font-bold text-[var(--status-broken)]">{obs.release_decisions_count}</div>

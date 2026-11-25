@@ -67,7 +67,7 @@ function renderAt(search: string) {
 }
 
 const params = () => new URLSearchParams(location.split('?')[1] ?? '')
-const versionSelect = () => screen.getByRole('combobox', { name: 'AI analysis version' })
+const versionSelect = () => screen.getByRole('combobox', { name: 'Analysis version' })
 const compareSelect = () => screen.getByRole('combobox', { name: 'Compare with' })
 
 describe('AIAnalysisHistory — the picker drives the URL', () => {
@@ -148,7 +148,7 @@ describe('AIAnalysisHistory — no history', () => {
     state.list = undefined
     state.listError = new Error('503')
     const { container } = renderAt('?tab=analysis')
-    expect(container.querySelector('[data-ai-history-unavailable]')).toHaveTextContent('The AI history of this run is unavailable right now.')
+    expect(container.querySelector('[data-ai-history-unavailable]')).toHaveTextContent('The analysis history of this run is unavailable right now.')
     fireEvent.click(screen.getByRole('button', { name: /Retry/ }))
     expect(state.listMutate).toHaveBeenCalled()
   })

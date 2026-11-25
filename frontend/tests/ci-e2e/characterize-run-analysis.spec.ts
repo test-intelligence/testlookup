@@ -171,7 +171,7 @@ test('A3 role gating: a viewer\'s test pane reads no stored analysis and offers 
   await page.locator(`[data-test-row="${first.id}"]`).click()
   const pane = opened(page, first.name)
   await expect(pane.locator('[data-test-case-body]')).toBeVisible()
-  await expect(pane.getByText('AI root cause analysis is available to QA engineers and above.')).toBeVisible()
+  await expect(pane.getByText('Root cause analysis is available to QA engineers and above.')).toBeVisible()
   await expect(pane.getByRole('button', { name: 'Correct', exact: true })).toHaveCount(0)
   await networkQuiet(page, api)
   expect(requestsTo(api, /^\/api\/v1\/analyze\//)).toEqual([])
@@ -285,7 +285,7 @@ test('A2 Decision trail from the banner, the failure block and the provenance fo
   const { api, errors } = await openRollout(page, `/runs/${RUN_ID}?tab=analysis`, { handlers: world.handlers, ready: analysisReady })
   await networkQuiet(page, api)
   expect(requestsTo(api, TRAIL), 'the trail is not read with the tab').toEqual([])
-  const trail = opened(page, 'AI decision trail')
+  const trail = opened(page, 'Decision trail')
   await expect(trail).toHaveCount(0)
 
   const openers = [

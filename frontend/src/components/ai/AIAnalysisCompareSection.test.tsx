@@ -80,7 +80,7 @@ describe('AIAnalysisCompareSection', () => {
   it('two runs of different projects: a note, and nothing fetched', () => {
     const { container } = renderSection(false)
     expect(container.querySelector('[data-ai-compare-note="different_projects"]'))
-      .toHaveTextContent('AI analysis comparison needs two runs of the same project')
+      .toHaveTextContent('Analysis comparison needs two runs of the same project')
     expect(state.calls.every(([runId]) => runId === null)).toBe(true)
   })
 
@@ -88,9 +88,9 @@ describe('AIAnalysisCompareSection', () => {
     const compare = aiCompare()
     state.data = { ...compare, reason: 'baseline_not_analysed', diff: null, narrative: null, sides: { baseline: null, current: compare.sides?.current ?? null } }
     const { container } = renderSection()
-    expect(container.querySelector('[data-ai-compare-note="baseline_not_analysed"]')).toHaveTextContent('#58 has no AI analysis to compare.')
+    expect(container.querySelector('[data-ai-compare-note="baseline_not_analysed"]')).toHaveTextContent('#58 has no analysis to compare.')
     expect(container.querySelector('[data-ai-diff]')).toBeNull()
-    expect(container.querySelector('[data-ai-compare-side="baseline"]')).toHaveTextContent('No AI analysis for this run.')
+    expect(container.querySelector('[data-ai-compare-side="baseline"]')).toHaveTextContent('No analysis for this run.')
   })
 
   it('a failed read is a note with Retry, never a toast', () => {

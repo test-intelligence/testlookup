@@ -144,7 +144,7 @@ describe('RunIntelligenceBody — the AI history (W03 AIH-04)', () => {
     expect(analysis.querySelector('[data-status-banner]')).toBeNull()
     expect(screen.queryByRole('region', { name: 'What failed' })).toBeNull()
     expect(analysis.querySelector('[data-previous-run-card]')).toBeNull()
-    expect(screen.getByRole('combobox', { name: 'AI analysis version' })).toHaveValue('1')
+    expect(screen.getByRole('combobox', { name: 'Analysis version' })).toHaveValue('1')
   })
 
   it('the latest version is the live view', () => {

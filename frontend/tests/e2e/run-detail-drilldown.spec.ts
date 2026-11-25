@@ -138,7 +138,7 @@ test.describe('Run detail → test-case drill-down', () => {
     // Test-case page: title, stack trace, and the AI analysis panel.
     await expect(page.getByRole('heading', { name: 'test_checkout_payment' })).toBeVisible({ timeout: 10000 });
     await expect(page.getByText(/AssertionError: expected status 200 but got 500/)).toBeVisible();
-    await expect(page.getByRole('heading', { name: /AI Root Cause Analysis/i })).toBeVisible();
+    await expect(page.getByRole('heading', { name: /Root Cause Analysis/i })).toBeVisible();
   });
 
   test('the FAILED status filter re-queries and hides passing rows', async ({ page }) => {

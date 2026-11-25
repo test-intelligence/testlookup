@@ -4432,8 +4432,11 @@ def generate_ai_strategy_task(
     soft_time_limit=1500,
     time_limit=1800,
 )
-def take_coverage_snapshot() -> dict:
+def take_coverage_snapshot(project_id: str | None = None) -> dict:
     """Scheduled task (beat 00:05 UTC): one coverage snapshot a project a UTC day (W08 TRND-07).
+
+    ``project_id`` limits the sweep to that one (live) project: a committed history import queues it, so
+    the imported days get their points the same day instead of at the next 00:05 UTC.
 
     For every active project: yesterday and every MISSING day of the last 30,
     computed from live data and UPSERTED (``coverage_snapshot_service``), so a
@@ -4443,6 +4446,8 @@ def take_coverage_snapshot() -> dict:
     and skipped so one project cannot stop the sweep. No analytics epoch bump:
     the history read is at most its cache TTL stale.
     """
+    # Not read inside ``_run`` as ``project_id``: its loop variable has that name.
+    only_project = project_id
 
     async def _run() -> dict:
         from sqlalchemy import select
@@ -4451,10 +4456,11 @@ def take_coverage_snapshot() -> dict:
         from app.models.postgres import Project
         from app.services import coverage_snapshot_service as snapshots
 
+        query = select(Project.id).where(Project.is_active.is_(True))
+        if only_project:
+            query = query.where(Project.id == uuid.UUID(str(only_project)))
         async with AsyncSessionLocal() as db:
-            project_ids = list(
-                (await db.execute(select(Project.id).where(Project.is_active.is_(True)))).scalars().all()
-            )
+            project_ids = list((await db.execute(query)).scalars().all())
         today = snapshots.utc_today()
         rows = failed = 0
         for project_id in project_ids:

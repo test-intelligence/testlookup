@@ -50,7 +50,7 @@ Throughout the product and this documentation, AI-generated conclusions are labe
 | **Viewer** | Read dashboards and reports | `VIEWER` |
 | **Tester** | Look at runs and failures for their work | `TESTER` |
 | **QA engineer** | Send results, own API keys, triage failures, manage suites and test cases, correct classifications | `QA_ENGINEER` |
-| **QA lead / manager** | Releases, ownership, quarantine and AI-report decisions, gate overrides, team-wide views, most settings | `QA_LEAD` |
+| **QA lead / manager** | Releases, ownership, quarantine and run-report decisions, gate overrides, team-wide views, most settings | `QA_LEAD` |
 | **Platform administrator** | Users and roles, SSO, feature flags, AI configuration, retention, gate policies | `ADMIN` |
 
 Roles are defined in `models/postgres.py` as `UserRole`. Higher roles include the abilities of lower ones. Individual pages in this guide name the role a task needs; [Settings and administration](/docs/administration#who-can-open-what) lists who can open each settings page.

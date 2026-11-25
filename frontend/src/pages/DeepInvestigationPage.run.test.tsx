@@ -1,7 +1,7 @@
 /**
  * UX redesign P4: Deep Investigation's per-run part moved onto the Run page's
  * Analysis tab (`/deep-investigate/:runId` redirects there), and the landing
- * page (`/deep-investigate`, the Failures section's "Root cause (AI)" tab)
+ * page (`/deep-investigate`, the Failures section's "Root cause" tab)
  * keeps its focused run in `?run=`.
  *
  *  - `RunDeepClusters`: the run's proposed clusters and "Analyze failures",

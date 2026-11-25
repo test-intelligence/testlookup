@@ -56,11 +56,11 @@ describe('filterFromPage — the list\'s own request', () => {
 
 describe('confirmSentence / matchingLabel', () => {
   it('names the matched count', () => {
-    expect(confirmSentence(37)).toBe('Re-trigger the AI pipeline for 37 runs matching this filter?')
-    expect(confirmSentence(1)).toBe('Re-trigger the AI pipeline for 1 run matching this filter?')
+    expect(confirmSentence(37)).toBe('Re-trigger the analysis pipeline for 37 runs matching this filter?')
+    expect(confirmSentence(1)).toBe('Re-trigger the analysis pipeline for 1 run matching this filter?')
   })
   it('names the cap and the full count past 2,000', () => {
-    expect(confirmSentence(5312)).toBe('Re-trigger the AI pipeline for 2,000 runs matching this filter, the newest 2,000 of 5,312?')
+    expect(confirmSentence(5312)).toBe('Re-trigger the analysis pipeline for 2,000 runs matching this filter, the newest 2,000 of 5,312?')
   })
   it('the ⋯ item carries the list\'s COUNT, "2,000+" past the cap', () => {
     expect(matchingLabel(37)).toBe('Re-trigger all matching (37)')

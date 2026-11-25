@@ -23,7 +23,7 @@ test.use({ viewport: { width: 1440, height: 900 }, timezoneId: 'UTC', locale: 'e
 const NEVER = 'No agent pipeline has analysed this run yet.'
 const COULD_NOT = "Could not load this run's pipelines."
 const EVIDENCE = `/runs/${RUN_ID}?tab=evidence`
-const report = (p: Page) => p.getByRole('region', { name: 'AI report' })
+const report = (p: Page) => p.getByRole('region', { name: 'Run report' })
 const pipelinePicker = (p: Page) => report(p).getByLabel('Pipeline')
 
 /** The run's two pipelines: the world's (newest, whose stages and report `RUN_PAGE` answers) and an older failed one. */

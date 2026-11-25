@@ -83,7 +83,7 @@ describe('RunComparePage — AI analysis (W03)', () => {
   it('mounts the section after the AI report, the left run as the baseline', () => {
     const { container } = renderPage()
     const section = container.querySelector('[data-ai-compare-section]') as HTMLElement
-    const report = screen.getByText('AI Comparison Report').closest('section') as HTMLElement
+    const report = screen.getByText('Comparison Report').closest('section') as HTMLElement
     expect(Boolean(report.compareDocumentPosition(section) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true)
     expect(state.sectionProps[state.sectionProps.length - 1]).toMatchObject({
       leftRunId: 'left-run', rightRunId: 'right-run', suiteName: 'Auth', sameProject: true,
@@ -100,7 +100,7 @@ describe('RunComparePage — AI analysis (W03)', () => {
   it('lists the report\'s AI analysis changes, and none when the report has none (a v1 report)', () => {
     const { container, unmount } = renderPage()
     const changes = container.querySelector('[data-ai-report-changes]') as HTMLElement
-    expect(within(changes).getByText('AI analysis changes')).toBeInTheDocument()
+    expect(within(changes).getByText('Analysis changes')).toBeInTheDocument()
     expect(within(changes).getByText('Verdict GO -> NO_GO (risk 35 -> 72)')).toBeInTheDocument()
     expect(within(changes).getByText('New root cause: Timeout in checkout (4 tests)')).toBeInTheDocument()
     unmount()
@@ -118,15 +118,15 @@ describe('RunComparePage — no AI report for a Viewer (D-0003)', () => {
     const { container } = renderPage()
     const note = container.querySelector('[data-ai-report-not-generated]') as HTMLElement
     expect(note).not.toBeNull()
-    expect(note.textContent).toContain('No AI comparison report exists for these runs yet')
+    expect(note.textContent).toContain('No comparison report exists for these runs yet')
     expect(note.textContent).toContain('QA engineer or above')
-    expect(screen.queryByText('AI Comparison Report')).toBeNull()
+    expect(screen.queryByText('Comparison Report')).toBeNull()
   })
 
   it('shows a Viewer an existing report and no note', () => {
     state.canTriggerLlm = false
     const { container } = renderPage()
-    expect(screen.getByText('AI Comparison Report')).toBeInTheDocument()
+    expect(screen.getByText('Comparison Report')).toBeInTheDocument()
     expect(container.querySelector('[data-ai-report-not-generated]')).toBeNull()
   })
 

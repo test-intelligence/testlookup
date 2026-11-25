@@ -36,15 +36,15 @@ Task recipes. Each names the role it needs and what success looks like.
 
 **Expected:** the trail shows both what the system said and what you decided.
 
-## Review an AI report
+## Review a run report
 
 **Role:** `QA_LEAD` or higher
 
-1. **Inbox → Approvals**, filter **AI reports**.
+1. **Inbox → Approvals**, filter **Run reports**.
 2. **Open report** and read it against its evidence on the run's **Analysis** tab.
 3. **Accept**, or **Reject** with a reason; then confirm.
 
-**Expected:** the report's banner reads **Reviewed and accepted** or **Rejected by a reviewer**. See [Your inbox and approvals](/docs/inbox#ai-reports).
+**Expected:** the report's banner reads **Reviewed and accepted** or **Rejected by a reviewer**. See [Your inbox and approvals](/docs/inbox#run-reports).
 
 ## Identify and manage a flaky test
 

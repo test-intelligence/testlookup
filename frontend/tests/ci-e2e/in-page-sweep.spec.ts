@@ -235,7 +235,7 @@ const ROUTES: SweepRoute[] = [
       only(LEAD_UP, ask('a rule\'s Delete', (p) => attributionRow(p).getByRole('button', { name: /^Delete/ }))),
     ],
   },
-  { route: '/agents', path: `/agents?run=${RUN_ID}`, roles: EVERY, handlers: () => agentsHandlers(), ready: (p) => p.getByRole('region', { name: 'AI report' }) },
+  { route: '/agents', path: `/agents?run=${RUN_ID}`, roles: EVERY, handlers: () => agentsHandlers(), ready: (p) => p.getByRole('region', { name: 'Run report' }) },
   { route: '/settings', path: '/settings', roles: MANAGEMENT, handlers: () => LAYOUT, ready: (p) => p.locator('[data-settings-index]') },
 
   // ── PAN-05a the test library (G-A) ──

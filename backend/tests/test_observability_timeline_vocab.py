@@ -136,7 +136,7 @@ def test_the_contract_labels_and_sentences_are_verbatim():
         "Splunk returned no trace events for this run — the stored answer does not say whether Splunk was reachable.")
     assert v.OFFLINE_NOW_SENTENCE == "AI offline mode is on, so analyses fetch no observability evidence."
     assert v.HEADER_SENTENCE == (
-        "Evidence the AI analysis already fetched — nothing is fetched when you open this card.")
+        "Evidence the analysis already fetched — nothing is fetched when you open this card.")
     assert v.CARD_TITLE == "Observability evidence"
     assert (v.SPLUNK_TRACE_EMPTY_SENTENCE, v.OCP_NOT_ENRICHED_SENTENCE, v.STORE_UNREADABLE_SENTENCE) == (
         v.LANE_SENTENCES["splunk_trace_no_events"], v.LANE_SENTENCES["ocp_events_not_recorded"],

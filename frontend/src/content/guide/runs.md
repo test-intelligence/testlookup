@@ -64,10 +64,10 @@ The **⋯** menu:
 |---|---|
 | **Trigger pipeline** | Queues the standard analysis pipeline again; its report appears under **Evidence**. `QA_ENGINEER` or above |
 | **Deep investigation** | Queues a deep investigation and opens the **Analysis** tab. `QA_ENGINEER` or above |
-| **Refresh AI analysis** | Recomputes the Analysis tab's report from the stored results, instead of showing the cached copy. It does not re-run the pipeline |
+| **Refresh analysis** | Recomputes the Analysis tab's report from the stored results, instead of showing the cached copy. It does not re-run the pipeline |
 | **Export PDF** | The run report as a PDF |
 | **Download evidence bundle** | The run's evidence as a file |
-| **Export AI history** | Every stored AI analysis of the run, the differences between consecutive versions and each test's versions, as `run-<build>-ai-history.json` (see [AI history](#ai-history)) |
+| **Export analysis history** | Every stored analysis of the run, the differences between consecutive versions and each test's versions, as `run-<build>-ai-history.json` (see [Analysis history](#analysis-history)) |
 | **Compare to previous run** | Opens Compare against the previous run of the same suite **on the same branch**: the newest run that finished before this one, whatever its outcome. The server picks it, so the Runs list, this menu and the Analysis tab's **vs previous run** always open the same pair. A run without suite attribution has no previous run |
 | **Release gate** | The release-gate view for this run (`/release-gate/<run id>`) |
 | **Ask AI about this run** | Opens [Ask AI](/docs/ask-ai) with the question "What failed in this build, and why?" written for you. Shown only when Ask AI is available |
@@ -84,19 +84,19 @@ While a run is still streaming, the list is read from the live buffer, so it mat
 
 ### Analysis
 
-The run's AI analysis report. Old links to `/runs/<id>/intelligence` and `/deep-investigate/<id>` open here.
+The run's analysis report. Old links to `/runs/<id>/intelligence` and `/deep-investigate/<id>` open here.
 
-- **vs previous run**: this run's AI analysis against the previous run's (the same pair as **Compare to previous run**): **Compared with #58 (Auth, main, 3 hours earlier)**, the verdict change (**Verdict GO -> NO_GO**), the suggested root causes that are new, resolved or persisting, and the tests whose AI conclusion changed (click one to open it). When the two runs were analysed by different engines (rules on one, a language model on the other) a note says so first: a category change may then reflect the engine, not the product. The summary under it is labelled **AI narrative** when a language model wrote it, or **deterministic summary** when it was built without one (offline, or over the cost budget). **Change baseline** compares with another run of the suite instead (`?ai_baseline=`). When nothing changed the card is one line; it also says when there is no previous run on the branch, or when one of the two runs has no AI analysis.
-- **AI history**: which analysis you are looking at, for example **v2 · LLM llama3.1 · about 2 hours ago**. See [AI history](#ai-history) below.
-- **The verdict banner**: **Go · release cleared**, **Conditional Go · proceed with mitigation**, **No-Go · release blocked** or **Pending · awaiting evidence**, with the risk score, the number of blocking issues and the AI confidence. **Decision trail** shows how the verdict was reached, step by step.
+- **vs previous run**: this run's analysis against the previous run's (the same pair as **Compare to previous run**): **Compared with #58 (Auth, main, 3 hours earlier)**, the verdict change (**Verdict GO -> NO_GO**), the suggested root causes that are new, resolved or persisting, and the tests whose AI conclusion changed (click one to open it). When the two runs were analysed by different engines (rules on one, a language model on the other) a note says so first: a category change may then reflect the engine, not the product. The summary under it is labelled **AI narrative** when a language model wrote it, or **deterministic summary** when it was built without one (offline, or over the cost budget). **Change baseline** compares with another run of the suite instead (`?ai_baseline=`). When nothing changed the card is one line; it also says when there is no previous run on the branch, or when one of the two runs has no AI analysis.
+- **Analysis history**: which analysis you are looking at, for example **v2 · LLM llama3.1 · about 2 hours ago**. See [Analysis history](#analysis-history) below.
+- **The verdict banner**: **Go · release cleared**, **Conditional Go · proceed with mitigation**, **No-Go · release blocked** or **Pending · awaiting evidence**, with the risk score, the number of blocking issues and the confidence. **Decision trail** shows how the verdict was reached, step by step.
 - **The review banner**, when the report is waiting for or has had a human review. See [Your inbox and approvals](/docs/inbox#approvals).
 - **What failed**: each failure, with **Open test case**, **Decision trail** and **File defect** (`QA_ENGINEER` or above).
-- **Proposed clusters**: the run's failures grouped by likely shared cause. **Analyze failures** starts a deep investigation of this run; it is disabled until the run itself has loaded, when the run has no failures, when one is already running, or for roles below `QA_ENGINEER`. See [Root cause (AI)](/docs/failure-analysis#root-cause-ai-deep-investigation).
+- **Proposed clusters**: the run's failures grouped by likely shared cause. **Analyze failures** starts a deep investigation of this run; it is disabled until the run itself has loaded, when the run has no failures, when one is already running, or for roles below `QA_ENGINEER`. See [Root cause](/docs/failure-analysis#root-cause-deep-investigation).
 - Two collapsed sections: **How this score is computed**, and **Evidence behind the verdict** (the pipeline stages that ran, the test outcome, recommended actions by role with your own role's row first and marked **· your role** — QA for testers, QA engineers and QA leads, Release Manager for administrators — the AI confidence, failure categories, step flips and provenance).
 
 The verdict is computed, not written by a model; see [Releases and gates](/docs/releases#how-it-is-produced). The stages behind it are described in [AI agents and the pipeline](/docs/ai-agents).
 
-### AI history
+### Analysis history
 
 Every time the pipeline analyses a run (**Trigger pipeline**, or the analysis that follows ingestion), TestLookup keeps that analysis as a new **version** instead of overwriting the last one: the verdict and risk, the failure categories and clusters, each analysed test's category, confidence and suggested root cause, and how it was produced (rules, ML or a language model, which model, whether it fell back). Single-test re-analyses, corrections and bulk reclassifications are kept per test (the test's **History** tab shows them).
 
@@ -104,7 +104,7 @@ Every time the pipeline analyses a run (**Trigger pipeline**, or the analysis th
 - **Compare with…** opens what changed between two versions, or between a version and **Current data**: the engine change first, then the verdict, categories, failure clusters (added, removed, resized), the tests whose conclusion changed (category or confidence moves of 10 points or more first; a reworded root cause on its own is listed apart), and the recommended actions.
 - The choice is in the address (`?ai_version=`, `?ai_compare=`), and it moves the **Evidence** tab's **Report version** with it: picking a version shows the decision report that version published, and picking a report version there selects the version that published it. Old `?report_version=` links open the version that published that report.
 
-"First analysis of this run" means only one analysis exists so far. How many versions are kept, and for how long, is set on [Retention and purge](/docs/administration#retention-and-purge); **Export AI history** in the ⋯ menu downloads them all.
+"First analysis of this run" means only one analysis exists so far. How many versions are kept, and for how long, is set on [Retention and purge](/docs/administration#retention-and-purge); **Export analysis history** in the ⋯ menu downloads them all.
 
 ### Changes
 
@@ -136,8 +136,8 @@ Right under the main card, **Likely affected tests** ranks this run's tests agai
 
 The detail behind the analysis. Old links to `/agents/run/<id>` open here.
 
-- **Decision intelligence** — the agentic decision report, with a **Report version** picker when the run has been analysed more than once. The picker and the Analysis tab's [AI history](#ai-history) move together. Absent when no decision report exists for the run.
-- **The pipeline's AI report** — **View AI report** to read it, and **Agent stages** to see each stage the pipeline ran. When the run has several pipeline runs, a **Pipeline** picker chooses between them.
+- **Decision intelligence** — the agentic decision report, with a **Report version** picker when the run has been analysed more than once. The picker and the Analysis tab's [Analysis history](#analysis-history) move together. Absent when no decision report exists for the run.
+- **The pipeline's run report** — **View report** to read it, and **Agent stages** to see each stage the pipeline ran. When the run has several pipeline runs, a **Pipeline** picker chooses between them.
 
 "No agent pipeline has analysed this run yet." means no pipeline has run; **Trigger pipeline** in the ⋯ menu starts one. The tab shows the run's own pipelines whichever of your projects is selected in the top bar. If the pipelines cannot be loaded, it says so instead.
 
@@ -151,7 +151,7 @@ How long the run took and where the time went (`?tab=timing`).
 - **Workers**, **Suites** — per worker and per suite: tests, wall clock and summed time.
 - **Slowest tests** — the 20 slowest tests, each with its duration baseline when it has one.
 - **Duration regressions** — tests and suites slower than their usual time, the same findings as the **Changes** tab.
-- **Observability evidence** — the last card: the Splunk, OpenShift and Prometheus evidence the AI analysis already fetched for this run, on one time axis.
+- **Observability evidence** — the last card: the Splunk, OpenShift and Prometheus evidence the analysis already fetched for this run, on one time axis.
 
 When a report format does not record start times (a JUnit file without timestamps, for example), the tab says so and shows durations only: no timeline, no empty chart, and the wall clock is **not reported** rather than the summed time. Project-wide execution time is on [Trends › Execution time](/docs/charts#execution-time).
 
@@ -162,7 +162,7 @@ When a report format does not record start times (a JUnit file without timestamp
 Open a test from the Tests tab (**Open full page**) to reach `/runs/<run id>/tests/<test id>`. It shows the suite, class, status, duration and tags, then:
 
 - **Error and stack trace** as recorded.
-- **AI root cause**, for failed and broken tests only. **Analyse Root Cause** runs the analysis on demand; the result shows the suggested root cause, actions for your role and all recommended actions.
+- **Root cause**, for failed and broken tests only. **Analyse Root Cause** runs the analysis on demand; the result shows the suggested root cause, actions for your role and all recommended actions.
   - **Confirm** records that the analysis was right; **Correct** opens **Correct classification**, where you pick the right category (Flaky, Product Bug, Infrastructure, Test Data, Automation Defect) and **Record correction**. Corrections are kept alongside the original and are applied the next time the same test is analysed. See [Investigating failures](/docs/failure-analysis#correcting-a-classification).
   - When the result needs human review, a review control (**Pending Human Review**, **Reviewed**, **Defect filed**, **False positive**, **Reproducible**) records what a person concluded.
   - **Create Jira Defect** files a ticket when the project has a Jira project key configured and the result does not need review first. Once filed, it becomes **View Jira Ticket**.
@@ -175,11 +175,11 @@ Open a test from the Tests tab (**Open full page**) to reach `/runs/<run id>/tes
 - **Latest suite comparison** — choose a suite and **Compare latest** to diff its two most recent runs. The section shows how many runs the suite has and its latest one (`12 runs in suite · latest main-1865 · Run #431 · main`). The run pickers name a run the same way: build label first, then `Run #<n>`; **Pick a different baseline** switches to a manual comparison of that suite and opens the left picker. Needs one project selected.
 - **Manual historical comparison** — choose **Left run (baseline)** and **Right run (target)**, optionally limited to one suite, then **Compare**. Each picker searches every run you can see, in every release, by build number, branch, CI job or the start of a commit hash, newest first and 20 at a time (**Load older** for more); or **Paste run ID** and **Use**. A pasted ID that is not a run you can open reads **Run not found or not accessible.**
 
-The result leads with what changed: **Pass rate**, **Failed tests**, **New failures** and **Duration** for each side, an **AI Comparison Report** (key differences, new risks, actions and, when the two runs' AI analyses differ, **AI analysis changes**), an **AI analysis** section, and **Status changes** — how many tests moved from one status to another.
+The result leads with what changed: **Pass rate**, **Failed tests**, **New failures** and **Duration** for each side, a **Comparison Report** (key differences, new risks, actions and, when the two runs' analyses differ, **Analysis changes**), an **Analysis** section, and **Status changes** — how many tests moved from one status to another.
 
-The AI Comparison Report is written by the language model the first time a QA engineer or above opens the comparison, and saved. A Viewer or Tester sees it once it exists; until then the page says that no report exists for these runs yet, and opening the comparison does not start a model call.
+The Comparison Report is written the first time a QA engineer or above opens the comparison, and saved. A configured language model writes it; when no model answers, its answer cannot be read, or the model budget is spent, TestLookup writes it from the run diff alone and its subtitle ends **deterministic fallback**. A Viewer or Tester sees it once it exists; until then the page says that no report exists for these runs yet, and opening the comparison does not start a model call.
 
-**AI analysis** puts the two runs' AI analyses side by side (**Baseline** on the left, **Target** on the right): the verdict and risk, the engine and model that produced each (**deterministic** when no language model did), the failure categories and the top suggested root causes. Under them, what changed between the two analyses, the same way as the Analysis tab's **vs previous run**, and the label of the narrative (**AI narrative** or **deterministic summary**). Two runs of different projects are not compared. Click a flow to filter the table to those tests. Filter chips narrow the table to **New failures**, **Regressed**, **Still failing**, **Duration spikes**, **Fixed**, **New tests**, **Removed** or **Renamed**.
+**Analysis** puts the two runs' analyses side by side (**Baseline** on the left, **Target** on the right): the verdict and risk, the engine and model that produced each (**deterministic** when no language model did), the failure categories and the top suggested root causes. Under them, what changed between the two analyses, the same way as the Analysis tab's **vs previous run**, and the label of the narrative (**AI narrative** or **deterministic summary**). Two runs of different projects are not compared. Click a flow to filter the table to those tests. Filter chips narrow the table to **New failures**, **Regressed**, **Still failing**, **Duration spikes**, **Fixed**, **New tests**, **Removed** or **Renamed**.
 
 The comparison is in the address (`/runs/compare?mode=manual&left=<run id>&right=<run id>&suite=<suite>`), so you can share it.
 

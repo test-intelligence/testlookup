@@ -107,7 +107,7 @@ test('D-0005 P8: an Agents live card for a run with only skips so far reads "—
     })],
     ...agentsHandlers(),
   ]
-  const { api, errors } = await openRollout(page, `/agents?run=${RUN_ID}`, { handlers, ready: (p) => p.getByRole('region', { name: 'AI report' }) })
+  const { api, errors } = await openRollout(page, `/agents?run=${RUN_ID}`, { handlers, ready: (p) => p.getByRole('region', { name: 'Run report' }) })
   await page.getByRole('button', { name: /Live executions/ }).click()
   // The nearest card around the run's label (the section around the cards is a card too).
   const card = (seq: number) =>

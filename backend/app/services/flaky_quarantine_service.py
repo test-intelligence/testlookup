@@ -84,6 +84,8 @@ _DEFAULT_QUARANTINE_DAYS = 14
 #: D-52: the window a manual proposal's flip figures are measured over (the
 #: Flaky tests page's default window).
 _MANUAL_MEASURE_DAYS = 30
+#: Detection methods where an agent, not a person, asked for the quarantine (D-53 follow-up).
+AGENT_DETECTION_METHODS = frozenset({"agent_action", "flaky_sentinel_agent"})
 #: Review of D-52: below this many results a manual proposal's flip figures
 #: stay unmeasured ("flip rate 100 %, window 1" is no measurement). The same
 #: floor as the recheck's ``total < 10``.
@@ -920,8 +922,14 @@ async def propose_quarantine(
     # manual-propose router handler (actor=user, detection_method="manual").
     source_label = "manual" if detection_method == "manual" else "auto"
 
-    # D-53: who asked. NULL = the detectors (no actor); a person's id otherwise.
-    proposer_id = getattr(actor, "id", None) if actor is not None else None
+    # D-53: who asked. NULL = the detectors (no actor); a person's id otherwise. An agent action's ``actor`` is
+    # the person who APPROVED it (the adapter proposes and approves in one step): the agent asked, so no person
+    # is recorded as the proposer; the approver is recorded by ``approve`` (and owns the row).
+    proposer_id = (
+        getattr(actor, "id", None)
+        if actor is not None and detection_method not in AGENT_DETECTION_METHODS
+        else None
+    )
 
     async with AsyncSessionLocal() as db:
         try:

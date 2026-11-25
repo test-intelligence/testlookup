@@ -147,7 +147,7 @@ test('My notifications with the default policy: the per-run hint under Run faile
       await expect(eventOption(card, label).locator('[data-event-hint]'), `${channel}: ${label}`).toContainText(PER_RUN_HINT)
     }
     // Not governed by the policy, and state changes are on by default: no hint.
-    for (const label of ['AI analysis complete', 'Quality gate failed', 'Test newly failing (transition)', 'A test or suite became slower']) {
+    for (const label of ['Analysis complete', 'Quality gate failed', 'Test newly failing (transition)', 'A test or suite became slower']) {
       await expect(eventOption(card, label).locator('[data-event-hint]'), `${channel}: ${label}`).toHaveCount(0)
     }
     const link = runFailed.getByRole('link', { name: POLICY_LINK })

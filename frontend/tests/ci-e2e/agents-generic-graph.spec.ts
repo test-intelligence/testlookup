@@ -22,7 +22,7 @@ import {
 
 test.use({ viewport: { width: 1440, height: 900 }, timezoneId: 'UTC', locale: 'en-US', reducedMotion: 'reduce' })
 
-const report = (p: Page) => p.getByRole('region', { name: 'AI report' })
+const report = (p: Page) => p.getByRole('region', { name: 'Run report' })
 const ready = (p: Page) => report(p).getByText(AI_REPORT_SUMMARY)
 const node = (p: Page, id: string) => p.locator(`[data-stage-id="${id}"]`)
 const added = (before: string[], after: string[]) => [...new Set(after)].filter((line) => !before.includes(line)).sort()
