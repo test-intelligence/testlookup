@@ -2,10 +2,12 @@
 status filters, and the number of matches on the two bare-list routes."""
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, Mock
 from uuid import UUID
 
 import pytest
+from fastapi import HTTPException
 from pydantic import ValidationError
 
 from app.core import test_library_vocab as vocab
@@ -33,9 +35,9 @@ def _create(**fields):
         ("automation_status", "Automated", "automated"),
     ],
 )
-def test_case_fields_are_normalised_on_create_and_update(field, sent, stored):
+async def test_case_fields_are_normalised_on_create_and_on_an_edit(edit_case, field, sent, stored):
     assert getattr(_create(**{field: sent}), field) == stored
-    assert getattr(ManagedTestCaseUpdate(expected_version=1, **{field: sent}), field) == stored
+    assert getattr(await edit_case(**{field: sent}), field) == stored
 
 
 @pytest.mark.parametrize(
@@ -50,12 +52,15 @@ def test_case_fields_are_normalised_on_create_and_update(field, sent, stored):
         ("automation_status", "flaky", "automation_status must be not_automated, in_progress, automated or broken."),
     ],
 )
-def test_case_fields_refuse_a_value_the_library_cannot_use(field, sent, said):
-    for build in (lambda: _create(**{field: sent}), lambda: ManagedTestCaseUpdate(expected_version=1, **{field: sent})):
-        with pytest.raises(ValidationError) as refused:
-            build()
-        (error,) = refused.value.errors()
-        assert error["loc"] == (field,) and said in error["msg"]
+async def test_case_fields_refuse_a_value_the_library_cannot_use(edit_case, field, sent, said):
+    with pytest.raises(ValidationError) as refused:
+        _create(**{field: sent})
+    (error,) = refused.value.errors()
+    assert error["loc"] == (field,) and said in error["msg"]
+
+    with pytest.raises(HTTPException) as refused_edit:
+        await edit_case(**{field: sent})
+    assert refused_edit.value.status_code == 422 and said in refused_edit.value.detail
 
 
 def test_case_defaults_and_omitted_fields_are_unchanged():
@@ -66,6 +71,69 @@ def test_case_defaults_and_omitted_fields_are_unchanged():
         "medium", "major", "functional", "not_automated",
     )
     assert update.model_dump(exclude_unset=True) == {"expected_version": 3, "title": "Checkout total v2"}
+
+
+# A case as the demo seed and older builds stored it: values from before the rules.
+LEGACY = {"priority": "showstopper", "severity": "Sev-1 (customer reported)", "test_type": "Smoke/API",
+          "automation_status": "manual"}
+
+
+@pytest.fixture
+def edit_case(monkeypatch):
+    """``update_managed_test_case`` on one stored case, with persistence stubbed out."""
+    from app.services import test_management_service as service
+
+    case = SimpleNamespace(
+        id=PROJECT_ID, project_id=PROJECT_ID, title="Checkout total", status="draft", version=4,
+        edited_since_approval_version=None, parameters=None, **LEGACY,
+    )
+    monkeypatch.setattr(service, "get_test_case_or_404", AsyncMock(return_value=case))
+    monkeypatch.setattr(service, "stage_test_case_snapshot", Mock())
+    monkeypatch.setattr(service, "audit_event", AsyncMock())
+
+    async def edit(change_type="updated", **fields):
+        payload = ManagedTestCaseUpdate(expected_version=case.version, **fields)
+        return await service.update_managed_test_case(
+            AsyncMock(), case.id, payload, SimpleNamespace(id=PROJECT_ID), change_type=change_type,
+        )
+
+    edit.case = case
+    return edit
+
+
+@pytest.mark.parametrize("field", sorted(LEGACY))
+async def test_an_edit_that_sends_a_stored_value_back_keeps_it(edit_case, field):
+    """A client that sends the whole case back must not be refused for a value it did not change."""
+    edited = await edit_case(title="Checkout total v2", **{field: LEGACY[field]})
+
+    assert getattr(edited, field) == LEGACY[field] and edited.title == "Checkout total v2" and edited.version == 5
+
+
+@pytest.mark.parametrize("change_type", ["restored", "bulk_updated"])
+async def test_a_restore_or_bulk_edit_can_put_back_a_value_from_before_the_rules(edit_case, change_type):
+    """An old version holding a seeded "manual" automation status must stay restorable."""
+    edit_case.case.automation_status, edit_case.case.priority = "automated", "high"
+
+    restored = await edit_case(change_type=change_type, automation_status="manual", priority="showstopper")
+
+    assert (restored.automation_status, restored.priority) == ("manual", "showstopper")
+
+
+async def test_an_edit_cannot_introduce_a_value_from_before_the_rules(edit_case):
+    edit_case.case.automation_status = "automated"
+
+    with pytest.raises(HTTPException) as refused:
+        await edit_case(automation_status="manual")
+
+    assert refused.value.status_code == 422 and "automation_status must be" in refused.value.detail
+    assert edit_case.case.automation_status == "automated" and edit_case.case.version == 4
+
+
+def test_the_update_model_itself_accepts_any_stored_value():
+    """The model carries restores too, so it does not judge the vocabulary."""
+    assert ManagedTestCaseUpdate(expected_version=1, **LEGACY).model_dump(exclude_unset=True) == {
+        "expected_version": 1, **LEGACY,
+    }
 
 
 def test_the_write_rules_are_the_imports_rules():

@@ -33,6 +33,7 @@ from app.models.postgres import (
     UserRole,
 )
 from app.models.schemas import (
+    case_field_rules,
     ManagedTestCaseCreate,
     ManagedTestCaseUpdate,
     ReviewActionRequest,
@@ -928,6 +929,19 @@ async def update_managed_test_case(
     )
     if not update_data:
         return test_case
+
+    if change_type == "updated":
+        # The import's vocabulary rules, for the values THIS edit changes. A
+        # field sent back with its stored value passes untouched, so a case
+        # holding a value from before the rules can still be edited; a version
+        # restore and a bulk edit (other change types) are not judged here.
+        for field, rule in case_field_rules().items():
+            if field not in update_data or update_data[field] == getattr(test_case, field, None):
+                continue
+            try:
+                update_data[field] = rule(update_data[field])
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     # The Owner: validated like create's, and only when one is named (an
     # explicit null unassigns; an omitted field reads nothing).
