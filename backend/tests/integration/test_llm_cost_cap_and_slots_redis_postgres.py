@@ -67,6 +67,12 @@ async def capped_project(monkeypatch):
     prefix = f"testlookup:test:llmcap:{tag}"
     monkeypatch.setattr(cost, "KEY_PREFIX", prefix)
     monkeypatch.setattr(cost, "_redis", lambda: next(rotation))
+    # The circuit breaker these calls trip keeps its state under a fixed prefix
+    # in the same Valkey. Namespaced per test, a tripped breaker (back-off
+    # 20 s, then 120 s, ...) no longer fails the next run of this file.
+    import app.services.llm_circuit_breaker as breaker
+
+    monkeypatch.setattr(breaker, "_KEY_PREFIX", f"{prefix}:circuit")
     monkeypatch.setattr("app.db.postgres.AsyncSessionLocal", sessions, raising=False)
 
     async def flag_on(key, **kwargs):
@@ -91,6 +97,10 @@ async def capped_project(monkeypatch):
         yield project_id, key, clients[0]
     finally:
         await clients[0].delete(key)
+        stale = [k async for k in clients[0].scan_iter(match=f"{prefix}:circuit*", count=500)]
+        if stale:
+            await clients[0].delete(*stale)
+        await _release_shared_redis_pool()
         async with sessions() as db:
             await db.execute(delete(ProjectLlmUsage).where(ProjectLlmUsage.project_id == project_id))
             await db.execute(delete(ProjectLlmQuota).where(ProjectLlmQuota.project_id == project_id))
@@ -397,3 +407,16 @@ async def test_a_live_holder_keeps_its_slot_past_the_lease(slots_redis):
                 pass
     finally:
         slots.KEY_PREFIX = original
+
+
+async def _release_shared_redis_pool() -> None:
+    """Close the app's cached Valkey pool if a code path under test bound it.
+
+    It binds to this test's event loop; left open, the next module that closes
+    it does so on another loop and fails with "Event loop is closed" on Windows
+    (found running the service suites locally, 2026-11-26).
+    """
+    from app.db import redis_client
+
+    if redis_client._pool is not None:
+        await redis_client.close_redis()

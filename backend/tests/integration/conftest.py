@@ -58,6 +58,46 @@ except Exception:  # noqa: BLE001 — any import failure should disable, not cra
     UserRole = None  # type: ignore[assignment]
 
 
+# ── Shared clients do not cross modules ─────────────────────────────────────
+
+
+def _drop_cached_service_clients() -> None:
+    """Forget the app's cached Valkey pool and MongoDB client.
+
+    Both are module globals bound to the event loop that first used them. A
+    test module that leaves one behind hands the next module a client whose
+    loop has closed: its ``close_redis()`` then fails with "Event loop is
+    closed" and Motor writes fail (``write_failed=True``). Each file passed on
+    its own; run together, 8 errors and failures came from this (the full
+    integration directory against real services, 2026-11-26). The worker's
+    loop runner closes the same three clients after every loop; this is the
+    test suite's equivalent at a module boundary.
+
+    Motor's ``close()`` is synchronous and safe without a loop. The Valkey pool
+    cannot be closed once its loop is gone, so it is dropped; its sockets close
+    when it is collected.
+    """
+    try:
+        import app.db.mongo as mongo
+        import app.db.redis_client as redis_client
+    except Exception:  # noqa: BLE001 - an import-broken tree fails elsewhere
+        return
+    if mongo._client is not None:
+        try:
+            mongo._client.close()
+        finally:
+            mongo._client = None
+    redis_client._client = None
+    redis_client._pool = None
+
+
+@pytest.fixture(autouse=True, scope="module")
+def _service_clients_start_and_end_with_the_module() -> Iterator[None]:
+    _drop_cached_service_clients()
+    yield
+    _drop_cached_service_clients()
+
+
 # ── Test user factory ───────────────────────────────────────────────────────
 
 
