@@ -26,7 +26,7 @@ from langchain_core.language_models import FakeListChatModel
 from langchain_core.messages import AIMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 
-from app.agents.analysis_agent import AnalysisAgent
+from app.agents import analysis_agent as analysis_module
 from app.core.config import Settings, settings
 from app.services import llm_circuit_breaker
 from app.services import llm_cost_reservation as cost
@@ -99,7 +99,7 @@ def _analysis_stage(monkeypatch, *, delay: float, per_call_timeout: int):
     monkeypatch.setattr(fast_module, "FastClassifier", _NoQuickAnswer)
     monkeypatch.setattr("app.agents.analysis_agent.store_artifact", AsyncMock(return_value=None))
 
-    stage = AnalysisAgent()
+    stage = analysis_module.AnalysisAgent()
     stage.mark_stage_running = AsyncMock()  # type: ignore[method-assign]
     stage.mark_stage_done = AsyncMock()  # type: ignore[method-assign]
     stage.broadcast_progress = AsyncMock()  # type: ignore[method-assign]
@@ -167,7 +167,7 @@ async def test_a_hung_call_is_still_cut_at_its_own_timeout(monkeypatch, gates):
 
 
 def test_the_tier_one_reason_says_the_quick_call_ran_after_the_limit():
-    analysis = AnalysisAgent._record_llm_timeout_routing(
+    analysis = analysis_module.AnalysisAgent._record_llm_timeout_routing(
         {"fallback_tier": 1}, timeout=240, mode_requested="llm", mode_resolved="llm", quick_timeout=30,
     )
     assert analysis["_routing"]["fallback_reason"] == (
@@ -195,10 +195,9 @@ def no_operator_concurrency(monkeypatch, tmp_path):
     """LLM_MAX_CONCURRENT_ANALYSES set in neither the environment nor an env
     file, whatever the machine running the tests has (order-independent: no
     ``settings`` attribute is assigned, so ``model_fields_set`` plays no part)."""
-    import app.agents.analysis_agent as module
 
     monkeypatch.delenv("LLM_MAX_CONCURRENT_ANALYSES", raising=False)
-    monkeypatch.setattr(module, "_ENV_FILES", (str(tmp_path / ".env"),))
+    monkeypatch.setattr(analysis_module, "_ENV_FILES", (str(tmp_path / ".env"),))
     return tmp_path / ".env"
 
 
@@ -213,16 +212,16 @@ async def test_a_local_provider_runs_one_analysis_at_a_time_unless_the_operator_
 ):
     # The env says the opposite of the stored choice every time (review finding 1).
     monkeypatch.setattr(settings, "LLM_PROVIDER", "openai")
-    policy = await AnalysisAgent()._resolve_adaptive_concurrency(_resolved("ollama"), 10)
+    policy = await analysis_module.AnalysisAgent()._resolve_adaptive_concurrency(_resolved("ollama"), 10)
     assert policy["concurrency"] == 1 and policy["provider"] == "ollama"
 
     no_operator_concurrency.write_text("LLM_MAX_CONCURRENT_ANALYSES=3\n", encoding="utf-8")
-    policy = await AnalysisAgent()._resolve_adaptive_concurrency(_resolved("ollama"), 10)
+    policy = await analysis_module.AnalysisAgent()._resolve_adaptive_concurrency(_resolved("ollama"), 10)
     assert policy["concurrency"] == min(int(settings.LLM_MAX_CONCURRENT_ANALYSES), 3)
 
     no_operator_concurrency.unlink()
     monkeypatch.setenv("LLM_MAX_CONCURRENT_ANALYSES", "3")
-    policy = await AnalysisAgent()._resolve_adaptive_concurrency(_resolved("ollama"), 10)
+    policy = await analysis_module.AnalysisAgent()._resolve_adaptive_concurrency(_resolved("ollama"), 10)
     assert policy["concurrency"] == min(int(settings.LLM_MAX_CONCURRENT_ANALYSES), 3)
 
 
@@ -231,7 +230,7 @@ async def test_a_hosted_provider_chosen_in_settings_is_not_treated_as_local(monk
     """Review finding 1: env ``ollama`` (the shipped default) with OpenAI chosen
     in Settings > AI ran one at a time; the frozen provider is OpenAI."""
     monkeypatch.setattr(settings, "LLM_PROVIDER", "ollama")
-    policy = await AnalysisAgent()._resolve_adaptive_concurrency(_resolved("openai"), 10)
+    policy = await analysis_module.AnalysisAgent()._resolve_adaptive_concurrency(_resolved("openai"), 10)
     base = max(1, int(settings.LLM_MAX_CONCURRENT_ANALYSES or 1))
     assert policy["provider"] == "openai"
     assert policy["concurrency"] == min(max(base, base * 2), 8)
@@ -240,24 +239,22 @@ async def test_a_hosted_provider_chosen_in_settings_is_not_treated_as_local(monk
 def test_a_monkeypatched_setting_does_not_count_as_set_by_the_operator(monkeypatch, no_operator_concurrency):
     """Review finding 11: any assignment puts the name in ``model_fields_set``
     for good; the operator signal reads the environment and the env file."""
-    import app.agents.analysis_agent as module
 
     monkeypatch.setattr(settings, "LLM_MAX_CONCURRENT_ANALYSES", 2)
     assert "LLM_MAX_CONCURRENT_ANALYSES" in settings.model_fields_set
-    assert module._concurrency_set_by_operator() is False
+    assert analysis_module._concurrency_set_by_operator() is False
     monkeypatch.setenv("LLM_MAX_CONCURRENT_ANALYSES", "")  # empty is unset (env_ignore_empty)
-    assert module._concurrency_set_by_operator() is False
+    assert analysis_module._concurrency_set_by_operator() is False
 
 
 def test_the_latency_feedback_is_keyed_by_the_effective_provider(monkeypatch):
-    import app.agents.analysis_agent as module
 
     monkeypatch.setattr(settings, "LLM_PROVIDER", "ollama")
-    monkeypatch.setattr(module, "_ANALYSIS_LATENCY_EWMA_BY_PROVIDER", {})
-    AnalysisAgent()._record_latency_feedback(
+    monkeypatch.setattr(analysis_module, "_ANALYSIS_LATENCY_EWMA_BY_PROVIDER", {})
+    analysis_module.AnalysisAgent()._record_latency_feedback(
         {"tc-1": {"_audit": {"analysis_duration_seconds": 30.0}}}, _resolved("openai"),
     )
-    assert module._ANALYSIS_LATENCY_EWMA_BY_PROVIDER == {"openai": 30.0}
+    assert analysis_module._ANALYSIS_LATENCY_EWMA_BY_PROVIDER == {"openai": 30.0}
 
 
 @pytest.mark.asyncio
@@ -286,7 +283,6 @@ async def test_a_test_started_near_the_deadline_gets_only_the_time_left(monkeypa
 async def test_no_time_left_skips_the_quick_classification_and_never_goes_negative(monkeypatch, gates):
     """With the deadline almost reached the guard is the 1 s floor, and the
     quick model call is skipped rather than run past the deadline."""
-    import app.agents.analysis_agent as module
     import app.services.training.classifier as fast_module
 
     stage, inner, _done_at = _analysis_stage(monkeypatch, delay=60.0, per_call_timeout=5)
@@ -301,12 +297,12 @@ async def test_no_time_left_skips_the_quick_classification_and_never_goes_negati
     monkeypatch.setattr(fast_module, "FastClassifier", _CountingQuick)
     # A frozen deadline 0.5 s ahead on the stage's clock: the start checks pass,
     # the guard floors at 1 s, and no time is left for the quick call.
-    monkeypatch.setattr(module, "_seconds_to_deadline", lambda state: 0.5)
+    monkeypatch.setattr(analysis_module, "_seconds_to_deadline", lambda state: 0.5)
     loop = asyncio.get_running_loop()
 
     result = await stage.run(_state(timeout=5))
 
     assert inner.calls == 1
-    assert loop.time() == pytest.approx(module._MIN_OPERATION_SECONDS)
+    assert loop.time() == pytest.approx(analysis_module._MIN_OPERATION_SECONDS)
     assert asked == []
     assert result["analyses"]["tc-1"]["_audit"]["fallback_from"] == "llm"
