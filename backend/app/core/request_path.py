@@ -22,9 +22,31 @@ anywhere in ``backend/app``.
 """
 from __future__ import annotations
 
+import re
+
 from starlette.requests import HTTPConnection
+
+
+#: Paths whose next segment is a bearer credential. A report share link is
+#: opened by whoever holds its token, so that segment must never reach logs or
+#: traces. Slashes may be doubled in the decoded ASGI path.
+_SHARED_REPORT_TOKEN_PATH_RE = re.compile(
+    r"^(/+api/+v1/+shared/+reports/+)[^/?#]+", re.IGNORECASE
+)
+
+
+def redact_path_credentials(path: str) -> str:
+    """Replace bearer-credential path segments, leaving ordinary paths intact."""
+    return _SHARED_REPORT_TOKEN_PATH_RE.sub(
+        lambda match: match.group(1) + "[REDACTED]", path, count=1
+    )
 
 
 def routed_path(request: HTTPConnection) -> str:
     """``scope["path"]``: the path the router matched, whatever Host said."""
     return str(request.scope.get("path") or "")
+
+
+def telemetry_path(request: HTTPConnection) -> str:
+    """The routed path with any bearer-credential segment removed."""
+    return redact_path_credentials(routed_path(request))

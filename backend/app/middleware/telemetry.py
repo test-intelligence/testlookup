@@ -30,7 +30,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 from starlette.types import ASGIApp
 
-from app.core.request_path import routed_path
+from app.core.request_path import routed_path, telemetry_path
 
 logger = structlog.get_logger("http.access")
 
@@ -82,7 +82,7 @@ class TelemetryMiddleware(BaseHTTPMiddleware):
         structlog.contextvars.bind_contextvars(
             request_id=request_id,
             method=request.method,
-            path=routed_path(request),
+            path=telemetry_path(request),
         )
 
         try:
