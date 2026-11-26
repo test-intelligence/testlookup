@@ -4,23 +4,17 @@
   webhook secret. The key and the secret go to ``secret_service`` (scope
   ``github_app``) and are never returned: the read says ``*_set`` only. The key is
   parsed before it is stored (an RSA private key PEM, or a 422).
-* ``GET /api/v1/github/app/install-url?project_id=`` (QA lead with access to the
-  project) — ``https://github.com/apps/<slug>/installations/new?state=…``; the
-  ``state`` is HMAC-signed and binds the project, the user and a 10-minute expiry.
+* ``GET /api/v1/github/app/install-url?project_id=`` (ADMIN) — creates an opaque,
+  server-stored, 10-minute transaction bound to the administrator, project,
+  deployment App, API base, and configured repository.
 * ``POST /api/v1/github/app/setup-callback`` ``{installation_id, state}`` — the
-  page GitHub sends the browser back to posts here. The state must verify, be
-  unexpired, and name the CALLING user (and a project they may still lead), or
-  it is a 400: nobody can attach their installation to another project, and a
-  link forwarded to another user is refused. Stores the installation id and
-  switches the project's integration to ``auth_kind = "app"``.
+  page GitHub sends the browser back to posts here. The transaction is burned
+  before validation. Only its initiating administrator may complete it, and the
+  deployment App must mint a token that can read the transaction's repository
+  before the installation id is stored.
 """
 from __future__ import annotations
 
-import base64
-import hashlib
-import hmac
-import json
-import time
 import uuid
 
 import structlog
@@ -30,7 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.deps import get_current_active_user, require_role, resolve_project_scope
-from app.db.postgres import get_db
+from app.db.postgres import get_db, release_read_connection
 from app.models.postgres import AppSetting, User, UserRole
 from app.models.schemas import (
     GitHubAppInstallUrl,
@@ -39,45 +33,29 @@ from app.models.schemas import (
     GitHubAppSetupCallback,
     GitHubAppSetupResult,
 )
-from app.services import github_auth
+from app.services import github_app_setup_state, github_auth
 from app.services.activity.service import ActorRef, record as record_activity
+from app.services.url_safety import same_api_base
 
 logger = structlog.get_logger(__name__)
 
 settings_router = APIRouter(prefix="/api/v1/settings", tags=["GitHub App"])
 router = APIRouter(prefix="/api/v1/github/app", tags=["GitHub App"])
 
-STATE_TTL_S = 600
 INVALID_STATE = "This GitHub App installation link is invalid or expired. Start the installation again from Settings › GitHub."
+SETUP_CHANGED = "GitHub App setup changed while it was in progress. Start the installation again from Settings › GitHub."
+SETUP_UNAVAILABLE = "GitHub App setup is temporarily unavailable. Try again from Settings › GitHub."
 
 
-def _state_key() -> bytes:
-    return hashlib.sha256(f"github-app-state:{settings.JWT_SECRET_KEY}".encode()).digest()
-
-
-def sign_state(project_id: uuid.UUID, user_id: uuid.UUID, now: float | None = None) -> str:
-    payload = {"p": str(project_id), "u": str(user_id), "e": int((now or time.time()) + STATE_TTL_S)}
-    raw = base64.urlsafe_b64encode(json.dumps(payload, separators=(",", ":")).encode()).decode().rstrip("=")
-    sig = hmac.new(_state_key(), raw.encode(), hashlib.sha256).hexdigest()
-    return f"{raw}.{sig}"
-
-
-def verify_state(state: str, user_id: uuid.UUID, now: float | None = None) -> uuid.UUID:
-    """The project the state names; ``HTTPException(400)`` with one message for every failure."""
-    try:
-        raw, sig = state.rsplit(".", 1)
-        expected = hmac.new(_state_key(), raw.encode(), hashlib.sha256).hexdigest()
-        if not hmac.compare_digest(sig, expected):
-            raise ValueError("signature")
-        payload = json.loads(base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)))
-        if int(payload["e"]) < int(now or time.time()):
-            raise ValueError("expired")
-        if str(payload["u"]) != str(user_id):
-            raise ValueError("user")
-        return uuid.UUID(str(payload["p"]))
-    except (ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
-        logger.info("github_app_state_refused", reason=type(exc).__name__ if not str(exc) else str(exc))
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=INVALID_STATE) from None
+def _setup_matches(transaction: github_app_setup_state.SetupTransaction, row, app, app_base: str) -> bool:
+    return (
+        app is not None
+        and str(app.get("app_id")) == transaction.app_id
+        and same_api_base(app_base, transaction.api_base_url)
+        and same_api_base(row.api_base_url, transaction.api_base_url)
+        and row.repo_owner == transaction.repo_owner
+        and row.repo_name == transaction.repo_name
+    )
 
 
 async def _app_row(db: AsyncSession) -> AppSetting | None:
@@ -153,16 +131,41 @@ async def put_github_app_settings(
 async def github_app_install_url(
     project_id: uuid.UUID = Query(...),
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(require_role(UserRole.QA_LEAD)),
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
 ):
-    """Where to install the App for this project, with a signed, user-bound, 10-minute state. QA lead."""
+    """Create an administrator-approved setup transaction for this project's configured repository."""
+    from app.services import github_checks_service as gh
+
     await resolve_project_scope(db, current_user, str(project_id))
     app = await _read(db)
-    if not app.configured or not app.slug:
+    if not app.configured or not app.slug or not app.app_id:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT,
                             detail="The deployment's GitHub App is not configured. An administrator sets it in Settings › GitHub App.")
-    url = f"https://github.com/apps/{app.slug}/installations/new?state={sign_state(project_id, current_user.id)}"
-    return GitHubAppInstallUrl(url=url, expires_in=STATE_TTL_S)
+    row = await gh.get_integration(db, project_id)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT,
+                            detail="Save the project's GitHub repository on Settings › GitHub first, then install the App")
+    app_base = (settings.GITHUB_APP_API_BASE_URL or "").strip().rstrip("/")
+    if not same_api_base(row.api_base_url, app_base):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="The project's GitHub API base must match the deployment GitHub App before installation.",
+        )
+    transaction = github_app_setup_state.SetupTransaction(
+        project_id=project_id,
+        user_id=current_user.id,
+        app_id=str(app.app_id),
+        api_base_url=app_base,
+        repo_owner=row.repo_owner,
+        repo_name=row.repo_name,
+    )
+    try:
+        state_value = await github_app_setup_state.issue_setup_transaction(transaction)
+    except github_app_setup_state.SetupStateUnavailable:
+        logger.warning("github_app_setup_state_unavailable", phase="issue")
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=SETUP_UNAVAILABLE) from None
+    url = f"https://github.com/apps/{app.slug}/installations/new?state={state_value}"
+    return GitHubAppInstallUrl(url=url, expires_in=github_app_setup_state.STATE_TTL_SECONDS)
 
 
 @router.post("/setup-callback", response_model=GitHubAppSetupResult)
@@ -171,19 +174,56 @@ async def github_app_setup_callback(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_active_user),
 ):
-    """Record the installation GitHub sent back, for the project the signed state names."""
+    """Verify and record the installation selected by the initiating administrator."""
     from app.services import github_checks_service as gh
     from app.services.settings_audit_service import log_settings_change
 
-    project_id = verify_state(payload.state, current_user.id)
+    try:
+        transaction = await github_app_setup_state.consume_setup_transaction(payload.state)
+    except github_app_setup_state.SetupStateUnavailable:
+        logger.warning("github_app_setup_state_unavailable", phase="consume")
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=SETUP_UNAVAILABLE) from None
+    if transaction is None or transaction.user_id != current_user.id:
+        logger.info("github_app_setup_state_refused", reason="unknown_or_actor_mismatch")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=INVALID_STATE)
     role = str(getattr(current_user.role, "value", current_user.role))
-    if role not in (UserRole.ADMIN.value, UserRole.QA_LEAD.value):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="QA lead or administrator only")
+    if role != UserRole.ADMIN.value:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
+                            detail="An instance administrator must approve GitHub App installations")
+    project_id = transaction.project_id
     await resolve_project_scope(db, current_user, str(project_id))
     row = await gh.get_integration(db, project_id)
     if row is None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT,
                             detail="Save the project's GitHub repository on Settings › GitHub first, then install the App")
+    app_base = (settings.GITHUB_APP_API_BASE_URL or "").strip().rstrip("/")
+    app = await github_auth.load_app_config(db)
+    if not _setup_matches(transaction, row, app, app_base):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=SETUP_CHANGED)
+    assert app is not None  # narrowed by _setup_matches; keeps the verifier's credential input explicit
+    # Do not hold a pooled Postgres connection across GitHub's network calls.
+    await release_read_connection(db)
+    try:
+        await github_auth.verify_installation_repository(
+            app_base,
+            int(payload.installation_id),
+            app,
+            transaction.repo_owner,
+            transaction.repo_name,
+        )
+    except github_auth.GitHubAppUnavailable:
+        logger.info("github_app_installation_refused", project_id=str(project_id), reason="github_verification_failed")
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="GitHub did not confirm that this App installation can access the configured repository. "
+                   "Check the repository selection and start the installation again.",
+        ) from None
+    # Re-read under a row lock after the network boundary. Every integration
+    # update takes the same lock, so a concurrent repository change either
+    # fails this comparison or runs later and clears this installation id.
+    row = await gh.get_integration(db, project_id, for_update=True)
+    if row is None or not _setup_matches(transaction, row, app, app_base):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=SETUP_CHANGED)
     row.installation_id = int(payload.installation_id)
     row.auth_kind = "app"
     row.updated_by_user_id = current_user.id

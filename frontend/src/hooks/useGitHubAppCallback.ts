@@ -7,8 +7,8 @@ import { githubAppService } from '@/services/githubIntegrationService'
 
 /**
  * W19 INT-06: GitHub sends the browser back to Settings › GitHub with `installation_id` and `state` after an App
- * installation. Post them to the setup callback once (the server verifies the signed, user-bound state), drop them
- * from the address bar, then call `onDone`.
+ * installation. Post them to the setup callback once (the server atomically consumes the administrator-bound
+ * transaction and verifies the installation's repository access), drop them from the address bar, then call `onDone`.
  */
 /** Post GitHub's `installation_id` + `state` once, then clear them from the URL. Calls `onDone` with the result. */
 export function useGitHubAppCallback(enabled: boolean, onDone: () => void): void {

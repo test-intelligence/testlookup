@@ -51,7 +51,8 @@ refuses.
   and ``/api/v3``) takes ``Authorization: Bearer <App JWT>`` -- RS256, ``iss`` =
   the App id, signed by the key registered with ``POST /_fake/github/app``, not
   expired, issued at most 10 minutes ahead -- and answers 201 ``{token:
-  "ghs_…", expires_at}``; the token then reads the installation's repos like a
+  "ghs_…", expires_at}``; ``GET /installation/repositories`` lists only that
+  installation's selected repositories, and the token reads those repos like a
   PAT. A bad JWT is 401 ``A JSON web token could not be decoded``, an unknown
   installation 404. The request log's ``token_kind`` says ``installation``
   (a ``ghs_`` token), ``app_jwt`` or ``pat``.
@@ -840,7 +841,8 @@ def _service_of(path: str) -> Optional[str]:
         return "ocp"
     if path.startswith("/api/v4/projects/"):
         return "gitlab"
-    if path.startswith("/api/v3/") or path.startswith("/repos/") or path == "/rate_limit" or path.startswith("/app/"):
+    if (path.startswith("/api/v3/") or path.startswith("/repos/") or path == "/rate_limit"
+            or path.startswith("/app/") or path.startswith("/installation/")):
         return "github"
     if path.startswith("/hooks/"):
         return "hooks"
@@ -1194,6 +1196,17 @@ async def _github(request: Request, state: FakeState, path: str, method: str) ->
         )
     if path == "/rate_limit":
         return JSONResponse({"rate": {"limit": 5000, "remaining": 4999, "used": 1}})
+    if path == "/installation/repositories":
+        if not pat or not pat.startswith("ghs_"):
+            return JSONResponse({"message": "Bad credentials"}, status_code=401)
+        visible = sorted(state.github_tokens.get(pat, set()))
+        per_page = max(1, min(100, int(request.query_params.get("per_page", "30"))))
+        page = max(1, int(request.query_params.get("page", "1")))
+        selected = visible[(page - 1) * per_page:page * per_page]
+        return JSONResponse({
+            "total_count": len(visible),
+            "repositories": [{"full_name": repo} for repo in selected],
+        })
     m = re.fullmatch(r"/repos/([^/]+)/([^/]+)(/.*)?", path)
     if not m:
         return _gh_not_found()

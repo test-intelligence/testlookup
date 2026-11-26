@@ -2,7 +2,7 @@
  * Settings › GitHub (W19 INT-06): authenticate a project with the deployment's GitHub App instead of a PAT.
  *
  * - `GitHubAuthMethod` — PAT or GitHub App for this project; "Install GitHub App" opens GitHub's install page
- *   with a signed, user-bound state; the installation id once recorded.
+ *   with a server-stored, single-use administrator transaction; the installation id once verified.
  * - `hooks/useGitHubAppCallback` — GitHub sends the browser back to this page with `installation_id` and `state`; the
  *   page posts them to the setup callback (which verifies the state) and drops them from the address bar.
  * - `GitHubAppAdminCard` (administrators) — the App id, slug, private key and webhook secret. Secrets are
@@ -30,6 +30,7 @@ export function GitHubAuthMethod({
   installationId,
   hasPat,
   canEdit,
+  canInstallApp,
   onChange,
 }: {
   projectId: string
@@ -37,6 +38,7 @@ export function GitHubAuthMethod({
   installationId: number | null
   hasPat: boolean
   canEdit: boolean
+  canInstallApp: boolean
   onChange: (kind: GitHubAuthKind) => void
 }) {
   const [opening, setOpening] = useState(false)
@@ -80,10 +82,13 @@ export function GitHubAuthMethod({
               'Not installed for this project yet.'
             )}
           </span>
-          {canEdit && (
+          {canInstallApp && (
             <button type="button" className="btn-secondary btn-sm" onClick={install} disabled={opening}>
               {installationId ? 'Reinstall GitHub App' : 'Install GitHub App'}
             </button>
+          )}
+          {canEdit && !canInstallApp && (
+            <span className="text-[var(--color-text-muted)]">An instance administrator must install or reinstall the App.</span>
           )}
         </div>
       )}

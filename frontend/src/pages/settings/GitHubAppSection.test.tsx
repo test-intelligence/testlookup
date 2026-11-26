@@ -33,16 +33,16 @@ describe('GitHubAuthMethod', () => {
     app.installUrl.mockResolvedValue({ url: 'https://github.com/apps/x/installations/new?state=s', expires_in: 600 })
     const assign = vi.fn()
     Object.defineProperty(window, 'location', { value: { ...window.location, assign }, writable: true })
-    const { rerender } = render(<GitHubAuthMethod projectId="p1" authKind="pat" installationId={null} hasPat canEdit onChange={onChange} />)
+    const { rerender } = render(<GitHubAuthMethod projectId="p1" authKind="pat" installationId={null} hasPat canEdit canInstallApp onChange={onChange} />)
     expect(screen.getByLabelText(/Personal access token \(stored\)/)).toBeChecked()
     fireEvent.click(screen.getByLabelText('GitHub App'))
     expect(onChange).toHaveBeenCalledWith('app')
-    rerender(<GitHubAuthMethod projectId="p1" authKind="app" installationId={null} hasPat canEdit onChange={onChange} />)
+    rerender(<GitHubAuthMethod projectId="p1" authKind="app" installationId={null} hasPat canEdit canInstallApp onChange={onChange} />)
     expect(screen.getByTestId('github-installation')).toHaveTextContent('Not installed for this project yet.')
     fireEvent.click(screen.getByRole('button', { name: 'Install GitHub App' }))
     await waitFor(() => expect(assign).toHaveBeenCalledWith('https://github.com/apps/x/installations/new?state=s'))
     expect(app.installUrl).toHaveBeenCalledWith('p1')
-    rerender(<GitHubAuthMethod projectId="p1" authKind="app" installationId={777} hasPat canEdit onChange={onChange} />)
+    rerender(<GitHubAuthMethod projectId="p1" authKind="app" installationId={777} hasPat canEdit canInstallApp onChange={onChange} />)
     expect(screen.getByTestId('github-installation')).toHaveTextContent('Installation 777')
   })
 
@@ -53,7 +53,7 @@ describe('GitHubAuthMethod', () => {
       app.installUrl.mockResolvedValue({ url, expires_in: 600 })
       const assign = vi.fn()
       Object.defineProperty(window, 'location', { value: { ...window.location, assign }, writable: true })
-      render(<GitHubAuthMethod projectId="p1" authKind="app" installationId={null} hasPat canEdit onChange={vi.fn()} />)
+      render(<GitHubAuthMethod projectId="p1" authKind="app" installationId={null} hasPat canEdit canInstallApp onChange={vi.fn()} />)
       const button = screen.getByRole('button', { name: 'Install GitHub App' })
       fireEvent.click(button)
       await waitFor(() => expect(toast.error).toHaveBeenCalledWith(expect.stringContaining('not a secure web link')))
@@ -61,6 +61,12 @@ describe('GitHubAuthMethod', () => {
       await waitFor(() => expect(button).toBeEnabled())
     },
   )
+
+  it('leaves installation approval to an instance administrator', () => {
+    render(<GitHubAuthMethod projectId="p1" authKind="app" installationId={null} hasPat canEdit canInstallApp={false} onChange={vi.fn()} />)
+    expect(screen.queryByRole('button', { name: 'Install GitHub App' })).not.toBeInTheDocument()
+    expect(screen.getByText(/instance administrator must install or reinstall/i)).toBeInTheDocument()
+  })
 })
 
 describe('useGitHubAppCallback', () => {
