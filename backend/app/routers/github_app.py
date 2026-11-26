@@ -186,10 +186,8 @@ async def github_app_setup_callback(
     if transaction is None or transaction.user_id != current_user.id:
         logger.info("github_app_setup_state_refused", reason="unknown_or_actor_mismatch")
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=INVALID_STATE)
-    role = str(getattr(current_user.role, "value", current_user.role))
-    if role != UserRole.ADMIN.value:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN,
-                            detail="An instance administrator must approve GitHub App installations")
+    # Keep the transaction single-use even when its actor is no longer authorized.
+    await require_role(UserRole.ADMIN)(current_user)
     project_id = transaction.project_id
     await resolve_project_scope(db, current_user, str(project_id))
     row = await gh.get_integration(db, project_id)

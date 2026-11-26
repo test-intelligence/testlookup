@@ -12,6 +12,7 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 
+from app.core.deps import _bind_api_key_project
 from app.models.postgres import UserRole
 from app.models.schemas import GitHubAppSetupCallback
 from app.routers import github_app
@@ -124,6 +125,25 @@ async def test_forwarded_administrator_state_is_burned_and_refused(monkeypatch):
         )
     assert exc.value.status_code == 400
     assert consumed == ["y" * 43]
+
+
+async def test_project_bound_admin_key_cannot_complete_setup(monkeypatch):
+    redis = _Redis()
+    monkeypatch.setattr(github_app_setup_state, "get_redis", lambda: redis)
+    state = await github_app_setup_state.issue_setup_transaction(_transaction())
+    admin = _bind_api_key_project(_user(ADMIN_ID, UserRole.ADMIN), PROJECT_ID)
+    db = _DB()
+
+    with pytest.raises(HTTPException) as exc:
+        await github_app.github_app_setup_callback(
+            GitHubAppSetupCallback(installation_id=777, state=state),
+            db=db,
+            current_user=admin,
+        )
+
+    assert exc.value.status_code == 403
+    assert await github_app_setup_state.consume_setup_transaction(state) is None
+    assert db.commits == 0
 
 
 async def _authorize_admin_callback(monkeypatch, *, row, timeline: list[str]):
