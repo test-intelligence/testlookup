@@ -57,7 +57,7 @@ jobs:
           gh run download "${{ needs.verify.outputs.ci_run_id }}" --name "${{ needs.verify.outputs.artifact_name }}" --dir verified-images
           python3 scripts/release/release_manifest.py validate --manifest verified-images/release-manifest.json --expected-source-sha "${{ needs.verify.outputs.source_sha }}"
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -116,7 +116,7 @@ jobs:
         run: |
           test "$(sha256sum verified-images/release-manifest.json | cut -d' ' -f1)" = "$TESTED_MANIFEST_SHA256"
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
