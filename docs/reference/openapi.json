@@ -63440,7 +63440,7 @@
     },
     "/api/v1/auth/mfa/enroll/confirm": {
       "post": {
-        "description": "Verify a code against the staged seed, then enable MFA.\n\nRecovery codes are minted in the same unit of work as the flag flip — an\naccount must never reach ``mfa_enabled=True`` without a way back in. They\nare returned once and only digests are kept.",
+        "description": "Verify a code against the staged seed, then enable MFA.\n\nRecovery codes are minted in the same unit of work as the flag flip — an\naccount must never reach ``mfa_enabled=True`` without a way back in. They\nare returned once and only digests are kept. Every older session is ended\nin that unit of work and one MFA-assured replacement is returned.",
         "operationId": "confirm_enrollment_api_v1_auth_mfa_enroll_confirm_post",
         "requestBody": {
           "content": {
