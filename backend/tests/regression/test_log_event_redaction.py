@@ -731,10 +731,11 @@ def test_a_secret_bound_into_the_context_is_redacted(json_logs):
     ],
 )
 def test_request_logs_remove_share_tokens_but_keep_ordinary_paths(
-    json_logs, request_path, expected_path
+    json_logs, caplog, request_path, expected_path
 ):
     """Exercise TelemetryMiddleware through the configured structlog pipeline."""
     import base64
+    import logging
 
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
@@ -752,6 +753,9 @@ def test_request_logs_remove_share_tokens_but_keep_ordinary_paths(
     app.add_api_route("/api/v1/shared/reports/{token}/pdf", ok, methods=["GET"])
     app.add_api_route("/api/v1/runs/run-42", ok, methods=["GET"])
 
+    # TestClient logs its own outgoing URL, outside the app's middleware.
+    caplog.set_level(logging.WARNING, logger="httpx")
+    caplog.set_level(logging.WARNING, logger="httpx2")
     with TestClient(app) as client:
         response = client.get(request_path.format(token=token))
 
