@@ -165,7 +165,9 @@ async def test_a_malformed_owner_record_is_not_found(stored):
 @pytest.mark.parametrize("state, expected", [
     ("PENDING", {"task_id": "task-1", "status": "pending", "result": None, "error": None}),
     ("SUCCESS", {"task_id": "task-1", "status": "success", "result": _RESULT, "error": None}),
-    ("FAILURE", {"task_id": "task-1", "status": "failure", "result": None, "error": _FAILURE_TEXT}),
+    # D-58 review: a failure's raw exception text is never passed on (it can carry a host or a
+    # URL); only an ``AIPlanNotBuilt`` sentence is (test_ai_plan_task_fails_without_a_plan.py).
+    ("FAILURE", {"task_id": "task-1", "status": "failure", "result": None, "error": None}),
 ])
 async def test_the_user_who_queued_a_task_reads_it(state, expected):
     owner = _user()

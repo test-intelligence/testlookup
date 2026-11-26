@@ -493,3 +493,25 @@ def test_no_run_at_all_is_a_usage_error(api):
     assert result.exit_code == 2
     assert "RUN_ID or --run" in _plain(result.output)
     assert api["calls"] == []
+
+
+def test_the_failure_table_fits_an_80_column_ci_log(monkeypatch):
+    # D-55: the blocking table printed four columns and read 92 characters wide in a CI log.
+    import io as _io
+
+    from rich.console import Console
+
+    from testlookup_cli import output
+
+    sink = _io.StringIO()
+    monkeypatch.setattr(output, "console", Console(width=80, file=sink, force_terminal=False, color_system=None))
+    long_row = {
+        "test_name": "test_checkout_total_includes_tax_for_a_discounted_line_item",
+        "suite_name": "checkout-e2e-payments-regression",
+        "class_name": "tests.checkout.payments.regression.TotalIncludesTaxTest",
+        "status": "FAILED",
+    }
+    ci_verdict_mod._render_table([long_row], [dict(long_row, matched_by="fingerprint")], strict=False)
+    lines = sink.getvalue().splitlines()
+    assert lines and max(len(line) for line in lines) <= 80
+    assert "Class Name" not in sink.getvalue()

@@ -769,6 +769,14 @@ def deterministic_sentence(diff: Mapping) -> str:
     return "Compared with the baseline run: " + ", ".join(parts) + "."
 
 
+def _narrative_scope(suite_name: str | None) -> str:
+    """`` (checkout suite only)`` for a suite-scoped report, else ``""`` (D-148)."""
+    name = (suite_name or "").strip()
+    if not normalize_suite_name(name):
+        return ""
+    return f" ({name} only)" if name.lower().endswith("suite") else f" ({name} suite only)"
+
+
 async def narrative_for(
     db: Any,
     *,
@@ -798,10 +806,14 @@ async def narrative_for(
     if row is not None and row.status == "ready" and report:
         fallback = bool(report.get("fallback_used") or row.fallback_used)
         changes = report.get("ai_changes")
+        label = "deterministic summary" if fallback else "AI narrative"
         return {
             "status": "ready",
             "source": "deterministic" if fallback else "llm",
-            "label": "deterministic summary" if fallback else "AI narrative",
+            # D-148: the report is keyed by suite (the run's primary suite by
+            # default) and its figures are that suite's; the Analysis tab is
+            # the whole run. Say so where the text is shown.
+            "label": label + _narrative_scope(getattr(row, "suite_name", None) or suite_name),
             "fallback_used": fallback,
             "executive_summary": str(report.get("executive_summary") or ""),
             "ai_changes": (

@@ -3378,6 +3378,27 @@ class AgentPipelineReviewSummary(BaseModel):
     settled_at: Optional[datetime] = None
 
 
+class AgentPipelineStageIssue(BaseModel):
+    """One stage of a degraded pipeline that failed or fell back (D-153)."""
+
+    stage_name: str
+    status: str
+    fallback_reason: Optional[str] = None
+    error_category: Optional[str] = None
+
+
+class AgentPipelineStageQuality(BaseModel):
+    """Why a pipeline is DEGRADED, for the tag's title (D-153).
+
+    ``stages_run`` counts the stages that started (completed or failed, the
+    latest attempt of each); ``issues`` are the failed ones and the ones that
+    used their fallback, in run order.
+    """
+
+    stages_run: int
+    issues: List[AgentPipelineStageIssue]
+
+
 class AgentPipelineResponse(BaseModel):
     id: uuid.UUID
     test_run_id: uuid.UUID
@@ -3414,6 +3435,8 @@ class AgentPipelineResponse(BaseModel):
     # pipeline has no report review (for example a deterministic non-report
     # invocation); it must not be presented as human-reviewed.
     review_summary: Optional[AgentPipelineReviewSummary] = None
+    # D-153: set only for a degraded pipeline (``stage_quality == degraded``).
+    stage_quality_detail: Optional[AgentPipelineStageQuality] = None
 
     model_config = ConfigDict(from_attributes=True)
 

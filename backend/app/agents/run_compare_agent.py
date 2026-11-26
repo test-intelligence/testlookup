@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 import structlog
@@ -64,6 +65,17 @@ class RunCompareAgent:
             )
             if err:
                 parsed = fallback
+            else:
+                # D-148: nothing compared the model's figures with the payload.
+                # A summary that states a failure count, total or pass rate
+                # the two sides do not have is replaced by the deterministic
+                # report.
+                wrong = summary_figure_mismatches(
+                    str(parsed.get("executive_summary") or ""), compare_payload
+                )
+                if wrong:
+                    logger.warning("run_compare_ai_report_figures_rejected", figures=wrong[:5])
+                    parsed, err = fallback, "figures_mismatch"
             parsed["status"] = "ready"
             parsed["fallback_used"] = bool(err)
             parsed["ai_changes"] = ai_changes_of(compare_payload)
@@ -87,6 +99,94 @@ class RunCompareAgent:
             # endpoint. Use kwargs.
             logger.warning("run_compare_ai_report_fallback_used", error=str(exc))
             return build_validated_fallback_report(compare_payload)
+
+
+#: D-148 / review findings 5-6: only a CLEAR claim about a side's totals is
+#: checked, and anything else passes (a false negative costs nothing; a false
+#: positive swaps a correct narrative for the deterministic one, and the swap
+#: is cached). Two shapes are read:
+#:
+#: * a failed-out-of-total claim: "2 failed tests out of 10", "2 tests failed
+#:   out of 10", "2 of the 10 tests failed";
+#: * a pass or failure RATE: "a pass rate of 80.0%", "93.8% pass rate",
+#:   "failure rate of 6%". "took 40% longer", "rose by 150%", "(100%)" and
+#:   "30% slower" are not rates and are not read.
+_TESTS = r"(?:tests?|test\s+cases?|cases?)"
+_FAILED_OUT_OF_RE = re.compile(
+    rf"\b(\d+)\s+(?:failed|failing)\s+{_TESTS}\s+(?:out\s+)?of\s+(?:the\s+)?(\d+)\b(?!\s*%)"
+    rf"|\b(\d+)\s+{_TESTS}\s+failed\s+(?:out\s+)?of\s+(?:the\s+)?(\d+)\b(?!\s*%)"
+    rf"|\b(\d+)\s+(?:out\s+)?of\s+(?:the\s+)?(\d+)\s+{_TESTS}\s+(?:failed|were\s+failing|are\s+failing|fail)\b",
+    re.IGNORECASE,
+)
+#: "PR 482 failed ...": a number that names something is not a count.
+_NOT_A_COUNT_BEFORE = re.compile(
+    r"(?:build|run|version|pr|job|step|stage|attempt|commit|pipeline|issue|ticket|#|no\.)\s*$",
+    re.IGNORECASE,
+)
+_RATE_LINK = r"\s+(?:of|was|is|at|=|:|stood\s+at|stayed\s+at|remained\s+at|remains\s+at)?\s*(?:about\s+|around\s+)?"
+_PASS_RATE_RE = re.compile(
+    rf"\b(?:pass(?:ing)?|success)\s+rate{_RATE_LINK}(\d+(?:\.(\d+))?)\s*%"
+    rf"|\b(\d+(?:\.(\d+))?)\s*%\s+(?:pass(?:ing)?|success)\s+rate\b",
+    re.IGNORECASE,
+)
+_FAIL_RATE_RE = re.compile(
+    rf"\bfail(?:ure)?\s+rate{_RATE_LINK}(\d+(?:\.(\d+))?)\s*%"
+    rf"|\b(\d+(?:\.(\d+))?)\s*%\s+fail(?:ure)?\s+rate\b",
+    re.IGNORECASE,
+)
+
+
+def _side_int(side: dict, key: str) -> int:
+    try:
+        return int(side.get(key) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _rate_mismatch(match: re.Match, rates: list[float]) -> bool:
+    value_text = match.group(1) or match.group(3)
+    decimals = len(match.group(2) or match.group(4) or "")
+    tolerance = 0.5 * 10 ** -decimals + 1e-9
+    return bool(rates) and not any(abs(float(value_text) - rate) <= tolerance for rate in rates)
+
+
+def summary_figure_mismatches(summary: str, compare_payload: dict[str, Any]) -> list[str]:
+    """The figures in ``summary`` that clearly contradict ``left`` / ``right``
+    (D-148): a failed-out-of-total claim whose count is no side's failures or
+    whose total is no side's total, or a pass / failure rate that is no side's.
+
+    Lenient on purpose (review findings 5-6): a figure passes when it matches
+    either side (or both runs together); a rate passes within the rounding its
+    written precision allows; every other number in the text is ignored.
+    """
+    sides = [s for s in (compare_payload.get("left"), compare_payload.get("right")) if isinstance(s, dict)]
+    if not sides or not summary:
+        return []
+
+    failed = {_side_int(s, "failed_tests") for s in sides}
+    failed |= {_side_int(s, "failed_tests") + _side_int(s, "broken_tests") for s in sides}
+    totals = {_side_int(s, "total_tests") for s in sides}
+    totals |= {
+        _side_int(s, "passed_tests") + _side_int(s, "failed_tests") + _side_int(s, "broken_tests") for s in sides
+    }
+    if len(sides) == 2:  # "out of 130 across both runs"
+        failed.add(sum(_side_int(s, "failed_tests") for s in sides))
+        totals.add(sum(_side_int(s, "total_tests") for s in sides))
+    pass_rates = [float(s["pass_rate"]) for s in sides if isinstance(s.get("pass_rate"), (int, float))]
+    fail_rates = [100.0 - rate for rate in pass_rates]
+
+    wrong: list[str] = []
+    for match in _FAILED_OUT_OF_RE.finditer(summary):
+        if _NOT_A_COUNT_BEFORE.search(summary[: match.start()]):
+            continue
+        count_text, total_text = next(
+            (match.group(i), match.group(i + 1)) for i in (1, 3, 5) if match.group(i) is not None
+        )
+        if int(count_text) not in failed or int(total_text) not in totals:
+            wrong.append(match.group(0))
+    wrong += [m.group(0) for m in _PASS_RATE_RE.finditer(summary) if _rate_mismatch(m, pass_rates)]
+    wrong += [m.group(0) for m in _FAIL_RATE_RE.finditer(summary) if _rate_mismatch(m, fail_rates)]
+    return wrong
 
 
 def build_validated_fallback_report(

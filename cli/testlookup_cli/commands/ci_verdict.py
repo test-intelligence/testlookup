@@ -157,7 +157,9 @@ async def _gather(
     return failures, manifest
 
 
-_FAILURE_COLUMNS = ["test_name", "suite_name", "class_name", "status"]
+# D-55: three columns, so a CI log at 80 characters keeps each row on its own lines; ``class_name`` stays
+# in ``-o json`` (the matching uses it, the reader rarely needs it to find the test).
+_FAILURE_COLUMNS = ["test_name", "suite_name", "status"]
 
 
 def _render_table(real: list[dict], quarantined: list[dict], strict: bool) -> None:

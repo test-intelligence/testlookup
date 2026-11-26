@@ -541,7 +541,7 @@ assistant is looking up), ``delta`` (answer text as it is written), then
 ``retry: true`` answers the last unanswered or stopped question again.
 Closing the connection stops the answer; text already sent is kept.
 
-Source: [backend/app/routers/chat.py:182](../../../backend/app/routers/chat.py#L182).
+Source: [backend/app/routers/chat.py:186](../../../backend/app/routers/chat.py#L186).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_session_access.<locals>._check`.
 

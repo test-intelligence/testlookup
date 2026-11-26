@@ -190,6 +190,22 @@ Existing usernames that contain `@` keep working for sign-in.
 | `POST /deep-investigate/{run_id}` in Rules mode | accepted | 422 "requires LLM or Auto mode" |
 | `POST /analyze` for a test with a human correction | returns the correction | the engine's answer, replacing the correction |
 
+### The local model path (batch 7)
+
+- **`AI_TIMEOUT_SECONDS` in `.env.example` is now 300** (the code default). An
+  install that copied the old example keeps 120 s until it changes the value.
+- **A local provider analyses one failure at a time** unless
+  `LLM_MAX_CONCURRENT_ANALYSES` is set; set it on a GPU host to keep parallel
+  calls (at most 3 is used).
+- **`POST /api/v1/test-management/plans/ai-create/async`** now answers 400 when
+  the project has no approved cases and 409 when no model can answer, instead of
+  queueing a task that cannot succeed; the task itself ends as `failure` with a
+  sentence rather than `success` with an error object.
+- **Agent pipelines** (`GET /api/v1/agents/pipelines...`) gain an optional
+  `stage_quality_detail` for degraded pipelines.
+- **The CLI's `ci-verdict` table** no longer prints `Class Name`; use `-o json`
+  for it.
+
 ### Follow-ups to batches 5 and 6
 
 - **A history import queues two more tasks** after it commits, both scoped to
