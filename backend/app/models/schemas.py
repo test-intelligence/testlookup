@@ -610,8 +610,9 @@ class MfaEnrollConfirmResponse(BaseModel):
     enabled: Literal[True] = True
     # Shown exactly once. Only digests are stored server-side.
     recovery_codes: List[str]
-    # Present only on the forced-enrollment path, where confirming enrollment
-    # is also what completes the login.
+    # Successful confirmation invalidates every older session, so both the
+    # voluntary and forced paths return the single MFA-assured replacement.
+    # Optional remains for wire compatibility with older pre-fix servers.
     tokens: Optional[TokenResponse] = None
 
 

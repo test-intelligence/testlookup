@@ -1,7 +1,11 @@
 import { useState } from 'react'
 import { Loader2, ShieldCheck } from 'lucide-react'
 import { confirmMfaEnrollment } from '@/hooks/useMfaStatus'
-import type { MfaEnrollConfirmResponse, MfaEnrollStartResponse } from '@/types/mfa'
+import type {
+  MfaEnrollConfirmResponse,
+  MfaEnrollStartResponse,
+  TokenResponse,
+} from '@/types/mfa'
 import { describeMfaError, type MfaErrorInfo } from '@/utils/mfaErrors'
 import MfaCodeField from './MfaCodeField'
 import OtpAuthQr from './OtpAuthQr'
@@ -14,6 +18,8 @@ interface Props {
   enrollmentToken?: string
   /** Fires after the user acknowledges the recovery codes. */
   onComplete: (result: MfaEnrollConfirmResponse) => void
+  /** Installs the MFA-assured replacement without dismissing recovery codes. */
+  onSessionIssued?: (tokens: TokenResponse) => void
   /** The enrollment token lapsed or was already spent — the caller must restart. */
   onTokenExpired?: (info: MfaErrorInfo) => void
   /** Already enrolled (409) — the caller should refresh status. */
@@ -33,6 +39,7 @@ export default function MfaEnrollPanel({
   enrollment,
   enrollmentToken,
   onComplete,
+  onSessionIssued,
   onTokenExpired,
   onAlreadyEnrolled,
   onCancel,
@@ -50,6 +57,7 @@ export default function MfaEnrollPanel({
     setError(null)
     try {
       const result = await confirmMfaEnrollment(code, enrollmentToken)
+      if (result.tokens) onSessionIssued?.(result.tokens)
       setConfirmed(result)
     } catch (err) {
       const info = describeMfaError(err)
@@ -70,7 +78,7 @@ export default function MfaEnrollPanel({
       <RecoveryCodesPanel
         codes={confirmed.recovery_codes}
         variant="initial"
-        acknowledgeLabel={confirmed.tokens ? 'Continue to TestLookup' : 'Finish'}
+        acknowledgeLabel={enrollmentToken ? 'Continue to TestLookup' : 'Finish'}
         onAcknowledge={() => onComplete(confirmed)}
       />
     )

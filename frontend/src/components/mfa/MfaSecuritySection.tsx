@@ -19,6 +19,7 @@ import type { MfaEnrollStartResponse } from '@/types/mfa'
 import { describeMfaError, type MfaErrorInfo } from '@/utils/mfaErrors'
 import { formatCompactDateTime } from '@/utils/formatters'
 import { PANEL_TITLE_CLASS } from '@/components/ui/PanelHeader'
+import { useAuthStore } from '@/store/authStore'
 import MfaCodeField, { type MfaFactorMode } from './MfaCodeField'
 import MfaEnrollPanel from './MfaEnrollPanel'
 import RecoveryCodesPanel from './RecoveryCodesPanel'
@@ -47,6 +48,8 @@ function formatEnrolledAt(iso: string | null): string | null {
  */
 export default function MfaSecuritySection() {
   const { data: status, error, isLoading, mutate } = useMfaStatus()
+  const user = useAuthStore(state => state.user)
+  const setAuth = useAuthStore(state => state.setAuth)
 
   const [panel, setPanel] = useState<Panel>('none')
   const [busy, setBusy] = useState(false)
@@ -226,6 +229,11 @@ export default function MfaSecuritySection() {
         {panel === 'enroll' && enrollment ? (
           <MfaEnrollPanel
             enrollment={enrollment}
+            onSessionIssued={(tokens) => {
+              if (user) {
+                setAuth(tokens.access_token, tokens.refresh_token, user)
+              }
+            }}
             onCancel={resetForms}
             onAlreadyEnrolled={() => {
               resetForms()

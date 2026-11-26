@@ -23,8 +23,8 @@ import { getData, postData, putData } from './http'
  *    stale token with **401**, and they are called from the login screen with
  *    no session. `api.ts` excludes the `/api/v1/auth/mfa/` prefix from the
  *    401-refresh-and-retry path for exactly that reason — do not re-add it.
- *  - `enroll/confirm` returns `tokens` only on the forced-enrollment path.
- *    On the voluntary path it is null and the caller keeps its session.
+ *  - `enroll/confirm` replaces every pre-enrollment session. The voluntary
+ *    caller installs the returned tokens before making another API request.
  */
 export const mfaService = {
   /** Begin enrollment. Pass `enrollmentToken` on the forced path, omit when signed in. */

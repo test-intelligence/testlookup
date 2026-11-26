@@ -958,7 +958,7 @@ Turn MFA off. Requires the password **and** a live second factor.
 A wrong password or a wrong second factor counts toward the account
 lockout; a locked account answers 429.
 
-Source: [backend/app/routers/mfa.py:480](../../../backend/app/routers/mfa.py#L480).
+Source: [backend/app/routers/mfa.py:519](../../../backend/app/routers/mfa.py#L519).
 
 Dependency chain: `OAuth2PasswordBearer`, `_require_interactive_user`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -1043,9 +1043,10 @@ Verify a code against the staged seed, then enable MFA.
 
 Recovery codes are minted in the same unit of work as the flag flip — an
 account must never reach ``mfa_enabled=True`` without a way back in. They
-are returned once and only digests are kept.
+are returned once and only digests are kept. Every older session is ended
+in that unit of work and one MFA-assured replacement is returned.
 
-Source: [backend/app/routers/mfa.py:301](../../../backend/app/routers/mfa.py#L301).
+Source: [backend/app/routers/mfa.py:328](../../../backend/app/routers/mfa.py#L328).
 
 Dependency chain: `_optional_session_user`, `get_db`.
 
@@ -1060,6 +1061,7 @@ Direct handler error branches (dependency/service errors can add others):
 ```python
 HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='That code did not match. Check your authenticator and try again.')
 HTTPException(status_code=status.HTTP_409_CONFLICT, detail='MFA is already enabled for this account.')
+HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail='Token revocation store unavailable; MFA was not enabled. Try again.')
 ```
 
 ### Declared wire contract
@@ -1115,7 +1117,7 @@ verify against, but ``users.mfa_enabled`` stays false until a code proves
 the authenticator actually holds it. An abandoned enrollment therefore
 changes nothing about how the account authenticates.
 
-Source: [backend/app/routers/mfa.py:261](../../../backend/app/routers/mfa.py#L261).
+Source: [backend/app/routers/mfa.py:288](../../../backend/app/routers/mfa.py#L288).
 
 Dependency chain: `_optional_session_user`, `get_db`.
 
@@ -1182,7 +1184,7 @@ Replace the recovery-code set. The previous codes stop working.
 A wrong password or a wrong second factor counts toward the account
 lockout; a locked account answers 429.
 
-Source: [backend/app/routers/mfa.py:543](../../../backend/app/routers/mfa.py#L543).
+Source: [backend/app/routers/mfa.py:582](../../../backend/app/routers/mfa.py#L582).
 
 Dependency chain: `OAuth2PasswordBearer`, `_require_interactive_user`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -1274,7 +1276,7 @@ Current MFA state for the caller.
 Readable with an API key (unlike the mutating endpoints) so a CI job can
 report on its owner's posture without being able to change it.
 
-Source: [backend/app/routers/mfa.py:589](../../../backend/app/routers/mfa.py#L589).
+Source: [backend/app/routers/mfa.py:628](../../../backend/app/routers/mfa.py#L628).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -1345,7 +1347,7 @@ Verify Mfa
 
 Exchange a challenge token plus a second factor for a real session.
 
-Source: [backend/app/routers/mfa.py:352](../../../backend/app/routers/mfa.py#L352).
+Source: [backend/app/routers/mfa.py:397](../../../backend/app/routers/mfa.py#L397).
 
 Dependency chain: `get_db`.
 

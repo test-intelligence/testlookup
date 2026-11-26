@@ -90,6 +90,22 @@ def test_mfa_session_exchange_locks_user_and_rejects_predating_challenge():
 
 
 @pytest.mark.regression
+def test_mfa_enrollment_serializes_revocation_before_replacement():
+    from app.routers import mfa
+
+    route = inspect.getsource(mfa.confirm_enrollment)
+    boundary = inspect.getsource(mfa._replace_sessions_after_mfa_enrollment)
+
+    assert "await _lock_account_row(db, user)" in route
+    assert route.index("mfa_service.confirm_enrollment") < route.index(
+        "_replace_sessions_after_mfa_enrollment"
+    )
+    assert boundary.index("_revoke_refresh_family") < boundary.index(
+        "revoke_all_user_tokens"
+    ) < boundary.index("_issue_session")
+
+
+@pytest.mark.regression
 @pytest.mark.asyncio
 async def test_mfa_challenge_issued_before_cutoff_is_rejected(monkeypatch):
     from app.routers import mfa
