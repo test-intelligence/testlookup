@@ -147,6 +147,15 @@ describe('authStore.fetchUser under MFA-era failures', () => {
     expect(mockPost).toHaveBeenCalledTimes(1)
   })
 
+  it('discards a refresh when a new sign-in happens before the refresh code runs', async () => {
+    const pending = useAuthStore.getState().refreshAccessToken()
+    useAuthStore.getState().setAuth('signed-in-access', 'signed-in-refresh', USER)
+
+    expect(await pending).toBeNull()
+    expect(useAuthStore.getState().token).toBe('signed-in-access')
+    expect(mockPost).not.toHaveBeenCalled()
+  })
+
   it('adopts a refresh completed by another tab while waiting for the browser lock', async () => {
     const stored = JSON.parse(localStorage.getItem(AUTH_STORAGE_KEY) ?? '{}')
     stored.state.token = 'other-tab-access'
