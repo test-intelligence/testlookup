@@ -68278,7 +68278,7 @@
     },
     "/api/v1/github/app/install-url": {
       "get": {
-        "description": "Where to install the App for this project, with a signed, user-bound, 10-minute state. QA lead.",
+        "description": "Create an administrator-approved setup transaction for this project's configured repository.",
         "operationId": "github_app_install_url_api_v1_github_app_install_url_get",
         "parameters": [
           {
@@ -68343,7 +68343,7 @@
     },
     "/api/v1/github/app/setup-callback": {
       "post": {
-        "description": "Record the installation GitHub sent back, for the project the signed state names.",
+        "description": "Verify and record the installation selected by the initiating administrator.",
         "operationId": "github_app_setup_callback_api_v1_github_app_setup_callback_post",
         "parameters": [
           {

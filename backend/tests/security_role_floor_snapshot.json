@@ -62,7 +62,7 @@
  "GET /api/v1/feature-flags": {"role": "ADMIN"},
  "GET /api/v1/feature-flags/{key}": {"role": "ADMIN"},
  "GET /api/v1/feature-flags/{key}/history": {"role": "ADMIN"},
- "GET /api/v1/github/app/install-url": {"role": "QA_LEAD"},
+ "GET /api/v1/github/app/install-url": {"role": "ADMIN"},
  "GET /api/v1/identity/events": {"role": "ADMIN"},
  "GET /api/v1/identity/sync-status": {"role": "ADMIN"},
  "GET /api/v1/integration-health/history/{provider}": {"role": "QA_LEAD"},

@@ -290,15 +290,9 @@ function RouteErrorFallback({ error }: { error: Error }) {
         {isStaleChunk ? 'This page is out of date.' : 'Something went wrong loading this page.'}
       </h2>
       <p className="mb-4 text-sm text-[var(--color-text-secondary)]">
-        {isStaleChunk ? (
-          <>
-            The site was redeployed while your tab was open and one of the
-            page modules couldn’t be fetched. Reloading will pick up the
-            latest version.
-          </>
-        ) : (
-          error.message || 'An unexpected error occurred. Try navigating back or refreshing.'
-        )}
+        {isStaleChunk
+          ? 'Reload to get the latest version.'
+          : error.message || 'Go back or reload to try again.'}
       </p>
       <button
         type="button"

@@ -239,6 +239,7 @@ export default function GitHubIntegrationPage() {
             installationId={existing?.installation_id ?? null}
             hasPat={Boolean(existing?.has_pat)}
             canEdit={canEdit}
+            canInstallApp={isAdmin}
             onChange={(kind) => setForm({ ...form, auth_kind: kind })}
           />
         )}

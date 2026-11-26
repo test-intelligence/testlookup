@@ -141,6 +141,67 @@ async def installation_token(api_base: str, installation_id: int, app: dict[str,
     return token
 
 
+async def verify_installation_repository(
+    api_base: str,
+    installation_id: int,
+    app: dict[str, Any],
+    repo_owner: str,
+    repo_name: str,
+) -> None:
+    """Prove the deployment App's installation includes the selected repository.
+
+    Minting the token makes GitHub verify that ``installation_id`` belongs to
+    this deployment App.  The installation-repositories API then verifies the
+    exact repository is in its current selection (a public repository being
+    readable is not sufficient).  No token or remote error body leaves this
+    boundary.
+    """
+    import httpx
+
+    from app.core.http_client import http_verify
+    from app.services.url_safety import egress_block_reason
+
+    token = await installation_token(api_base, installation_id, app)
+    base = api_base.rstrip("/")
+    expected = f"{repo_owner}/{repo_name}".casefold()
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "TestLookup/1.0",
+    }
+    page = 1
+    while page <= 1000:  # fail closed rather than loop forever on a malformed remote response
+        url = f"{base}/installation/repositories?per_page=100&page={page}"
+        block = await egress_block_reason(url)
+        if block:
+            raise GitHubAppUnavailable(f"Target host is not allowed ({block})")
+        try:
+            async with httpx.AsyncClient(verify=http_verify(), timeout=10.0, follow_redirects=False) as client:
+                response = await client.get(url, headers=headers)
+        except Exception as exc:  # noqa: BLE001
+            raise GitHubAppUnavailable(
+                f"Network error verifying the installation repository: {type(exc).__name__}"
+            ) from exc
+        if response.status_code != 200:
+            raise GitHubAppUnavailable("GitHub refused the installation repository list")
+        try:
+            body = response.json()
+            if not isinstance(body, dict):
+                raise ValueError("invalid repository response")
+            repositories = body.get("repositories")
+            total = body.get("total_count")
+            if not isinstance(repositories, list) or type(total) is not int or total < 0:
+                raise ValueError("invalid repository list")
+            if any(str(repo.get("full_name") or "").casefold() == expected for repo in repositories if isinstance(repo, dict)):
+                return
+        except (TypeError, ValueError):
+            raise GitHubAppUnavailable("GitHub returned an invalid installation repository list") from None
+        if page * 100 >= total or not repositories:
+            break
+        page += 1
+    raise GitHubAppUnavailable("The installation does not grant access to the configured repository")
+
+
 def clear_cache() -> None:
     with _cache_lock:
         _cache.clear()

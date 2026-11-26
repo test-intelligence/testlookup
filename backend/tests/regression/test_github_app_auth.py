@@ -8,7 +8,7 @@ Against the contract double (``tests/fakes/fake_integrations.py``) over an ASGI 
 * a ``pat`` project gets its PAT; an ``app`` project with no installation, or no
   App configured, gets None (or the reason, when asked) — never the PAT;
 * ``AI_OFFLINE_MODE`` refuses the exchange; a JWT signed by another key is refused;
-* the install ``state`` verifies only for the same user, unexpired and untampered;
+* setup verification proves that the installation token can read the selected repository;
 * nothing outside ``github_auth`` reads the GitHub PAT or the App private key.
 """
 from __future__ import annotations
@@ -16,7 +16,6 @@ from __future__ import annotations
 import asyncio
 import pathlib
 import re
-import time
 import uuid
 from types import SimpleNamespace
 
@@ -25,8 +24,6 @@ import jwt
 import pytest
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
-from fastapi import HTTPException
-
 from app.services import github_auth
 from tests.fakes.fake_integrations import FakeState, create_app
 
@@ -109,6 +106,18 @@ def test_offline_mode_refuses_the_exchange(fake, monkeypatch):
         asyncio.run(github_auth.installation_token("http://github.fake", 777, APP))
 
 
+def test_setup_verifies_the_installation_can_read_the_selected_repository(fake):
+    asyncio.run(github_auth.verify_installation_repository("http://github.fake", 777, APP, "acme", "payments"))
+    fake.github_installations["889"] = {
+        "app_id": "4242",
+        "repos": {f"acme/repo-{number:03}" for number in range(100)} | {"zzzz/target"},
+    }
+    asyncio.run(github_auth.verify_installation_repository("http://github.fake", 889, APP, "zzzz", "target"))
+    fake.github_installations["888"] = {"app_id": "4242", "repos": {"acme/other"}}
+    with pytest.raises(github_auth.GitHubAppUnavailable, match="does not grant access"):
+        asyncio.run(github_auth.verify_installation_repository("http://github.fake", 888, APP, "acme", "payments"))
+
+
 def _row(kind, installation=None):
     return SimpleNamespace(auth_kind=kind, installation_id=installation, api_base_url="http://github.fake")
 
@@ -153,23 +162,6 @@ def test_an_app_project_without_installation_or_app_never_falls_back_to_the_pat(
         asyncio.run(github_auth.get_github_token(None, pid, integration=_row("app", 777), raise_app_errors=True))
     with pytest.raises(github_auth.GitHubAppUnavailable, match="not installed"):
         asyncio.run(github_auth.get_github_token(None, pid, integration=_row("app"), raise_app_errors=True))
-
-
-def test_the_install_state_is_signed_user_bound_and_expires():
-    from app.routers.github_app import sign_state, verify_state
-
-    pid, uid = uuid.uuid4(), uuid.uuid4()
-    state = sign_state(pid, uid)
-    assert verify_state(state, uid) == pid
-    for bad, who, now in (
-        (state, uuid.uuid4(), None),                                  # another user
-        (state[:-2] + ("00" if not state.endswith("00") else "11"), uid, None),  # tampered
-        (sign_state(pid, uid, now=time.time() - 700), uid, None),   # expired
-        ("garbage.value", uid, None),
-    ):
-        with pytest.raises(HTTPException) as exc:
-            verify_state(bad, who, now=now)
-        assert exc.value.status_code == 400
 
 
 def test_only_github_auth_reads_the_github_credentials():

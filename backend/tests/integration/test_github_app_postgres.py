@@ -3,10 +3,12 @@
 * PUT stores the App id / slug and the private key in ``secret_service``; GET
   says ``private_key_set`` and never returns the key (nor does any log line);
   a key that is not an RSA PEM is a 422;
-* the install URL names the App's slug and carries a state the callback accepts
-  only from the same user;
-* the callback records the installation and switches the project to ``app``;
-  switching back to ``pat`` through the integration PUT keeps the installation id.
+* the install URL names the App's slug and carries a server-stored state the
+  callback burns before accepting only the initiating administrator;
+* the callback verifies repository access, records the installation and
+  switches the project to ``app``; a fresh install URL retries a burned flow;
+  switching auth for the same repository keeps the installation id, while a
+  repository change clears it and requires fresh administrator approval.
 
 Requires ``TESTLOOKUP_POSTGRES_TEST_DSN`` and a database at head; skips otherwise.
 """
@@ -29,6 +31,21 @@ pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
 PEM = rsa.generate_private_key(public_exponent=65537, key_size=2048).private_bytes(
     serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()).decode()
+
+
+class _Redis:
+    def __init__(self):
+        self.data = {}
+
+    async def set(self, key, value, *, ex, nx):
+        assert ex == 600 and nx is True
+        if key in self.data:
+            return False
+        self.data[key] = value
+        return True
+
+    async def getdel(self, key):
+        return self.data.pop(key, None)
 
 
 def _dsn() -> str:
@@ -92,13 +109,23 @@ async def test_settings_store_the_key_and_never_return_it(world, caplog):
     assert exc.value.status_code == 422
 
 
-async def test_install_url_and_callback_record_the_installation(world):
+async def test_install_url_and_callback_record_the_installation(world, monkeypatch):
     from app.models.postgres import GitHubIntegration
     from app.models.schemas import GitHubAppSettingsWrite, GitHubAppSetupCallback, GitHubIntegrationWrite
     from app.routers.github_app import github_app_install_url, github_app_setup_callback, put_github_app_settings
+    from app.services import github_app_setup_state, github_auth
     from app.routers.github_integration import upsert_github_integration
 
     db, admin, lead, project = world["db"], world["admin"], world["lead"], world["project"]
+    redis = _Redis()
+    monkeypatch.setattr(github_app_setup_state, "get_redis", lambda: redis)
+
+    async def verify_repo(api_base, installation_id, app, owner, repo):
+        assert (api_base, installation_id, app["app_id"], owner, repo) == (
+            "https://api.github.com", 777, "4242", "acme", "payments",
+        )
+
+    monkeypatch.setattr(github_auth, "verify_installation_repository", verify_repo)
     await put_github_app_settings(GitHubAppSettingsWrite(app_id="4242", slug="testlookup-demo", private_key=PEM),
                                   db=db, current_user=admin)
     url = await github_app_install_url(project_id=project.id, db=db, current_user=admin)
@@ -110,6 +137,12 @@ async def test_install_url_and_callback_record_the_installation(world):
         await github_app_setup_callback(GitHubAppSetupCallback(installation_id=777, state=state), db=db, current_user=lead)
     assert exc.value.status_code == 400
 
+    with pytest.raises(HTTPException) as exc:  # the refused callback burned the transaction
+        await github_app_setup_callback(GitHubAppSetupCallback(installation_id=777, state=state), db=db, current_user=admin)
+    assert exc.value.status_code == 400
+
+    retry = await github_app_install_url(project_id=project.id, db=db, current_user=admin)
+    state = parse_qs(urlsplit(retry.url).query)["state"][0]
     done = await github_app_setup_callback(GitHubAppSetupCallback(installation_id=777, state=state), db=db, current_user=admin)
     assert done.installation_id == 777 and done.auth_kind == "app"
     db.expire_all()
@@ -120,3 +153,12 @@ async def test_install_url_and_callback_record_the_installation(world):
                                                                               auth_kind="pat"), db=db, current_user=admin)
     await db.commit()
     assert back.auth_kind == "pat" and back.installation_id == 777
+
+    changed = await upsert_github_integration(
+        project.id,
+        GitHubIntegrationWrite(repo_owner="acme", repo_name="checkout", auth_kind="app"),
+        db=db,
+        current_user=lead,
+    )
+    await db.commit()
+    assert changed.auth_kind == "app" and changed.installation_id is None

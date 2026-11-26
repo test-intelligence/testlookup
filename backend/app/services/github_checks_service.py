@@ -127,11 +127,12 @@ async def _post_allowed(
 
 
 async def get_integration(
-    db: AsyncSession, project_id: uuid.UUID,
+    db: AsyncSession, project_id: uuid.UUID, *, for_update: bool = False,
 ) -> Optional[GitHubIntegration]:
-    result = await db.execute(
-        select(GitHubIntegration).where(GitHubIntegration.project_id == project_id)
-    )
+    query = select(GitHubIntegration).where(GitHubIntegration.project_id == project_id)
+    if for_update:
+        query = query.with_for_update().execution_options(populate_existing=True)
+    result = await db.execute(query)
     return result.scalar_one_or_none()
 
 
@@ -159,7 +160,11 @@ async def upsert_integration(
     ``pr_comment_mode`` (PMF US-4.1): ``off`` | ``failures_only`` |
     ``always``. ``None`` leaves the stored value alone.
     """
-    row = await get_integration(db, project_id)
+    # Serialize with GitHub App setup completion.  Otherwise a repository
+    # update that read the old NULL installation id could wait behind setup's
+    # write, then preserve the newly-approved id for its unverified target.
+    row = await get_integration(db, project_id, for_update=True)
+    installation_unbound = False
     if row is None:
         row = GitHubIntegration(
             project_id=project_id,
@@ -171,11 +176,23 @@ async def upsert_integration(
         )
         db.add(row)
     else:
+        from app.services.url_safety import same_api_base, url_origin
+
+        # An App installation is approved for the exact repository identity
+        # that the administrator completed setup for.  Never carry that
+        # authority to a repository or API base changed later by a project
+        # editor; a fresh administrator setup must verify the new selection.
+        app_target_changed = (
+            row.repo_owner != repo_owner
+            or row.repo_name != repo_name
+            or not same_api_base(row.api_base_url, api_base_url)
+        )
+        if getattr(row, "installation_id", None) is not None and app_target_changed:
+            row.installation_id = None
+            installation_unbound = True
         # A stored token was entered for one host. Moving the integration to
         # another host without a new token in the same request clears it, so
         # no later call can deliver it there.
-        from app.services.url_safety import url_origin
-
         if pat is None and row.has_pat and url_origin(row.api_base_url) != url_origin(api_base_url):
             pat = ""
         row.repo_owner = repo_owner
@@ -222,7 +239,8 @@ async def upsert_integration(
             actor_name=getattr(actor, "username", None) or getattr(actor, "email", None),
             changed_fields=["repo_owner", "repo_name", "api_base_url", "enabled"]
             + (["pat"] if pat is not None else [])
-            + (["pr_comment_mode"] if pr_comment_mode is not None else []),
+            + (["pr_comment_mode"] if pr_comment_mode is not None else [])
+            + (["installation_id"] if installation_unbound else []),
         )
         db.add(entry)
     except Exception as exc:

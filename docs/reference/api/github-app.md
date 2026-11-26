@@ -8,22 +8,25 @@ Generated from tracked source by `scripts/generate_reference.py`. Do not edit by
 
 Github App Install Url
 
-Where to install the App for this project, with a signed, user-bound, 10-minute state. QA lead.
+Create an administrator-approved setup transaction for this project's configured repository.
 
-Source: [backend/app/routers/github_app.py:152](../../../backend/app/routers/github_app.py#L152).
+Source: [backend/app/routers/github_app.py:130](../../../backend/app/routers/github_app.py#L130).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-project_id: uuid.UUID=Query(...), db: AsyncSession=Depends(get_db), current_user: User=Depends(require_role(UserRole.QA_LEAD))
+project_id: uuid.UUID=Query(...), db: AsyncSession=Depends(get_db), current_user: User=Depends(require_role(UserRole.ADMIN))
 ```
 
 Direct handler error branches (dependency/service errors can add others):
 
 ```python
+HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Save the project's GitHub repository on Settings › GitHub first, then install the App")
 HTTPException(status_code=status.HTTP_409_CONFLICT, detail="The deployment's GitHub App is not configured. An administrator sets it in Settings › GitHub App.")
+HTTPException(status_code=status.HTTP_409_CONFLICT, detail="The project's GitHub API base must match the deployment GitHub App before installation.")
+HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=SETUP_UNAVAILABLE)
 ```
 
 ### Declared wire contract
@@ -95,9 +98,9 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 
 Github App Setup Callback
 
-Record the installation GitHub sent back, for the project the signed state names.
+Verify and record the installation selected by the initiating administrator.
 
-Source: [backend/app/routers/github_app.py:168](../../../backend/app/routers/github_app.py#L168).
+Source: [backend/app/routers/github_app.py:171](../../../backend/app/routers/github_app.py#L171).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -110,8 +113,11 @@ payload: GitHubAppSetupCallback, db: AsyncSession=Depends(get_db), current_user:
 Direct handler error branches (dependency/service errors can add others):
 
 ```python
-HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='QA lead or administrator only')
+HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=INVALID_STATE)
 HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Save the project's GitHub repository on Settings › GitHub first, then install the App")
+HTTPException(status_code=status.HTTP_409_CONFLICT, detail='GitHub did not confirm that this App installation can access the configured repository. Check the repository selection and start the installation again.')
+HTTPException(status_code=status.HTTP_409_CONFLICT, detail=SETUP_CHANGED)
+HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=SETUP_UNAVAILABLE)
 ```
 
 ### Declared wire contract
@@ -185,7 +191,7 @@ Get Github App Settings
 
 The deployment's GitHub App (secrets as *_set only). ADMIN.
 
-Source: [backend/app/routers/github_app.py:99](../../../backend/app/routers/github_app.py#L99).
+Source: [backend/app/routers/github_app.py:77](../../../backend/app/routers/github_app.py#L77).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -256,7 +262,7 @@ Put Github App Settings
 
 Store the App id / slug, and the private key / webhook secret (None keeps, "" clears). ADMIN.
 
-Source: [backend/app/routers/github_app.py:108](../../../backend/app/routers/github_app.py#L108).
+Source: [backend/app/routers/github_app.py:86](../../../backend/app/routers/github_app.py#L86).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
