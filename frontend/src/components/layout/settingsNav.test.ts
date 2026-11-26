@@ -139,7 +139,7 @@ describe('settings sub-nav: who sees what', () => {
     expect(ids.indexOf('review-gate')).toBe(ids.indexOf('ai-agents') + 1)
     expect(ITEMS.find((i) => i.id === 'review-gate')).toMatchObject({
       label: 'Review gate',
-      description: 'When unreviewed AI reports stop leaving TestLookup',
+      description: 'When unreviewed reports stop leaving TestLookup',
       to: '/settings/review-gate',
       requires: 'admin',
     })

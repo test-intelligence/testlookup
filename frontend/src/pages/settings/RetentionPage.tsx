@@ -108,7 +108,7 @@ const DAY_FIELDS: Array<{ field: RetentionDayField; label: string; help: string 
   {
     field: 'runs_days',
     label: 'Runs & analysis',
-    help: 'Test runs and everything derived from them: test cases, AI analyses, failure clusters, and agent pipeline rows older than the cutoff.',
+    help: 'Test runs and everything derived from them: test cases, analyses, failure clusters, and agent pipeline rows older than the cutoff.',
   },
   {
     field: 'artifacts_days',
@@ -131,12 +131,12 @@ const DAY_FIELDS: Array<{ field: RetentionDayField; label: string; help: string 
 const CAP_FIELDS: Array<{ field: RetentionCapField; label: string; help: string }> = [
   {
     field: 'ai_versions_per_run',
-    label: 'AI versions kept per run (per kind)',
+    label: 'Analysis versions kept per run (per kind)',
     help: 'Oldest are pruned first; version 1 and any version cited by a published decision report are never pruned.',
   },
   {
     field: 'ai_versions_per_test',
-    label: 'AI versions kept per test result',
+    label: 'Analysis versions kept per test result',
     help: 'Per test result of a run (pipeline, manual analysis, human correction). Oldest are pruned first; version 1 is never pruned.',
   },
 ]
@@ -166,7 +166,7 @@ const CANDIDATE_ROWS: Array<{
   // W03 AIH-06: versions of purged runs, the per-test rows their delete
   // cascades, and every version over a cap. Absent on an older server, which
   // the `== null` render below shows as "not measured".
-  { key: 'ai_history_versions', label: 'AI history versions' },
+  { key: 'ai_history_versions', label: 'Analysis history versions' },
   // W12 SRCH-05: a FIXED 30-day window, not one of the clocks above.
   { key: 'search_usage_rows', label: 'Search usage rows (kept 30 days)' },
   // W16 AGT-13: pending shadow pairs, the same kind of fixed window; labelled pairs stay.
@@ -234,10 +234,10 @@ function reportedCaps(saved: RetentionPolicy): RetentionCapField[] {
 function aiHistorySummary(saved: RetentionPolicy): string {
   const run = saved.ai_versions_per_run
   const test = saved.ai_versions_per_test
-  if (run == null && test == null) return 'AI history caps: not reported by this server.'
+  if (run == null && test == null) return 'Analysis history caps: not reported by this server.'
   const perRun = run == null ? 'not reported' : `${run} ${run === 1 ? 'version' : 'versions'}`
   const perTest = test == null ? 'not reported' : String(test)
-  return `AI history: keep ${perRun} per run, ${perTest} per test.`
+  return `Analysis history: keep ${perRun} per run, ${perTest} per test.`
 }
 
 /**
@@ -782,7 +782,7 @@ export default function RetentionPage() {
             {aiHistorySummary(seededPolicy)}
           </p>
           <p className="text-2xs text-[var(--color-text-faint)]">
-            Every AI analysis is kept as a version: the run summary and analysis digest of each
+            Every analysis is kept as a version: the run summary and analysis digest of each
             run, and the analysis of each test result. The caps apply each time a version is
             stored, even while scheduled purging is off.
           </p>

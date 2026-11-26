@@ -15,7 +15,9 @@ REAL runner, on THIS module's engine (pool 1 + 1 — the reference K3s install w
    block equals these counts.
 2. NOTHING FIRES — G-2 recorders (Celery ``send_task`` / ``Task.apply_async`` bound to the real signature and
    never published, ``aiosmtplib``, ``httpx``, ``BudgetedLLM`` — patched on the CLASSES from this test) see
-   exactly ONE publish, ``reindex_search`` with ``{"project_id": <copy>, "full": True}``, and zero mail / HTTP /
+   exactly THREE publishes, all scoped to the copy: ``reindex_search`` ``{"project_id": <copy>, "full": True}``,
+   then ``recompute_flaky_scores`` and ``take_coverage_snapshot`` ``{"project_id": <copy>}`` (derived data, the
+   2026-11-25 follow-up to D-50 / D-34), and zero mail / HTTP /
    LLM; the engine listener sees no INSERT into an outbox / delivery / notification / defect / quarantine table
    and exactly the two W24 activity rows; G-3 — the insights / cadence / flaky sweeps over the copy and
    ``due_project_ids`` with the recorders armed: zero, and the copy is not due.
@@ -739,9 +741,13 @@ async def test_the_copys_purge_is_paused_and_the_report_says_what_was_written(en
 # ── 2. nothing an ingest does is triggered ───────────────────────────────────
 
 
-async def test_exactly_one_publish_and_no_mail_http_or_model_call(env, imported):
+async def test_exactly_the_derived_data_publishes_and_no_mail_http_or_model_call(env, imported):
     copy = str(imported.copy)
-    assert imported.publishes == [("app.worker.tasks.reindex_search", {"project_id": copy, "full": True})]
+    assert imported.publishes == [
+        ("app.worker.tasks.reindex_search", {"project_id": copy, "full": True}),
+        ("app.worker.tasks.recompute_flaky_scores", {"project_id": copy}),
+        ("app.worker.tasks.take_coverage_snapshot", {"project_id": copy}),
+    ]
     assert imported.outward == {"mail": 0, "http": 0, "llm": 0}
     assert not set(imported.inserts) & set(NEVER_INSERTED), imported.inserts
     events = (await _scalar(env, "SELECT array_agg(event_type ORDER BY event_type) FROM project_activity_events "

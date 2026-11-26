@@ -183,6 +183,18 @@ async def test_a_manual_proposal_stores_its_proposer(quiet, monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["agent_action", "flaky_sentinel_agent"])
+async def test_an_agent_proposal_records_no_person_as_its_proposer(quiet, monkeypatch, method):
+    # D-53 follow-up: the agent-action adapter passes the APPROVER as ``actor`` (it proposes and approves in one
+    # step), so the row read "Proposed by <approver>". The agent asked; the approver is recorded by approve().
+    _session(monkeypatch, [])
+
+    row, _ = await _propose(detection_method=method, flip_rate=0.5, flip_window_size=10)
+
+    assert row.proposed_by_user_id is None
+
+
+@pytest.mark.asyncio
 async def test_a_detected_proposal_has_no_proposer(quiet, monkeypatch):
     _session(monkeypatch, [])
 

@@ -1204,7 +1204,7 @@ function ClusterRow({ cluster }: { cluster: ProposedCluster }) {
                 </strong>.
               </>
             ) : <> No cohesion score.</>}
-            {' '}No AI finding recorded for this cluster yet.
+            {' '}No investigation finding recorded for this cluster yet.
           </p>
         )}
         {/* Only the service the AI finding names. This line used to add an

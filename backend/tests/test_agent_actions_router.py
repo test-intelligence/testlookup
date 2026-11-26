@@ -231,7 +231,7 @@ async def test_approving_on_a_report_still_pending_review_is_refused_and_stages_
     db = _Session(_row(), review_state="pending_review")
     status, code, message = await _refused(db, _user(), status="approved")
     assert (status, code) == (409, "review_not_accepted")
-    assert message.startswith("Accept the AI report first")
+    assert message.startswith("Accept the run report first")
     assert _wrote_nothing(db)  # no outbox row, no audit, no activity
     live.resolve.assert_not_awaited()
 

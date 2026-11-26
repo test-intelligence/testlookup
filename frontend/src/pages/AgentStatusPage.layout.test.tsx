@@ -141,7 +141,7 @@ function renderAt(entry: string) {
 async function renderWithPipeline() {
   await mockHooks()
   const view = renderAt('/agents?run=run-1')
-  await screen.findByRole('heading', { name: 'AI Report' })
+  await screen.findByRole('heading', { name: 'Run Report' })
   return view
 }
 
@@ -193,8 +193,8 @@ describe('Pipeline runs — the page template (P5, D3)', () => {
     const primaries = container.querySelectorAll('[data-primary]')
     expect(primaries).toHaveLength(1)
     const primary = primaries[0] as HTMLElement
-    expect(primary).toHaveAttribute('aria-label', 'AI report')
-    expect(within(primary).getByRole('heading', { name: 'AI Report' })).toBeInTheDocument()
+    expect(primary).toHaveAttribute('aria-label', 'Run report')
+    expect(within(primary).getByRole('heading', { name: 'Run Report' })).toBeInTheDocument()
     // A block of the page itself (a sibling of the header), not a grid column.
     const header = container.querySelector('[data-page-header]') as HTMLElement
     expect(primary.parentElement).toBe(header.parentElement)
@@ -212,7 +212,7 @@ describe('Pipeline runs — the page template (P5, D3)', () => {
   it('puts the AI report above Agent stages', async () => {
     await renderWithPipeline()
     expect(
-      precedes(screen.getByRole('heading', { name: 'AI Report' }), stagesToggle()),
+      precedes(screen.getByRole('heading', { name: 'Run Report' }), stagesToggle()),
       'the AI report is the headline output and must come before the stage detail',
     ).toBe(true)
   })
@@ -237,7 +237,7 @@ describe('Pipeline runs — the page template (P5, D3)', () => {
     expect(screen.getByText('Raw stage cards')).toBeInTheDocument()
     // Opening the mechanism must not take the conclusion with it.
     expect(screen.getAllByText(/DB timeout regression/i).length).toBeGreaterThan(0)
-    expect(screen.getByRole('heading', { name: 'AI Report' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Run Report' })).toBeInTheDocument()
 
     fireEvent.click(stagesToggle())
     await waitFor(() => {
@@ -300,7 +300,7 @@ describe('Pipeline runs — the page template (P5, D3)', () => {
 
     await waitFor(() => expect(location).toBe('/agents?run=run-1'))
     expect((screen.getByLabelText(/test suite & build/i) as HTMLSelectElement).value).toBe('run-1')
-    expect(screen.getByRole('heading', { name: 'AI Report' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Run Report' })).toBeInTheDocument()
     expect(within(screen.getByRole('region', { name: 'Pipelines' })).getByRole('button', { name: /offline pipeline/i }))
       .toHaveAttribute('aria-pressed', 'true')
   })
@@ -308,7 +308,7 @@ describe('Pipeline runs — the page template (P5, D3)', () => {
   it('collapses live executions into a disclosure after the report', async () => {
     await mockHooks({ liveRuns: [LIVE_RUN] })
     const { container } = renderAt('/agents?run=run-1')
-    await screen.findByRole('heading', { name: 'AI Report' })
+    await screen.findByRole('heading', { name: 'Run Report' })
     const toggle = screen.getByRole('button', { name: /^Live executions/ })
     expect(toggle).toHaveAttribute('aria-expanded', 'false')
     expect(toggle).toHaveTextContent('1 running')
@@ -323,7 +323,7 @@ describe('Pipeline runs — the page template (P5, D3)', () => {
   it('a live run that has executed nothing shows no rate, not 0% (D-0005)', async () => {
     await mockHooks({ liveRuns: [{ ...LIVE_RUN, passed: 0, failed: 0, broken: 0, skipped: 2, pass_rate: 0 }, { ...LIVE_RUN, run_id: 'live-2', run_seq: 78 }] })
     renderAt('/agents?run=run-1')
-    await screen.findByRole('heading', { name: 'AI Report' })
+    await screen.findByRole('heading', { name: 'Run Report' })
     fireEvent.click(screen.getByRole('button', { name: /^Live executions/ }))
     const rates = Array.from(document.querySelectorAll('[data-live-pass-rate]'), (el) => el.textContent)
     expect(rates).toEqual(['—', '80%'])

@@ -127,7 +127,7 @@ LANE_SENTENCES = {
 
 # ── Copy the card renders around the lanes (§2; the frontend file declares the same names) ──────────────────────
 CARD_TITLE = "Observability evidence"   # the region name: never "Timeline" / "Evidence" alone (D-5)
-HEADER_SENTENCE = "Evidence the AI analysis already fetched — nothing is fetched when you open this card."
+HEADER_SENTENCE = "Evidence the analysis already fetched — nothing is fetched when you open this card."
 OFFLINE_NOW_SENTENCE = "AI offline mode is on, so analyses fetch no observability evidence."   # labelled "now"
 UNTIMED_HEADING = "Without a time"
 TRUNCATED_SENTENCE = "Some items were left out to keep this lane readable."

@@ -76,7 +76,7 @@ Duration uses the coefficient of variation (standard deviation ÷ mean). At or a
 
 Click a test on **Detected** for the detail. It opens under the test's row (the address carries it, `?test=`, so a refresh opens it again and **Back** closes it), with the flakiness score: the score on a 0-1 bar, its band and observation count (`medium · 23 observations`), when it was scored, and the four signals with their value and weight (`Result volatility (pass/fail flips) 0.70 × 0.45`, then `Weights sum to 1.00`); a test below the floor reads `insufficient: 3 of 5 observations`. Below that: total and failed runs, when it became flaky, the failure rate with its 95% confidence interval, the ML flakiness confidence, the likely cause, the step that fails (for step-based tests), and suggested stabilisation actions. The test's own page shows **Cross-run step flakiness**: which step flips between pass and fail across runs, so you can fix that step rather than the whole test.
 
-**Refresh** recomputes the detection now (`QA_ENGINEER` or higher).
+**Refresh** recomputes the detection now and queues the project's flakiness scores (`QA_ENGINEER` or higher). Scores are also computed every night, and once after a project's history is imported.
 
 ## Quarantine on the Flaky tests page
 

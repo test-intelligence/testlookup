@@ -157,7 +157,7 @@ For one run, the release-risk stage produces one of three values, plus the reaso
 
 Alongside it you get a **risk score**, **dimension scores**, **blocking issues**, **conditions for go**, and the **version of the scoring model** used — so a recommendation from last month can be read in the terms that produced it.
 
-When the administrator has made human review of AI reports mandatory, a run whose report has not been reviewed yet shows **PENDING** until a QA lead accepts the report; see [Your inbox and approvals](/docs/inbox#ai-reports).
+When the administrator has made human review of run reports mandatory, a run whose report has not been reviewed yet shows **PENDING** until a QA lead accepts the report; see [Your inbox and approvals](/docs/inbox#run-reports).
 
 ## The seven risk dimensions
 

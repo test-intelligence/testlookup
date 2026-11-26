@@ -66,7 +66,7 @@ describe('ObservabilityEvidenceCard', () => {
     await renderCard()
     const region = card()
     expect(region).toHaveAttribute('data-axis-state', 'timed')
-    expect(within(region).getByText('Evidence the AI analysis already fetched — nothing is fetched when you open this card.')).toBeInTheDocument()
+    expect(within(region).getByText('Evidence the analysis already fetched — nothing is fetched when you open this card.')).toBeInTheDocument()
     expect(region.querySelector('[data-observability-analysis]')).toHaveAttribute('data-observability-analysis', 'pipeline-sentinel-1')
     expect(region.querySelector('[data-observability-analysed]')?.textContent).toMatch(/^From the analysis of .+\.$/)
     expect(region.querySelector('[data-observability-others]')).toHaveTextContent('2 earlier analyses not shown.')

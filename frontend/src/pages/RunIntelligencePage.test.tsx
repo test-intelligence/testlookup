@@ -897,7 +897,7 @@ describe('RunIntelligencePage', () => {
     })
     renderRunIntel()
     openEvidence()
-    await screen.findByRole('heading', { name: 'AI confidence' })
+    await screen.findByRole('heading', { name: 'Confidence' })
     expect(screen.queryByText('Criticality scoring')).toBeNull()
     expect(screen.queryByText('Release risk assessment')).toBeNull()
   })
@@ -922,7 +922,7 @@ describe('RunIntelligencePage', () => {
     })
     renderRunIntel()
     openEvidence()
-    await screen.findByRole('heading', { name: 'AI confidence' })
+    await screen.findByRole('heading', { name: 'Confidence' })
     expect(screen.getByText('Criticality scoring')).toBeInTheDocument()
     expect(screen.getByText('Release risk assessment')).toBeInTheDocument()
   })
@@ -948,7 +948,7 @@ describe('RunIntelligencePage', () => {
       </MemoryRouter>,
     )
     openEvidence()
-    await screen.findByRole('heading', { name: 'AI confidence' })
+    await screen.findByRole('heading', { name: 'Confidence' })
     expect(screen.getAllByTestId('ai-suggested-badge').length).toBeGreaterThan(0)
     // A confidence never renders without its calibration basis.
     expect(screen.getByTestId('ai-basis-chip')).toHaveTextContent('estimated')
@@ -981,7 +981,7 @@ describe('RunIntelligencePage', () => {
       </MemoryRouter>,
     )
     openEvidence()
-    await screen.findByRole('heading', { name: 'AI confidence' })
+    await screen.findByRole('heading', { name: 'Confidence' })
     expect(screen.getByTestId('ai-fallback-notice')).toHaveTextContent(
       /The LLM was unavailable.*rules engine/i,
     )
@@ -1090,12 +1090,12 @@ describe('RunIntelligenceBody — the page template (P4)', () => {
     renderBody()
     expect(screen.queryByText('Composite risk score')).toBeNull()
     expect(screen.queryByRole('group', { name: /^Stage \d+:/ })).toBeNull()
-    expect(screen.queryByRole('heading', { name: 'AI confidence' })).toBeNull()
+    expect(screen.queryByRole('heading', { name: 'Confidence' })).toBeNull()
     expect(screen.queryByRole('heading', { name: 'Failure category' })).toBeNull()
     openScore()
     expect(screen.getByText('Composite risk score')).toBeInTheDocument()
     openEvidence()
-    expect(screen.getByRole('heading', { name: 'AI confidence' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Confidence' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Test outcome' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Recommended actions' })).toBeInTheDocument()
   })
@@ -1127,7 +1127,7 @@ describe('RunIntelligenceBody — the page template (P4)', () => {
     const outcome = screen.getByRole('heading', { level: 3, name: 'Test outcome' }).closest('[data-panel]') as HTMLElement
     const strip = outcome.querySelector('[data-kpi-strip]') as HTMLElement
     expect(strip.querySelectorAll('[data-metric-card="compact"]')).toHaveLength(5)
-    for (const name of ['Recommended actions', 'AI confidence', 'Failure category']) {
+    for (const name of ['Recommended actions', 'Confidence', 'Failure category']) {
       expect(screen.getByRole('heading', { level: 3, name }).closest('[data-panel]'), name).not.toBeNull()
     }
   })
@@ -1142,7 +1142,7 @@ describe('RunIntelligenceBody — the page template (P4)', () => {
     expect(verdict.querySelector('[data-banner-pill]')).toHaveTextContent('No-Go')
     expect(within(verdict).getByText('release blocked')).toBeInTheDocument()
     const facts = Array.from(verdict.querySelectorAll('[data-banner-fact]')).map((f) => f.textContent)
-    expect(facts).toEqual(['Risk 68/100', 'Blocking issues 1', 'AI confidence 88%'])
+    expect(facts).toEqual(['Risk 68/100', 'Blocking issues 1', 'Confidence 88%'])
     expect(within(verdict).getByText(/Resolve DB connection pool exhaustion/)).toBeInTheDocument()
     expect(within(verdict).getByText('High user impact with product bugs detected.')).toBeInTheDocument()
   })
@@ -1151,7 +1151,7 @@ describe('RunIntelligenceBody — the page template (P4)', () => {
     mockHooks({ intelligence: MOCK_INTELLIGENCE })
     renderBody()
     fireEvent.click(within(screen.getByRole('region', { name: 'Release verdict' })).getByRole('button', { name: /Decision trail/ }))
-    expect(screen.getByRole('region', { name: 'AI decision trail' })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Decision trail' })).toBeInTheDocument()
   })
 
   it('shows only the failure categories the data names: no "None detected this run" placeholder rows', () => {

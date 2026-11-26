@@ -190,6 +190,24 @@ Existing usernames that contain `@` keep working for sign-in.
 | `POST /deep-investigate/{run_id}` in Rules mode | accepted | 422 "requires LLM or Auto mode" |
 | `POST /analyze` for a test with a human correction | returns the correction | the engine's answer, replacing the correction |
 
+### Follow-ups to batches 5 and 6
+
+- **A history import queues two more tasks** after it commits, both scoped to
+  the imported project: `recompute_flaky_scores` and `take_coverage_snapshot`
+  (which now takes an optional `project_id`). Workers that route tasks by name
+  need no change; both run on the `default` queue.
+- **Agent-proposed quarantines** (`detection_method: "agent_action"`) record no
+  `proposed_by_user_id`; the approving person is still `approved_by_user_id`.
+- **Sentences the API returns changed wording**: agent-action outcomes and the
+  `review_not_accepted` error ("Accept the run report first ..."), the review
+  gate's audit lines ("runs' reports would have been withheld"), the
+  observability card header, the `analysis.retried` / `analysis.cancelled`
+  activity sentences and the analysis-compare messages ("has no analysis to
+  compare"). Codes and fields are unchanged; match on those, not the text.
+- **Guide anchors renamed**: `#ai-reports` is now `#run-reports`,
+  `#ai-history` `#analysis-history`, and
+  `#root-cause-ai-deep-investigation` `#root-cause-deep-investigation`.
+
 ### Wording and small UI (batch 6)
 
 - **Plan items** (`GET /api/v1/test-management/plans/{id}/items`) gain an optional

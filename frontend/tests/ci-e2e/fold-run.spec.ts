@@ -130,7 +130,7 @@ test('each tab renders its section and makes its own requests only when opened',
   // Evidence: the AI report of the run's pipeline.
   await tabs.getByRole('tab', { name: 'Evidence' }).click()
   await expect(page).toHaveURL(/[?&]tab=evidence/)
-  await expect(page.getByRole('region', { name: 'AI report' })).toContainText(AI_REPORT_SUMMARY)
+  await expect(page.getByRole('region', { name: 'Run report' })).toContainText(AI_REPORT_SUMMARY)
   await networkQuiet(page, api)
   for (const path of TAB_ONLY.evidence) expect(requestsTo(api, path).length, String(path)).toBeGreaterThan(0)
   // No other tab asked for the Timing tab's reads (W39: the evidence timeline belongs to Timing only).
@@ -149,7 +149,7 @@ test('the old URLs of the merged pages land on their tab', async ({ page }) => {
   for (const [old, tab, sentinel] of [
     [`/runs/${RUN_ID}/intelligence`, 'analysis', page.locator('[data-status-banner]')],
     [`/deep-investigate/${RUN_ID}`, 'analysis', page.getByRole('region', { name: 'Deep investigation' })],
-    [`/agents/run/${RUN_ID}`, 'evidence', page.getByRole('region', { name: 'AI report' })],
+    [`/agents/run/${RUN_ID}`, 'evidence', page.getByRole('region', { name: 'Run report' })],
   ] as const) {
     await page.goto(old)
     await expect(page).toHaveURL(new RegExp(`/runs/${RUN_ID}\\?tab=${tab}$`))

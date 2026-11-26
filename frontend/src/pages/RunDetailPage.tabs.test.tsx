@@ -329,7 +329,7 @@ describe('Run page — tabs', () => {
 
   it('?tab=evidence renders the AI report of the run\'s newest pipeline (what /agents/run/:id showed), stages collapsed', () => {
     renderAt('/runs/run-1?tab=evidence')
-    const report = screen.getByRole('region', { name: 'AI report' })
+    const report = screen.getByRole('region', { name: 'Run report' })
     expect(within(report).getByText('Two checkout tests fail after the timeout change.')).toBeInTheDocument()
     // The stages are the "Agent stages" Disclosure since P5 (was a Show/Hide stages button).
     expect(within(report).getByRole('button', { name: 'Agent stages' })).toHaveAttribute('aria-expanded', 'false')
@@ -444,10 +444,10 @@ describe('Run page — one header', () => {
     expect(items).toEqual([
       'Trigger pipeline',
       'Deep investigation',
-      'Refresh AI analysis',
+      'Refresh analysis',
       'Export PDF',
       'Download evidence bundle',
-      'Export AI history',
+      'Export analysis history',
       'Compare to previous run',
       'Release gate',
     ])
@@ -485,7 +485,7 @@ describe('Run page — one header', () => {
     hooks.useRun.mockReturnValue({ data: undefined, error: undefined, isLoading: true })
     renderAt('/runs/run-1')
     fireEvent.click(screen.getByRole('button', { name: 'More actions' }))
-    for (const name of ['Trigger pipeline', 'Deep investigation', 'Refresh AI analysis', 'Export PDF', 'Download evidence bundle', 'Export AI history']) {
+    for (const name of ['Trigger pipeline', 'Deep investigation', 'Refresh analysis', 'Export PDF', 'Download evidence bundle', 'Export analysis history']) {
       expect(screen.getByRole('menuitem', { name })).toBeDisabled()
     }
     expect(screen.queryByRole('menuitem', { name: 'Release gate' })).toBeNull()
@@ -548,12 +548,12 @@ describe('Run page — one header', () => {
     expect(screen.getAllByRole('menuitem').map((item) => item.textContent)).toContain('Deep investigation')
   })
 
-  it('"Export AI history" downloads through the authed service with the run\'s build (W03 AIH-06)', async () => {
+  it('"Export analysis history" downloads through the authed service with the run\'s build (W03 AIH-06)', async () => {
     const { aiHistoryService } = await import('@/services/aiHistoryService')
     const download = vi.spyOn(aiHistoryService, 'downloadExport').mockResolvedValue(true)
     renderAt('/runs/run-1')
     fireEvent.click(screen.getByRole('button', { name: 'More actions' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Export AI history' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Export analysis history' }))
     await waitFor(() => expect(download).toHaveBeenCalledWith('run-1', '42'))
     download.mockRestore()
   })

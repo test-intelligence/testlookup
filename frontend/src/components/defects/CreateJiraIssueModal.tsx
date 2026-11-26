@@ -344,7 +344,7 @@ export default function CreateJiraIssueModal({
             </div>
             <div className="mt-2">
               <span className="block text-xs font-medium text-[var(--color-text)] mb-1">
-                Description <span className="text-[var(--color-text-faint)] font-normal">(prefilled — failure, history, context{preview.ai_analysis ? ', AI root cause' : ''})</span>
+                Description <span className="text-[var(--color-text-faint)] font-normal">(prefilled — failure, history, context{preview.ai_analysis ? ', root cause' : ''})</span>
               </span>
               <pre
                 aria-label="Prefilled description"

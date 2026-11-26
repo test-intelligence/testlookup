@@ -66,7 +66,7 @@ const MODE_SPECS: ModeSpec[] = [
     title: 'Delete test runs',
     buttonLabel: 'Delete test runs',
     blurb:
-      'Drops every TestRun in this project. Cascades to test cases, AI analyses, failure clusters, and agent pipeline rows. The project’s suites and canonical test catalog are kept so the next ingest re-links cleanly.',
+      'Drops every TestRun in this project. Cascades to test cases, analyses, failure clusters, and agent pipeline rows. The project’s suites and canonical test catalog are kept so the next ingest re-links cleanly.',
     deletes: [
       'test_runs',
       'test_cases (CASCADE)',
@@ -75,7 +75,7 @@ const MODE_SPECS: ModeSpec[] = [
       'agent_pipeline_runs (CASCADE)',
       'release_decisions (CASCADE)',
       // W32: no comma and no lone lowercase word — the reset guard reads those as promised TABLE names.
-      'MongoDB run documents (raw results; summaries; AI payloads; decision reports)',
+      'MongoDB run documents (raw results; summaries; analysis payloads; decision reports)',
     ],
     keeps: [
       'test_suites and the canonical test catalog',

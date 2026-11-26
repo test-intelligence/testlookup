@@ -12,10 +12,11 @@ USES contributes the imports inside its body (lazy imports run when it runs)
 and every same-module function it references. The seeds are every function of
 the import modules (``project_import_service``, ``project_import_history``,
 ``project_import_rows``, ``project_export_documents``, ``project_export_objects``)
-and the runner's import job (``run_import_job`` and what it calls). The ONE
-allowed exception is the runner's lazy ``app.worker.tasks`` import inside
-``_enqueue_reindex`` (the project-scoped full reindex after commit, §0.8) —
-allowed BY NAME, nowhere else.
+and the runner's import job (``run_import_job`` and what it calls). The allowed
+exceptions are the runner's lazy ``app.worker.tasks`` imports inside
+``_enqueue_reindex`` (the project-scoped full reindex after commit, §0.8) and
+``_enqueue_derived_refresh`` (that project's flakiness-score and coverage refresh,
+2026-11-25) — allowed BY NAME, nowhere else.
 
 A forbidden module reached only through code the import already called before
 W30 is listed in ``KNOWN_TRANSITIVE`` with its chain and why no side effect is
@@ -43,7 +44,12 @@ SEED_MODULES = (
 )
 RUNNER_ENTRY = "run_import_job"
 #: (module, function) whose lazy import of the named module is allowed — and nothing else is.
-ALLOWED_LAZY = {(RUNNER, "_enqueue_reindex"): "app.worker.tasks"}
+ALLOWED_LAZY = {
+    (RUNNER, "_enqueue_reindex"): "app.worker.tasks",
+    # D-50 / D-34 follow-up (2026-11-25, owner request): the imported project's flakiness scores and coverage
+    # points, queued after commit; derived data only, run by a worker, never inside the import.
+    (RUNNER, "_enqueue_derived_refresh"): "app.worker.tasks",
+}
 
 FORBIDDEN = (
     r"app\.worker\.tasks", r"app\.services\.ingestion.*", r"app\.services\.run_downstream_outbox",
@@ -272,11 +278,13 @@ def test_the_walk_finds_what_it_must():
     assert RUNNER_ENTRY in _defs(RUNNER), f"{RUNNER}.{RUNNER_ENTRY} is gone: update RUNNER_ENTRY"
 
 
-def test_the_one_lazy_worker_tasks_import_is_allowed_by_name_only():
-    # today the runner's reindex enqueue is the only path to app.worker.tasks; its allowance is per FUNCTION
+def test_the_lazy_worker_tasks_imports_are_allowed_by_name_only():
+    # the runner's reindex and derived-refresh enqueues are the only paths to app.worker.tasks; the allowance
+    # is per FUNCTION, and each named function must exist (a renamed one would leave a stale allowance)
     for (module, function), allowed in ALLOWED_LAZY.items():
         assert module == RUNNER and allowed == "app.worker.tasks"
         node = _defs(module).get(function)
+        assert node is not None, f"{RUNNER}.{function} is gone: update ALLOWED_LAZY"
         if node is not None:
             body_imports = [n for n in ast.walk(node) if isinstance(n, (ast.Import, ast.ImportFrom))]
             others = [n for n in body_imports if (getattr(n, "module", None) or "") not in ("", allowed)

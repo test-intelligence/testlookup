@@ -1443,7 +1443,7 @@ describe('DefectsPage — the page template (P3)', () => {
     const table = screen.getByRole('table', { name: 'Defects' })
     expect(table).toHaveTextContent('No defects in this project yet')
     expect(within(table).getByRole('link', { name: 'review your assigned failures' })).toHaveAttribute('href', '/my-failures')
-    expect(within(table).getByRole('link', { name: 'run an AI investigation' })).toHaveAttribute('href', '/deep-investigate')
+    expect(within(table).getByRole('link', { name: 'run a deep investigation' })).toHaveAttribute('href', '/deep-investigate')
   })
 })
 

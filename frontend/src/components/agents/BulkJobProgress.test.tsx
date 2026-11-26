@@ -49,7 +49,7 @@ function renderPanel(props: Partial<React.ComponentProps<typeof BulkJobProgress>
   return { onSettled, onClose }
 }
 
-const panel = () => screen.getByRole('region', { name: 'Bulk AI analysis' })
+const panel = () => screen.getByRole('region', { name: 'Bulk analysis' })
 
 beforeEach(() => {
   service.getBulkJob.mockReset()

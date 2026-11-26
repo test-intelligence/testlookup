@@ -107,7 +107,7 @@ test('Approvals: the four sources, the source filter, and a decision taken from 
   await expect(page).toHaveURL(/\/my-failures\?tab=approvals$/)
 
   const primary = page.locator('[data-primary]')
-  await expect(primary.getByRole('region', { name: 'AI reports' }).getByTestId('review-row')).toHaveCount(1)
+  await expect(primary.getByRole('region', { name: 'Run reports' }).getByTestId('review-row')).toHaveCount(1)
   await expect(primary.getByRole('region', { name: 'Quarantine proposals' }).getByTestId('quarantine-row')).toHaveCount(2)
   await expect(primary.getByRole('region', { name: 'Test cases' }).getByTestId('case-approval-row')).toHaveCount(2)
   // W06 DEF-06: the defect approvals, a QA lead's (the fixture user is one).
@@ -119,7 +119,7 @@ test('Approvals: the four sources, the source filter, and a decision taken from 
   )
 
   // Narrow to one source; the choice is in the URL.
-  await page.getByRole('radio', { name: 'AI reports 1' }).click()
+  await page.getByRole('radio', { name: 'Run reports 1' }).click()
   await expect(page).toHaveURL(/\/my-failures\?tab=approvals&source=reports$/)
   await expect(primary.getByRole('region', { name: 'Quarantine proposals' })).toHaveCount(0)
   await expect(primary.getByRole('region', { name: 'Defects' })).toHaveCount(0)

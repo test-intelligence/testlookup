@@ -73,7 +73,7 @@ export const matchingLabel = (total: number) =>
 export function confirmSentence(matched: number, cap: number = BULK_FILTER_CAP): string {
   const n = Math.min(matched, cap)
   const tail = matched > cap ? `, the newest ${count(cap)} of ${count(matched)}` : ''
-  return `Re-trigger the AI pipeline for ${count(n)} run${n === 1 ? '' : 's'} matching this filter${tail}?`
+  return `Re-trigger the analysis pipeline for ${count(n)} run${n === 1 ? '' : 's'} matching this filter${tail}?`
 }
 
 /** The panel's lines for one read of the job. */

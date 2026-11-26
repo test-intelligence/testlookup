@@ -83,7 +83,7 @@ const STAGE_META: Record<string, { label: string; icon: React.ElementType; descr
   summary: {
     label: 'Summary Generation',
     icon: FileText,
-    description: 'AI-written run summary and executive report',
+    description: 'Run summary and executive report',
   },
   triage: {
     label: 'Defect Triage',
@@ -108,7 +108,7 @@ const STAGE_META: Record<string, { label: string; icon: React.ElementType; descr
   release_risk: {
     label: 'Release Risk',
     icon: Shield,
-    description: 'AI go/no-go release recommendation with risk scoring',
+    description: 'Go/no-go release recommendation with risk scoring',
   },
   // W23d AGT-14 / AGT-15: the two deep specialists whose rows were missing
   // (a stage absent from this map renders no card).
@@ -1036,7 +1036,7 @@ export function PipelineDetail({
           conclusion. Requested by the user 2026-09-18; the layout now
           matches the argument the code was already making. */}
       <div className="flex items-center gap-3 mb-1">
-        <h3 className="text-sm font-semibold text-[var(--color-text-secondary)]">AI Report</h3>
+        <h3 className="text-sm font-semibold text-[var(--color-text-secondary)]">Run Report</h3>
         {workflowText && (
           <span
             data-workflow-line=""
@@ -1052,7 +1052,7 @@ export function PipelineDetail({
           className="ml-auto flex items-center gap-1.5 text-xs text-[var(--color-text)] hover:text-[var(--color-text-secondary)]"
         >
           <FileText className="w-3.5 h-3.5" />
-          {showSummary ? 'Hide report' : 'View AI report'}
+          {showSummary ? 'Hide report' : 'View report'}
         </button>
       </div>
 
@@ -1064,14 +1064,14 @@ export function PipelineDetail({
             </div>
           ) : summaryError ? (
             <div className="space-y-1">
-              <p className="text-sm text-[var(--status-broken)]">The AI report could not be loaded.</p>
+              <p className="text-sm text-[var(--status-broken)]">The report could not be loaded.</p>
               <p className="text-xs text-[var(--color-text-muted)]">
                 {summaryStage?.error || 'The summary endpoint returned an error for this pipeline run.'}
               </p>
             </div>
           ) : !summary ? (
             <div className="space-y-1">
-              <p className="text-sm text-[var(--color-text-muted)]">No AI summary available yet.</p>
+              <p className="text-sm text-[var(--color-text-muted)]">No summary available yet.</p>
               {summaryStage?.status === 'failed' && summaryStage.error && (
                 <p className="text-xs text-[var(--color-text-muted)]">{summaryStage.error}</p>
               )}
@@ -1348,7 +1348,7 @@ export default function AgentStatusPage() {
       <PageHeader
         compact
         title="Pipeline runs"
-        subtitle="Each AI pipeline run, with its report and agent stages"
+        subtitle="Each analysis pipeline run, with its report and agent stages"
         helpTopic={helpTopicParam('/agents')}
         actions={
           <>
@@ -1507,7 +1507,7 @@ export default function AgentStatusPage() {
       </section>
 
       {/* The AI report, full width: the page's answer. */}
-      <section aria-label="AI report" data-primary="" className="space-y-3">
+      <section aria-label="Run report" data-primary="" className="space-y-3">
         <PipelineDetail
           key={selectedPipeline ?? 'none'}
           pipelineId={selectedPipeline}

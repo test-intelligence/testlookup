@@ -120,7 +120,7 @@ test('a row answered approvable: false shows why on its disabled Approve, and no
   const { api, errors } = await openRollout(page, '/my-failures?tab=approvals&source=actions', { handlers: world.handlers, ready: inboxReady })
   const approve = section(page).getByTestId('agent-action-approve')
   await expect(approve).toBeDisabled()
-  await expect(approve).toHaveAttribute('title', 'Accept the AI report first: an approved action runs only on an accepted report.')
+  await expect(approve).toHaveAttribute('title', 'Accept the run report first: an approved action runs only on an accepted report.')
   await approve.click({ force: true })
   await networkQuiet(page, api)
   expect(world.writes).toEqual([])

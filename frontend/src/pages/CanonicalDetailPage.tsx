@@ -294,7 +294,7 @@ export default function CanonicalDetailPage() {
                   <th className="px-4 py-2 font-medium">Status</th>
                   <th className="px-4 py-2 font-medium">Run</th>
                   <th className="px-4 py-2 font-medium">Duration</th>
-                  <th className="px-4 py-2 font-medium">AI category</th>
+                  <th className="px-4 py-2 font-medium">Failure category</th>
                   <th className="px-4 py-2 font-medium">Suite</th>
                   <th className="px-4 py-2 font-medium">When</th>
                 </tr>
@@ -345,7 +345,7 @@ export default function CanonicalDetailPage() {
         )}
         {runHistory?.ai_truncated && runs.length > 0 && (
           <p data-canonical-ai-truncated="" className="mt-2 text-xs text-[var(--color-text-muted)]">
-            AI category is shown for the newest 2,000 runs only; older runs read “—”.
+            Failure category is shown for the newest 2,000 runs only; older runs read “—”.
           </p>
         )}
       </section>

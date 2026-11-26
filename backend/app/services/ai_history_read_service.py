@@ -913,11 +913,11 @@ async def compare_runs_ai(
     }
     if core.is_not_analysed(current_digest):
         body["reason"] = "current_not_analysed"
-        body["message"] = "This run has no AI analysis yet, so there is nothing to compare."
+        body["message"] = "This run has no analysis yet, so there is nothing to compare."
         return body
     if core.is_not_analysed(baseline_digest):
         body["reason"] = "baseline_not_analysed"
-        body["message"] = f"{_run_label(baseline, seq)} has no AI analysis to compare."
+        body["message"] = f"{_run_label(baseline, seq)} has no analysis to compare."
         return body
     diff = core.diff_digests(baseline_digest, current_digest, mode="cross_run")
     body["diff"] = diff

@@ -76,7 +76,7 @@ export const NAV_ITEMS: readonly NavItem[] = [
     tabs: [
       { to: '/failures', label: 'Failures' },
       { to: '/defects', label: 'Defects' },
-      { to: '/deep-investigate', label: 'Root cause (AI)' },
+      { to: '/deep-investigate', label: 'Root cause' },
     ],
   },
   {

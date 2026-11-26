@@ -259,7 +259,7 @@ describe('DeepInvestigationPage', () => {
   it('renders no AI chrome for a cluster with no recorded finding', async () => {
     await renderWithFinding(null)
     expect(screen.queryByTestId('ai-suggested-badge')).not.toBeInTheDocument()
-    expect(screen.getByText(/No AI finding recorded for this cluster yet/i)).toBeInTheDocument()
+    expect(screen.getByText(/No investigation finding recorded for this cluster yet/i)).toBeInTheDocument()
   })
 })
 

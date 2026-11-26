@@ -253,7 +253,7 @@ export default function AIEvalDashboardPage() {
                     <p className="text-xs text-[var(--status-broken)]/80 mt-2">
                       Below the human-label floor the ML classifier is trained mostly on the LLM&apos;s
                       own high-confidence verdicts — it imitates the LLM rather than learning from your
-                      corrections. Confirm or correct AI verdicts to move it to human-calibrated.
+                      corrections. Confirm or correct verdicts to move it to human-calibrated.
                     </p>
                   )}
                 </div>

@@ -78,7 +78,7 @@ test.describe('Ingestion recovery — live upload contract', () => {
         mimeType: 'application/xml',
         buffer: payload,
       })
-      await page.getByLabel('Skip AI analysis').check()
+      await page.getByLabel('Skip analysis').check()
       await page.getByRole('button', { name: 'Optional metadata' }).click()
       await page.getByLabel('Build label').fill(`${marker}-refresh`)
 

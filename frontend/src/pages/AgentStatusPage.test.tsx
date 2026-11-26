@@ -417,7 +417,7 @@ describe('AgentStatusPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /offline pipeline/i }))
     // AI report is expanded by default — no "View AI report" click needed.
 
-    expect(screen.getByText('The AI report could not be loaded.')).toBeInTheDocument()
+    expect(screen.getByText('The report could not be loaded.')).toBeInTheDocument()
     expect(screen.getAllByText(/model 'qwen2.5:7b' not found/i).length).toBeGreaterThan(0)
   })
 

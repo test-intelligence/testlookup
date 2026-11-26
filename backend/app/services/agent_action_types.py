@@ -242,7 +242,7 @@ OUTCOME_SENTENCES: dict[str, str] = {
     "rolled_back": "Undone by {name}.",
     "rejected": "Rejected by {name} ({reason_code}).",
     "superseded": "Replaced by a newer proposal for the same target.",
-    "not_executed_review": "Not executed: the AI report was not accepted.",
+    "not_executed_review": "Not executed: the run report was not accepted.",
     "not_executed_policy": "Not executed: this action type does not run in Act mode in this project.",
     "not_executed_refused": "Not executed: {refusal}",
     "no_executor": "Approved and recorded — this action type has no executor.",
@@ -264,7 +264,7 @@ _ACT_OFF = (
 #: The refusal / error codes the executor (and the approve check) write into
 #: ``AgentActionLedger.error_code`` — every code ≤ 100 characters (the column).
 ACTION_ERROR_SENTENCES: dict[str, str] = {
-    "review_not_accepted": "Accept the AI report first: an approved action runs only on an accepted report.",
+    "review_not_accepted": "Accept the run report first: an approved action runs only on an accepted report.",
     "act_mode_required": _ACT_OFF,
     "action_type_not_allowed": _ACT_OFF,
     "proposer_not_permitted": "This agent may not propose this action type.",

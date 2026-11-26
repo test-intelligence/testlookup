@@ -87,15 +87,15 @@ beforeEach(() => {
 describe('reviewGateModel', () => {
   it('fills each source\'s sentence verbatim with the server\'s numbers', () => {
     expect(stateLines(gateUnset())).toEqual([
-      "Audit only — nothing is withheld. 12 runs' AI reports would have been withheld in the last 30 days (42 distribution attempts).",
+      "Audit only — nothing is withheld. 12 runs' reports would have been withheld in the last 30 days (42 distribution attempts).",
     ])
     const scheduled = gateScheduled()
     expect(stateLines(scheduled)).toEqual([
-      `Audit only until ${formatInstant(scheduled.enforced_from)} — then unreviewed AI reports are withheld. 12 runs' AI reports would have been withheld in the last 30 days (42 distribution attempts).`,
+      `Audit only until ${formatInstant(scheduled.enforced_from)} — then unreviewed run reports are withheld. 12 runs' reports would have been withheld in the last 30 days (42 distribution attempts).`,
     ])
     const enforced = gateDate()
     expect(stateLines(enforced)).toEqual([
-      `Enforced since ${formatInstant(enforced.enforced_from)}: unreviewed AI reports are withheld on the channels below.`,
+      `Enforced since ${formatInstant(enforced.enforced_from)}: unreviewed run reports are withheld on the channels below.`,
     ])
     expect(stateLines(gateEnv())).toEqual([GATE_SENTENCES.env])
   })
@@ -103,11 +103,11 @@ describe('reviewGateModel', () => {
   it('reads one run and one attempt in the singular (W23c demo: "1 runs\' AI reports")', () => {
     const one = { ...gateUnset(), would_refuse: wouldRefuseMeasured({ runs: 1, decisions: 1 }) }
     expect(stateLines(one)).toEqual([
-      "Audit only — nothing is withheld. 1 run's AI reports would have been withheld in the last 30 days (1 distribution attempt).",
+      "Audit only — nothing is withheld. 1 run's reports would have been withheld in the last 30 days (1 distribution attempt).",
     ])
     const mixed = { ...gateUnset(), would_refuse: wouldRefuseMeasured({ runs: 1, decisions: 3 }) }
     expect(stateLines(mixed)).toEqual([
-      "Audit only — nothing is withheld. 1 run's AI reports would have been withheld in the last 30 days (3 distribution attempts).",
+      "Audit only — nothing is withheld. 1 run's reports would have been withheld in the last 30 days (3 distribution attempts).",
     ])
   })
 

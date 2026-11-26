@@ -62,7 +62,7 @@ test('a QA engineer sees no switch and writes nothing', async ({ page }) => {
 
 test('/agents: Trigger pipeline stays one click; Choose workflow opens the picker and queues the fork', async ({ page }) => {
   const world = workflowDefaultWorld()
-  const ready = (p: Page) => p.getByRole('region', { name: 'AI report' }).getByText(AI_REPORT_SUMMARY)
+  const ready = (p: Page) => p.getByRole('region', { name: 'Run report' }).getByText(AI_REPORT_SUMMARY)
   const { api, errors } = await openRollout(page, `/agents?run=${RUN_ID}`, { handlers: world.handlers, ready })
   await networkQuiet(page, api)
   const atLoad = observed(api)
@@ -109,7 +109,7 @@ for (const width of [1280, 1440]) {
   test(`at ${width} px the /agents toolbar with the split button stays one line`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 })
     const world = workflowDefaultWorld()
-    const ready = (p: Page) => p.getByRole('region', { name: 'AI report' }).getByText(AI_REPORT_SUMMARY)
+    const ready = (p: Page) => p.getByRole('region', { name: 'Run report' }).getByText(AI_REPORT_SUMMARY)
     const { api, errors } = await openRollout(page, `/agents?run=${RUN_ID}`, { handlers: world.handlers, ready })
     const geometry = await page.locator('[data-trigger-split]').evaluate((split) => {
       const row = split.parentElement as HTMLElement

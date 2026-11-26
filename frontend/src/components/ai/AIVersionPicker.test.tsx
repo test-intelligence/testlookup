@@ -32,7 +32,7 @@ describe('AIVersionPicker', () => {
   it('names the latest version as current and lists Current, then versions newest first', () => {
     const { container } = renderPicker()
     expect(container.querySelector('[data-ai-version-meta]')).toHaveTextContent('v2 · LLM llama3.1 (current)')
-    const select = screen.getByRole('combobox', { name: 'AI analysis version' })
+    const select = screen.getByRole('combobox', { name: 'Analysis version' })
     expect(select).toHaveValue('')
     expect(options(select)).toEqual([['', 'Current'], ['2', 'v2 · LLM llama3.1'], ['1', 'v1 · rules']])
     // Viewing Current: every stored version can be compared with it; "Current data" would compare it with itself.
@@ -46,7 +46,7 @@ describe('AIVersionPicker', () => {
     const { container } = renderPicker({ selected: 1 })
     expect(container.querySelector('[data-ai-version-meta]')).toHaveTextContent(/^v1 · rules$/)
     expect(container.querySelector('[data-ai-version-deterministic]')).toHaveTextContent('deterministic')
-    expect(screen.getByRole('combobox', { name: 'AI analysis version' })).toHaveValue('1')
+    expect(screen.getByRole('combobox', { name: 'Analysis version' })).toHaveValue('1')
     expect(options(screen.getByRole('combobox', { name: 'Compare with' }))).toEqual([
       ['', 'Compare with…'], ['2', 'v2 · LLM llama3.1'], ['live', 'Current data'],
     ])
@@ -54,9 +54,9 @@ describe('AIVersionPicker', () => {
 
   it('reports the choices: a version, Current, a version to compare, the current data, none', () => {
     const { onSelect, onCompare, rerender } = renderPicker()
-    fireEvent.change(screen.getByRole('combobox', { name: 'AI analysis version' }), { target: { value: '1' } })
+    fireEvent.change(screen.getByRole('combobox', { name: 'Analysis version' }), { target: { value: '1' } })
     expect(onSelect).toHaveBeenLastCalledWith(1)
-    fireEvent.change(screen.getByRole('combobox', { name: 'AI analysis version' }), { target: { value: '' } })
+    fireEvent.change(screen.getByRole('combobox', { name: 'Analysis version' }), { target: { value: '' } })
     expect(onSelect).toHaveBeenLastCalledWith(null)
     fireEvent.change(screen.getByRole('combobox', { name: 'Compare with' }), { target: { value: '1' } })
     expect(onCompare).toHaveBeenLastCalledWith(1)
@@ -76,7 +76,7 @@ describe('AIVersionPicker', () => {
 
   it('is disabled while the list loads', () => {
     renderPicker({ versions: [], latestVersion: null, loading: true })
-    expect(screen.getByRole('combobox', { name: 'AI analysis version' })).toBeDisabled()
+    expect(screen.getByRole('combobox', { name: 'Analysis version' })).toBeDisabled()
     expect(screen.getByRole('combobox', { name: 'Compare with' })).toBeDisabled()
   })
 })

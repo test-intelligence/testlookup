@@ -560,7 +560,7 @@ export default function AIConfigPage() {
                   The current model was trained mostly on the LLM&apos;s own high-confidence
                   verdicts, not on human-verified labels
                   ({mlHumanLabels} of {mlHumanFloor} human
-                  labels needed). Until your team confirms or corrects more AI verdicts,
+                  labels needed). Until your team confirms or corrects more verdicts,
                   ML mode largely reproduces the LLM&apos;s behavior rather than learning
                   from your corrections. Label composition is tracked per model on the
                   AI Evaluation dashboard.

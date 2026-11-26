@@ -3,7 +3,7 @@
  * paper (`THEMES_WITH_PAPER`):
  *
  *  - `/my-failures?tab=approvals&source=actions`: `inbox-agent-actions` (three waiting rows — an approvable
- *    quarantine, a reassign blocked by `AI report: awaiting review`, a release item — with the Reject form open on
+ *    quarantine, a reassign blocked by `Run report: awaiting review`, a release item — with the Reject form open on
  *    the reassign) and `inbox-agent-actions-decided` (Recently decided: executed with its `quarantined` link + Undo,
  *    rejected, outcome unknown, undone);
  *  - `/runs/:id?tab=evidence`: `run-decision-action-chips` (the Decision panel's Proposed actions with their Waiting /

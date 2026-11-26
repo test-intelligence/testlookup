@@ -135,7 +135,7 @@ describe('RunsPage — bulk deep goes through the server', () => {
     await waitFor(() => expect(agentService.bulkTriggerPipelines).toHaveBeenCalledTimes(1))
     expect(agentService.bulkTriggerPipelines).toHaveBeenCalledWith(['run-4', 'run-3'], 'deep')
     expect(agentService.triggerDeepPipeline).not.toHaveBeenCalled()
-    const panel = await screen.findByRole('region', { name: 'Bulk AI analysis' })
+    const panel = await screen.findByRole('region', { name: 'Bulk analysis' })
     expect(await within(panel).findByText('2 requested · 2 queued · 0 already running · 0 not found')).toBeInTheDocument()
     expect(location).toBe(`?bulk_job=${JOB_ID}`)
     // The panel replaces the bulk success toast.
@@ -164,7 +164,7 @@ describe('RunsPage — bulk deep goes through the server', () => {
     const note = await screen.findByText(sentence)
     expect(note).toHaveAttribute('role', 'note')
     expect(toast.error).not.toHaveBeenCalled()
-    expect(screen.queryByRole('region', { name: 'Bulk AI analysis' })).toBeNull()
+    expect(screen.queryByRole('region', { name: 'Bulk analysis' })).toBeNull()
     expect(agentService.triggerDeepPipeline).not.toHaveBeenCalled()
   })
 
@@ -174,7 +174,7 @@ describe('RunsPage — bulk deep goes through the server', () => {
     openMenu()
     fireEvent.click(screen.getByRole('menuitem', { name: 'Trigger all failed (3)' }))
     expect(await screen.findByText('Queued 3 pipelines. Progress cannot be tracked right now.')).toHaveAttribute('role', 'note')
-    expect(screen.queryByRole('region', { name: 'Bulk AI analysis' })).toBeNull()
+    expect(screen.queryByRole('region', { name: 'Bulk analysis' })).toBeNull()
     expect(agentService.getBulkJob).not.toHaveBeenCalled()
   })
 })
@@ -189,7 +189,7 @@ describe('RunsPage — Re-trigger all matching', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: `Re-trigger all matching (${TOTAL})` }))
     expect(agentService.bulkTriggerFiltered).not.toHaveBeenCalled()
     const confirm = screen.getByTestId('runs-retrigger-confirm')
-    expect(confirm).toHaveTextContent(`Re-trigger the AI pipeline for ${TOTAL} runs matching this filter?`)
+    expect(confirm).toHaveTextContent(`Re-trigger the analysis pipeline for ${TOTAL} runs matching this filter?`)
     fireEvent.click(within(confirm).getByRole('button', { name: 'Re-trigger' }))
     await waitFor(() => expect(agentService.bulkTriggerFiltered).toHaveBeenCalledTimes(1))
     const [filter, workflowType, token] = vi.mocked(agentService.bulkTriggerFiltered).mock.calls[0]
@@ -198,7 +198,7 @@ describe('RunsPage — Re-trigger all matching', () => {
     expect(filter).toEqual({ project_id: 'proj-1', days: 30, q: 'build', recommendation: 'NO_GO' })
     expect(workflowType).toBe('offline')
     expect(token).toMatch(/^[0-9a-f]{32}$/)
-    expect(await screen.findByRole('region', { name: 'Bulk AI analysis' })).toBeInTheDocument()
+    expect(await screen.findByRole('region', { name: 'Bulk analysis' })).toBeInTheDocument()
     expect(screen.queryByTestId('runs-retrigger-confirm')).toBeNull()
     expect(agentService.bulkTriggerPipelines).not.toHaveBeenCalled()
   })
@@ -223,22 +223,22 @@ describe('RunsPage — Re-trigger all matching', () => {
 describe('RunsPage — ?bulk_job=', () => {
   it('reopens the tracked job on load', async () => {
     renderRunsPage(`/runs?bulk_job=${JOB_ID}`)
-    expect(await screen.findByRole('region', { name: 'Bulk AI analysis' })).toBeInTheDocument()
+    expect(await screen.findByRole('region', { name: 'Bulk analysis' })).toBeInTheDocument()
     expect(agentService.getBulkJob).toHaveBeenCalledWith(JOB_ID)
     fireEvent.click(await screen.findByRole('button', { name: 'Close' }))
     await waitFor(() => expect(location).toBe(''))
-    expect(screen.queryByRole('region', { name: 'Bulk AI analysis' })).toBeNull()
+    expect(screen.queryByRole('region', { name: 'Bulk analysis' })).toBeNull()
   })
 
   it('a value that is not an id is never put in a path', () => {
     renderRunsPage('/runs?bulk_job=..%2F..%2Fadmin')
-    expect(screen.queryByRole('region', { name: 'Bulk AI analysis' })).toBeNull()
+    expect(screen.queryByRole('region', { name: 'Bulk analysis' })).toBeNull()
     expect(agentService.getBulkJob).not.toHaveBeenCalled()
   })
 
   it('no ?bulk_job=: no panel and no bulk-job read on load', () => {
     renderRunsPage()
-    expect(screen.queryByRole('region', { name: 'Bulk AI analysis' })).toBeNull()
+    expect(screen.queryByRole('region', { name: 'Bulk analysis' })).toBeNull()
     expect(agentService.getBulkJob).not.toHaveBeenCalled()
   })
 })

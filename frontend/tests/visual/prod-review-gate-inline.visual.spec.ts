@@ -37,7 +37,7 @@ type Theme = (typeof THEMES_WITH_PAPER)[number]
 
 const blur = (page: Page) => page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
 const gateReady = (p: Page) => p.locator('[data-review-gate-state]')
-const agentsReady = (p: Page) => p.getByRole('region', { name: 'AI report' }).getByText(AI_REPORT_SUMMARY)
+const agentsReady = (p: Page) => p.getByRole('region', { name: 'Run report' }).getByText(AI_REPORT_SUMMARY)
 
 async function openGate(page: Page, theme: Theme, world: ReturnType<typeof reviewGateWorld>) {
   const opened = await openRollout(page, '/settings/review-gate', { theme, handlers: world.handlers, ready: gateReady, user: world.user })

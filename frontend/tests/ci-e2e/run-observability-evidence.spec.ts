@@ -44,7 +44,7 @@ test('evidence: the last card of the tab, one axis, a metric line, Splunk dots, 
   const regressions = await page.getByRole('region', { name: 'Duration regressions' }).boundingBox()
   const box = await region.boundingBox()
   expect(box && regressions ? box.y - (regressions.y + regressions.height) : -1).toBeGreaterThan(0)
-  await expect(region).toContainText('Evidence the AI analysis already fetched — nothing is fetched when you open this card.')
+  await expect(region).toContainText('Evidence the analysis already fetched — nothing is fetched when you open this card.')
   await expect(region.locator('[data-observability-analysed]')).toHaveText(/^From the analysis of Sep 18, 10:35\.$/)
   await expect(region.locator('[data-observability-others]')).toHaveText('1 earlier analysis not shown.')
   await expect(region.locator('[data-now="configured"]')).toHaveText('Now Splunk, OpenShift and Prometheus are configured for this project.')

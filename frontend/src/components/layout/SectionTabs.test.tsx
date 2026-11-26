@@ -30,7 +30,7 @@ describe('SectionTabs (UX redesign P1)', () => {
     ['/runs/compare', ['History', 'Live', 'Compare'], 'Compare'],
     ['/live', ['History', 'Live', 'Compare'], 'Live'],
     ['/coverage', ['Trends', 'Coverage', 'Explorer'], 'Coverage'],
-    ['/deep-investigate/r1', ['Failures', 'Defects', 'Root cause (AI)'], 'Root cause (AI)'],
+    ['/deep-investigate/r1', ['Failures', 'Defects', 'Root cause'], 'Root cause'],
     ['/value-metrics', ['Summary', 'Value'], 'Value'],
     ['/policies', ['Releases', 'Gate policies'], 'Gate policies'],
   ])('%s: the section tabs, with the page active', (path, labels, active) => {

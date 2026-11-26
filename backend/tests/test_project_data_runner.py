@@ -168,7 +168,8 @@ def recorded(monkeypatch: pytest.MonkeyPatch) -> _Recorded:
     from celery.app.task import Task
 
     calls = _Recorded()
-    for task in (tasks.export_project_data, tasks.import_project_data, tasks.reindex_search):
+    for task in (tasks.export_project_data, tasks.import_project_data, tasks.reindex_search,
+                 tasks.recompute_flaky_scores, tasks.take_coverage_snapshot):
         def apply_async(args: Any = None, kwargs: Any = None, _task: Any = task, **options: Any) -> Any:
             inspect.signature(_task.run).bind(*(args or ()), **(kwargs or {}))
             inspect.signature(Task.apply_async).bind(_task, args, kwargs, **options)
@@ -626,8 +627,13 @@ async def test_a_parted_history_import_assembles_writes_its_ledger_then_reindexe
     assert seen["progress"]["phase"] == "objects" and seen["progress"]["phase_done"] == 1
     assert await _cleanup_of(factory, job.id) is None
     assert store.deleted == [f"project-imports/parts/{job.id}/"]          # the parts, once the job ended
-    assert list(recorded) == [("app.worker.tasks.reindex_search", ("full", True), ("project_id", str(new_project)))]
-    assert recorded.options == [{}]
+    # The search rebuild, then the project's flakiness scores and coverage points (D-50 / D-34 follow-up).
+    assert list(recorded) == [
+        ("app.worker.tasks.reindex_search", ("full", True), ("project_id", str(new_project))),
+        ("app.worker.tasks.recompute_flaky_scores", ("project_id", str(new_project))),
+        ("app.worker.tasks.take_coverage_snapshot", ("project_id", str(new_project))),
+    ]
+    assert recorded.options == [{}, {}, {}]
     assert bumped == [new_project]
     assert (await _read(factory, job.id)).report == {"history": {"search_reindex": "queued"}}
 
@@ -656,11 +662,31 @@ async def test_a_reindex_that_cannot_be_enqueued_is_said_in_the_report(
 
     monkeypatch.setattr(project_import_service, "run_import", imported)
     monkeypatch.setattr(tasks.reindex_search, "apply_async", broker_down)
+    monkeypatch.setattr(tasks.recompute_flaky_scores, "apply_async", broker_down)
+    monkeypatch.setattr(tasks.take_coverage_snapshot, "apply_async", broker_down)
     monkeypatch.setattr("app.core.deps.invalidate_membership_cache", lambda _uid: _noop())
     monkeypatch.setattr("app.services.cache_service.bump_analytics_epoch", bump)
     assert await runner.run_import_job(job.id, storage=FakeStorage(), session_factory=factory) == "succeeded"
     row = await _read(factory, job.id)
     assert row.status == "succeeded" and row.report == {"history": {"search_reindex": "not_queued", "runs": 2}}
+
+
+def test_one_refresh_the_broker_refuses_does_not_stop_the_other(monkeypatch: pytest.MonkeyPatch) -> None:
+    sent: list[str] = []
+
+    def broker_down(*_: Any, **__: Any) -> Any:
+        raise ConnectionRefusedError("broker down")
+
+    def took(*_: Any, kwargs: Any = None, **__: Any) -> Any:
+        inspect.signature(tasks.take_coverage_snapshot.run).bind(**(kwargs or {}))
+        sent.append(kwargs["project_id"])
+        return SimpleNamespace(id="celery-id")
+
+    project = uuid.uuid4()
+    monkeypatch.setattr(tasks.recompute_flaky_scores, "apply_async", broker_down)
+    monkeypatch.setattr(tasks.take_coverage_snapshot, "apply_async", took)
+    assert runner._enqueue_derived_refresh(project) == {"flaky_scores": False, "coverage_snapshot": True}
+    assert sent == [str(project)]
 
 
 async def test_a_failed_history_import_removes_what_it_wrote_by_the_ledger(

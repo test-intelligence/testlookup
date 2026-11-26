@@ -365,7 +365,7 @@ function PipelineRibbon({
     <section className="card" style={{ padding: '16px 18px 18px', marginBottom: 14 }}>
       <div className="flex items-start justify-between gap-2.5 mb-3.5 flex-wrap">
         <div>
-          <h3 className="text-sm font-semibold m-0 text-[var(--color-text)]">AI pipeline · Deep Analysis</h3>
+          <h3 className="text-sm font-semibold m-0 text-[var(--color-text)]">Analysis pipeline · Deep Analysis</h3>
           <div className="text-xs text-[var(--color-text-muted)] mt-0.5">
             <strong style={{ color: 'var(--status-passed)', fontWeight: 500 }}>● {allDone ? 'Completed' : 'Running'}</strong>
             {' · '}
@@ -379,7 +379,7 @@ function PipelineRibbon({
           <span
             className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-2xs font-semibold"
             style={{ background: confBg, color: confFg, border: `1px solid ${confBd}` }}
-            title="AI confidence"
+            title="Confidence"
           >
             Confidence {confidencePct}%
           </span>
@@ -699,7 +699,7 @@ function WhatFailedCard({
             <p className="m-0 text-[var(--color-text-secondary)]">
               The run aggregate reports <strong className="text-[var(--color-text)]">{aggregateFailedTests} failure{aggregateFailedTests === 1 ? '' : 's'}</strong>
               {aggregateTotalTests > 0 ? <> out of {aggregateTotalTests} tests</> : null}, but the
-              per-test rows aren't available for this run — so AI clustering, root-cause analysis,
+              per-test rows aren't available for this run — so clustering, root-cause analysis,
               and the failure breakdown can't be shown.
             </p>
             <p className="m-0 text-xs text-[var(--color-text-muted)]">
@@ -812,7 +812,7 @@ function FailureBlock({
             Open test case
           </Link>
         )}
-        <GhostBtn onClick={onDecisionTrail} title="Why the AI assigned this category">
+        <GhostBtn onClick={onDecisionTrail} title="Why the analysis assigned this category">
           Decision trail
         </GhostBtn>
         {onPromote && (
@@ -1042,7 +1042,7 @@ export function AIConfidenceCard({
 
   return (
     <Panel
-      title="AI confidence"
+      title="Confidence"
       actions={<code className="text-2xs text-[var(--color-text-secondary)]">v2 · pipeline</code>}
     >
       <div className="p-3.5">
@@ -1337,7 +1337,7 @@ function VerdictBanner({
   const facts: BannerFact[] = [
     { label: 'Risk', value: verdict.gate === 'PENDING' || verdict.score === null ? '—' : `${verdict.score}/100` },
     { label: 'Blocking issues', value: blockers.length },
-    { label: 'AI confidence', value: `${confidencePct}%` },
+    { label: 'Confidence', value: `${confidencePct}%` },
   ]
   const lede = verdict.lede
     ?? (verdict.gate === 'PENDING' ? 'Awaiting analysis — no release decision available yet.' : '')
@@ -1523,7 +1523,7 @@ export function RunIntelligenceBody({
   // A link to a stored version waits for the version list instead of flashing the live view first.
   const waitingForHistory = requestedAiVersion != null && !aiHistory.data && !aiHistory.error
   const history = (
-    <SectionErrorBoundary message="The AI history failed to load">
+    <SectionErrorBoundary message="The analysis history failed to load">
       <AIAnalysisHistory runId={runId} />
     </SectionErrorBoundary>
   )
@@ -1532,7 +1532,7 @@ export function RunIntelligenceBody({
       <div className="space-y-4" data-run-analysis="">
         {history}
         {snapshotVersion != null ? (
-          <SectionErrorBoundary message="The stored AI version failed to load">
+          <SectionErrorBoundary message="The stored analysis version failed to load">
             <AIVersionSnapshot runId={runId} version={snapshotVersion} />
           </SectionErrorBoundary>
         ) : (
@@ -1556,7 +1556,7 @@ export function RunIntelligenceBody({
         <EmptyState
           icon={<AlertTriangle className="h-8 w-8 text-[var(--status-failed)]" />}
           title="Could not load Run Intelligence"
-          description="Could not fetch AI analysis data for this run."
+          description="Could not fetch analysis data for this run."
         />
         {afterPrimary}
       </div>

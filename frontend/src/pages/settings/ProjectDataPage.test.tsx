@@ -168,7 +168,7 @@ describe('ProjectDataPage', () => {
   })
 
   describe('W32 (W23d F-7): the run-scoped MongoDB documents', () => {
-    const MONGO_LINE = 'MongoDB run documents (raw results; summaries; AI payloads; decision reports)'
+    const MONGO_LINE = 'MongoDB run documents (raw results; summaries; analysis payloads; decision reports)'
 
     /** Open "Delete test runs", type the name, confirm; resolve with the card. */
     async function resetWith(documents: Record<string, number> | null | undefined) {

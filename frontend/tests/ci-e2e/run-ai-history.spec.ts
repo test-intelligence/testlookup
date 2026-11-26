@@ -35,7 +35,7 @@ const HANDLERS: ApiHandlers = [...AI_HISTORY, ...TEST_CASE, ...RUN_PAGE]
 const ANALYSIS = `/runs/${RUN_ID}?tab=analysis`
 
 const picker = (page: Page) => page.locator('[data-ai-version-picker]')
-const versionSelect = (page: Page) => page.getByRole('combobox', { name: 'AI analysis version' })
+const versionSelect = (page: Page) => page.getByRole('combobox', { name: 'Analysis version' })
 const compareSelect = (page: Page) => page.getByRole('combobox', { name: 'Compare with' })
 const card = (page: Page) => page.locator('[data-previous-run-card]')
 const params = (page: Page) => new URL(page.url()).searchParams

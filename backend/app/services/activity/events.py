@@ -268,8 +268,8 @@ _SPECS: tuple[ActivityEventSpec, ...] = (
     # thing worth recording even if the dispatch or the worker's own stop later
     # fails. A cancel in particular must leave a trace precisely when it did
     # NOT tidily succeed.
-    _spec("analysis.retried", "analysis", "run", "AI analysis for {entity_label} was retried ({mode})", "attempt"),
-    _spec("analysis.cancelled", "analysis", "run", "AI analysis for {entity_label} was cancelled", "attempt"),
+    _spec("analysis.retried", "analysis", "run", "Analysis for {entity_label} was retried ({mode})", "attempt"),
+    _spec("analysis.cancelled", "analysis", "run", "Analysis for {entity_label} was cancelled", "attempt"),
     # W14 AGT-12: a tracked bulk job was cancelled (one row per project of the
     # job). An attempt write, like the bulk trigger it cancels: the cancel
     # route never commits, and the ask is the fact worth recording.

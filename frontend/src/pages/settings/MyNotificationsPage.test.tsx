@@ -209,7 +209,7 @@ describe('MyNotificationsPage: the project policy hints (NTF-02)', () => {
       expect(within(optionLabel(card, 'Run failed')).getByText('Not sent in Checkout: per-run notifications are off')).toBeInTheDocument()
       expect(within(optionLabel(card, 'Run passed')).getByText(/per-run notifications are off/)).toBeInTheDocument()
       expect(within(optionLabel(card, 'High failure rate')).getByText(/per-run notifications are off/)).toBeInTheDocument()
-      for (const free of ['Quality gate failed', 'AI analysis complete', 'A test or suite became slower', 'Test recovered (transition)']) {
+      for (const free of ['Quality gate failed', 'Analysis complete', 'A test or suite became slower', 'Test recovered (transition)']) {
         expect(optionLabel(card, free).querySelector('[data-event-hint]'), free).toBeNull()
       }
     }

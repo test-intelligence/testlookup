@@ -42,16 +42,16 @@ Notes are optional (up to 2,000 characters). The assignee, or a QA lead or admin
 
 **Approvals** collects the decisions waiting on someone in the selected project. It needs one project selected. The **source** filter shows **All**, or one kind:
 
-- **AI reports** — reports produced by the AI pipeline, waiting for a human review.
+- **Run reports** — reports produced by the analysis pipeline, waiting for a human review.
 - **Quarantine proposals** — tests proposed for quarantine, the same list as **Flaky tests → Proposed**.
 - **Test cases** — authored test cases waiting for review.
 - **Defects** — promoted defects waiting for a QA lead's approval. Shown to **QA leads and administrators only**.
 
 Anyone in the project can see the first three queues; the decision buttons depend on your role. The **Defects** source, and its count in the tab badge, are there only for QA leads and administrators.
 
-### AI reports
+### Run reports
 
-Every report the AI pipeline produces enters this queue as **Awaiting review**. A state filter shows **Pending** (the default), **Accepted**, **Rejected**, **Superseded** or **All**. **Open report** opens the run's **Analysis** tab so you can read the report and its evidence first.
+Every report the analysis pipeline produces enters this queue as **Awaiting review**. A state filter shows **Pending** (the default), **Accepted**, **Rejected**, **Superseded** or **All**. **Open report** opens the run's **Analysis** tab so you can read the report and its evidence first.
 
 To decide (QA leads and administrators):
 
@@ -61,7 +61,7 @@ To decide (QA leads and administrators):
 
 The report then carries a banner wherever it is shown: **Draft: awaiting human review** (with **Open review queue**), **Reviewed and accepted**, **Rejected by a reviewer**, or **Superseded by a newer report** when a later analysis of the same run replaced it. Reviews are refused to API keys; and when a run proposes actions for an agent to take, the person who requested that run cannot review its report.
 
-Reviewing is how a team keeps AI-written reports honest. By default an unreviewed report can still be exported and shared, marked as a draft. An administrator can make review mandatory, so that unreviewed reports are not exported, shared, sent in notifications or used for a release verdict until someone accepts them. If your exports are refused with "pending review", that setting is on: accept the report here first.
+Reviewing is how a team keeps the pipeline's reports honest. By default an unreviewed report can still be exported and shared, marked as a draft. An administrator can make review mandatory, so that unreviewed reports are not exported, shared, sent in notifications or used for a release verdict until someone accepts them. If your exports are refused with "pending review", that setting is on: accept the report here first.
 
 ### Quarantine proposals
 
@@ -73,7 +73,7 @@ Each row shows the test case, its priority, its review state (**Requested** or *
 
 ### Defects
 
-A defect promoted from a failure cluster waits here when it needs approval: it names a Jira project key, its severity is **CRITICAL** or **HIGH**, or the AI's confidence is below the configured threshold. Each row shows the title, the severity, the component and owner team, **Waiting because:** with the policy's reasons, the Jira project it would be filed in (or **No Jira project: approving keeps it in TestLookup**), its age, and **Open run** for the run it came from. **Open Defects** opens the defect queue.
+A defect promoted from a failure cluster waits here when it needs approval: it names a Jira project key, its severity is **CRITICAL** or **HIGH**, or the analysis confidence is below the configured threshold. Each row shows the title, the severity, the component and owner team, **Waiting because:** with the policy's reasons, the Jira project it would be filed in (or **No Jira project: approving keeps it in TestLookup**), its age, and **Open run** for the run it came from. **Open Defects** opens the defect queue.
 
 - **Approve** makes the defect effective. When it names a Jira project and Jira is reachable, the ticket is filed on that defect (or the defect is linked to the open issue already filed for the same failure). While offline mode is on (the default) the approval still counts and the message says **Approved — Jira not filed (offline mode)**; the defect then reads **not filed (offline)** on the Defects page.
 - **Reject** asks for a reason (recorded in the activity log) and closes the defect as **Invalid**, so it stops counting toward the release gate.

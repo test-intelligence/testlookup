@@ -26,7 +26,7 @@ export const HELP_TOPICS: Readonly<Record<string, HelpTopic>> = {
   '/intelligence': { topic: 'runs' },
   '/failures': { topic: 'failure-analysis', anchor: 'the-failures-page' },
   '/defects': { topic: 'failure-analysis', anchor: 'promoting-to-a-defect' },
-  '/deep-investigate': { topic: 'failure-analysis', anchor: 'root-cause-ai-deep-investigation' },
+  '/deep-investigate': { topic: 'failure-analysis', anchor: 'root-cause-deep-investigation' },
   '/flaky': { topic: 'flaky', anchor: 'the-flaky-tests-page' },
   '/flaky-coach': { topic: 'flaky', anchor: 'the-flaky-tests-page' },
   '/quarantine': { topic: 'flaky', anchor: 'quarantine-on-the-flaky-tests-page' },

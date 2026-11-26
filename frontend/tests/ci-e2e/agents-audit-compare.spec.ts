@@ -19,7 +19,7 @@ import { auditWorld, compareWorld, ORIGIN_PIPELINE_ID, RERUN_PIPELINE_ID } from 
 
 test.use({ viewport: { width: 1440, height: 900 }, timezoneId: 'UTC', locale: 'en-US', reducedMotion: 'reduce' })
 
-const report = (p: Page) => p.getByRole('region', { name: 'AI report' })
+const report = (p: Page) => p.getByRole('region', { name: 'Run report' })
 const ready = (p: Page) => report(p).getByText(AI_REPORT_SUMMARY)
 const strip = (p: Page) => p.getByRole('tablist', { name: 'Pipeline views' })
 const viewTab = (p: Page, name: RegExp) => strip(p).getByRole('tab', { name })

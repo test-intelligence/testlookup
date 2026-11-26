@@ -155,7 +155,7 @@ for (const theme of THEMES) {
     await promote.getByRole('button', { name: 'Cancel' }).click()
 
     await page.locator('section[aria-label="Release verdict"]').getByRole('button', { name: 'Decision trail' }).click()
-    const trail = page.getByRole('region', { name: 'AI decision trail' })
+    const trail = page.getByRole('region', { name: 'Decision trail' })
     await expect(trail.getByRole('searchbox', { name: 'Search decision trail' })).toBeVisible()
     await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
     await networkQuiet(page, api)

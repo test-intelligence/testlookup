@@ -345,12 +345,14 @@ describe('D-53: the Proposed tab names who asked', () => {
       row('a', 'PROPOSED', { detection_method: 'manual', proposed_by_name: 'Quinn Lead' }),
       row('b', 'PROPOSED', { detection_method: 'pass_fail_ratio', proposed_by_name: null }),
       row('c', 'PROPOSED', { detection_method: 'manual', proposed_by_name: null }),
+      // An agent action: the agent asked and a person approved; an older row recorded the approver as proposer.
+      row('d', 'PROPOSED', { detection_method: 'agent_action', proposed_by_name: 'Quinn Lead' }),
     ]
     renderBody('proposals')
     const lines = screen
       .getAllByTestId('quarantine-row')
       .map((tr) => tr.querySelector('[data-quarantine-proposer]')?.textContent)
-    expect(lines).toEqual(['Proposed by Quinn Lead', 'Detected automatically', 'Proposed manually'])
+    expect(lines).toEqual(['Proposed by Quinn Lead', 'Detected automatically', 'Proposed manually', 'Proposed by an agent'])
   })
 
   it('shows no proposer line on the Quarantined tab', () => {

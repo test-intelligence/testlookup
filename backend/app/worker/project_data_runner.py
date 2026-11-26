@@ -26,8 +26,8 @@ W30 (ADM-05 phase 2): a history export passes the job's ``options`` and writes t
 (``progress.phase*``) on fresh short sessions; a PARTED import assembles its parts into a spool before
 ``run_import`` (G-C), commits the import's ``cleanup`` ledger on a fresh session before any document / object
 is written, removes the parts when the job ends, and after a successful history import enqueues ONE
-project-scoped full search rebuild (:func:`_enqueue_reindex` — the ONE lazy ``app.worker.tasks`` import of the
-import path). History jobs are dispatched AND re-dispatched with the history time limits.
+project-scoped full search rebuild (:func:`_enqueue_reindex`) and that project's flakiness-score and coverage
+refresh (:func:`_enqueue_derived_refresh`) — the two lazy ``app.worker.tasks`` imports of the import path. History jobs are dispatched AND re-dispatched with the history time limits.
 """
 from __future__ import annotations
 
@@ -168,6 +168,33 @@ def _enqueue_reindex(project_id: uuid.UUID) -> bool:
     except Exception as exc:  # noqa: BLE001 - the import already succeeded; the report says "not_queued"
         logger.warning("project_import_reindex_not_queued", project_id=str(project_id), error_type=type(exc).__name__)
         return False
+
+
+def _enqueue_derived_refresh(project_id: uuid.UUID) -> dict[str, bool]:
+    """D-50 / D-34 follow-up: the imported history's flakiness scores and coverage points, the same day.
+
+    Both were written only by nightly beats, so an imported project read "Not scored yet" and "No coverage
+    snapshot yet" until the next night. Like the reindex, these are the EXISTING tasks, scoped to this ONE
+    project, published after the import committed; they run in a worker and recompute derived data only (no
+    mail, webhook, Jira, model or notification). The second lazy ``app.worker.tasks`` import of the import path,
+    allowed by this function's name (G-1). A broker failure is logged; the import already succeeded."""
+    queued: dict[str, bool] = {}
+    try:
+        from app.worker.tasks import recompute_flaky_scores, take_coverage_snapshot
+    except Exception as exc:  # noqa: BLE001 - the import already succeeded
+        logger.warning("project_import_refresh_not_queued", project_id=str(project_id), error_type=type(exc).__name__)
+        return {"flaky_scores": False, "coverage_snapshot": False}
+    for key, task in (("flaky_scores", recompute_flaky_scores), ("coverage_snapshot", take_coverage_snapshot)):
+        try:
+            task.apply_async(kwargs={"project_id": str(project_id)})
+            queued[key] = True
+        except Exception as exc:  # noqa: BLE001 - one refresh must not stop the other
+            queued[key] = False
+            logger.warning(
+                "project_import_refresh_not_queued", project_id=str(project_id), refresh=key,
+                error_type=type(exc).__name__,
+            )
+    return queued
 
 
 # ── export ───────────────────────────────────────────────────────────────────
@@ -475,6 +502,7 @@ async def _run_import(
         await bump_analytics_epoch(report.project_id)
         if not _enqueue_reindex(report.project_id):
             await _mark_reindex_not_queued(session_factory, job_id)
+        _enqueue_derived_refresh(report.project_id)
     logger.info("project_import_job_succeeded", job_id=str(job_id), project_id=str(report.project_id),
                 rows=sum(report.inserted.values()), history=history)
     return "succeeded"

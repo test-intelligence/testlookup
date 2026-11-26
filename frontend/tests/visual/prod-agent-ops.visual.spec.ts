@@ -27,7 +27,7 @@ import {
 
 test.use(PINNED)
 
-const report = (p: Page) => p.getByRole('region', { name: 'AI report' })
+const report = (p: Page) => p.getByRole('region', { name: 'Run report' })
 const ready = (p: Page) => report(p).getByText(AI_REPORT_SUMMARY)
 const blur = (page: Page) => page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur())
 

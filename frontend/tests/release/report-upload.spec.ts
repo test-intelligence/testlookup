@@ -46,7 +46,7 @@ async function uploadAndVerify(page: Page, request: APIRequestContext, data: Pro
       .toEqual(['auto', ...Object.keys(contracts)].sort())
   }
   await formatSelector.selectOption(format)
-  await page.getByRole('checkbox', { name: /Skip AI analysis/ }).check()
+  await page.getByRole('checkbox', { name: /Skip analysis/ }).check()
   await page.getByRole('button', { name: 'Optional metadata' }).click()
   await page.getByLabel('Build label').fill(build)
   // Hold the browser's first receipt read. The upload, worker and receipt

@@ -545,7 +545,7 @@ async def test_an_unanalysed_baseline_is_named(monkeypatch):
     monkeypatch.setattr("app.services.runs_service.fetch_run_seq_map", AsyncMock(return_value={str(BASELINE): 7}))
     db = _DB([("FROM test_runs", _Res(value=_run(BASELINE)))])
     body = await reads.compare_runs_ai(db, _store(), run=_run(), baseline_run_id=None, suite_name=None)
-    assert body["reason"] == "baseline_not_analysed" and body["message"] == "#7 has no AI analysis to compare."
+    assert body["reason"] == "baseline_not_analysed" and body["message"] == "#7 has no analysis to compare."
     assert body["diff"] is None and body["sides"]["current"]["analysed_tests"] == 1
     assert body["baseline"]["selection"] == "default"
 

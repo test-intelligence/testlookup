@@ -133,7 +133,7 @@ export default function ClassificationHintsModal({
       title="Classification hints"
       description={
         <span className="text-sm">
-          Hints classify new failures before the AI does. A failure that matches several uses the oldest hint.
+          Hints classify new failures before the analyzer does. A failure that matches several uses the oldest hint.
           Existing analyses are not changed.
         </span>
       }

@@ -35,9 +35,9 @@ test('a Viewer on a pair with no AI report sees the diff and a note, never a rep
   const { api, errors } = await openRollout(page, PATH, { handlers: noReportYet, user: VIEWER, ready })
   const note = page.locator('[data-ai-report-not-generated]')
   await expect(note).toBeVisible()
-  await expect(note).toContainText('No AI comparison report exists for these runs yet')
+  await expect(note).toContainText('No comparison report exists for these runs yet')
   await expect(note).toContainText('QA engineer or above')
-  await expect(page.getByText('AI Comparison Report', { exact: true })).toHaveCount(0)
+  await expect(page.getByText('Comparison Report', { exact: true })).toHaveCount(0)
   // The comparison itself is served.
   await expect(page.locator('[data-delta-table]')).toBeVisible()
 
@@ -51,7 +51,7 @@ test('a Viewer on a pair with no AI report sees the diff and a note, never a rep
 
 test('a Viewer still sees a report that already exists, with no note', async ({ page }) => {
   const { api, errors } = await openRollout(page, PATH, { handlers: RUN_COMPARE_PAGE, user: VIEWER, ready })
-  await expect(page.getByText('AI Comparison Report', { exact: true })).toBeVisible()
+  await expect(page.getByText('Comparison Report', { exact: true })).toBeVisible()
   await expect(page.locator('[data-ai-report-not-generated]')).toHaveCount(0)
   await networkQuiet(page, api)
   assertHermetic(api, errors)
@@ -59,7 +59,7 @@ test('a Viewer still sees a report that already exists, with no note', async ({ 
 
 test('a QA engineer sees the report and no note', async ({ page }) => {
   const { api, errors } = await openRollout(page, PATH, { handlers: RUN_COMPARE_PAGE, user: QA_ENGINEER, ready })
-  await expect(page.getByText('AI Comparison Report', { exact: true })).toBeVisible()
+  await expect(page.getByText('Comparison Report', { exact: true })).toBeVisible()
   await expect(page.locator('[data-ai-report-not-generated]')).toHaveCount(0)
   await networkQuiet(page, api)
   assertHermetic(api, errors)

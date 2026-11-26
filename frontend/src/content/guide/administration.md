@@ -33,7 +33,7 @@ Once enabled, the section shows how many recovery codes remain, with **Regenerat
 **My notifications** (`/settings/my-notifications`) decides what reaches you, per channel: **Email**, **Slack** and **Microsoft Teams**.
 
 - Turn a channel on, and optionally give your own email address or your own Slack or Teams webhook URL; blank uses the shared channel an administrator configured.
-- **Notify me when**: run failed or passed, high failure rate (with a threshold, 80% by default), AI analysis complete, quality gate failed, the state changes (a test newly failing, recovered, newly flaky, quarantined, released from quarantine), the quarantine lifecycle (past its SLA, ready to release) and a test or suite becoming slower.
+- **Notify me when**: run failed or passed, high failure rate (with a threshold, 80% by default), analysis complete, quality gate failed, the state changes (a test newly failing, recovered, newly flaky, quarantined, released from quarantine), the quarantine lifecycle (past its SLA, ready to release) and a test or suite becoming slower.
 - **Save**, then **Send test** to check delivery. **Remove** deletes the channel's settings.
 
 **Quality gate failed** is sent when a gate's recorded verdict turns into `NO_GO`: a QA lead evaluates a release or phase gate and the verdict recorded before it was not `NO_GO`, or a run's release-readiness decision becomes `NO_GO` (published by the analysis pipeline, or set by a QA lead's override). Evaluating again while the gate stays `NO_GO` sends nothing more, and a preview never sends. The entry names the release (or the build) and the top blocking reason; in the bell it opens the release (for QA leads and administrators) or the run's release gate. It is not ticked for you by default, and the project's notification policy does not govern it.
@@ -76,10 +76,10 @@ Five roles, each including those below it:
 
 | Role | Can |
 |---|---|
-| `VIEWER` | Read dashboards and reports, including AI reports that already exist (creating one needs `QA_ENGINEER`) |
+| `VIEWER` | Read dashboards and reports, including run reports that already exist (creating one needs `QA_ENGINEER`) |
 | `TESTER` | Read runs and failures; write, edit and comment on test cases and change their status (not deprecate, archive or reinstate) |
 | `QA_ENGINEER` | Send results, own API keys, triage, correct classifications, file defects, manage suites and test cases |
-| `QA_LEAD` | Everything above, plus releases, ownership, quarantine and AI-report decisions, overrides, deprecating, archiving and reinstating test cases, and most settings pages |
+| `QA_LEAD` | Everything above, plus releases, ownership, quarantine and run-report decisions, overrides, deprecating, archiving and reinstating test cases, and most settings pages |
 | `ADMIN` | Everything, including user roles, SSO, feature flags and the administrator-only settings |
 
 Users see only projects they are a member of. Project membership, not role alone, decides visibility.
@@ -123,7 +123,7 @@ Self-registration is off unless the deployment turns it on (`REGISTRATION_ENABLE
 
 **Unlabelled shadow pairs** (live outputs of two model tiers waiting for a label on **AI evaluation › Tiers**) are on a fixed clock too: a pair nobody labelled within 30 days is deleted nightly. The preview lists them as **Unlabelled shadow pairs (kept 30 days)**, and a purge deletes them with the rest. Labelled pairs are evidence for tier changes and are kept.
 
-**AI history** keeps every AI analysis of a run as a version: up to 20 per run (per kind: the analysis digest and the run summary) and 10 per test result by default, each settable from 1 to 100. The oldest go first; version 1, the newest and any version a published decision report cites never do. The caps apply whenever a version is stored, even with scheduled purging off, and AI history goes with its run.
+**Analysis history** keeps every analysis of a run as a version: up to 20 per run (per kind: the analysis digest and the run summary) and 10 per test result by default, each settable from 1 to 100. The oldest go first; version 1, the newest and any version a published decision report cites never do. The caps apply whenever a version is stored, even with scheduled purging off, and analysis history goes with its run.
 
 **Always keep the last N runs** (default 10, 0–1000): the scheduled purge always keeps the project's newest N runs, its latest passing run and the latest passing run of each suite (0 keeps only those passing runs). It protects runs only: a kept run still loses old raw events and audit records on their own clocks. Deleting runs yourself (**Delete by criteria**) is not limited by it, and the preview says so.
 
@@ -165,10 +165,10 @@ Purging is irreversible. The operator guide in the repository (`user-guide/admin
 
 **Import as a new project** (administrators). Choose an export ZIP (at most **2 GB** — a larger file is refused before anything is sent) and, optionally, a name; **Import** creates a NEW project — nothing is ever merged into an existing one. The default name is `<source name> (imported)`, then `(imported 2)`… Choosing the same file again does not create a second copy. A file over 50 MB is checked (its SHA-256) and sent in parts of 32 MB (`Uploading… 3 of 12 parts`); if the page is closed or reloaded mid-upload, choose the **same file** again (`Choose the same file to resume the upload.`) and only the missing parts are sent. The archive is checked before anything is written (its signature, every file against its manifest, the format version, every row, stored document and attachment); a refused or failed import leaves no project, no stored document and no attachment behind and says why. When it finishes, **Open** (with the new project's name) selects the new project and opens **Test management**, and the card lists what was imported, switched off, skipped and cleared.
 
-- **Run history arrives as history**: every run, result and analysis keeps its original date, and nothing runs — no ingest, AI analysis, notification, digest, webhook, gate, defect or Jira call. The report's **History** block reads `412 runs from Aug 3, 2026 to Nov 1, 2026`, then the stored documents and attachments written and anything skipped (`1 attachment was skipped: it is larger than 256 MB`).
+- **Run history arrives as history**: every run, result and analysis keeps its original date, and nothing runs — no ingest, analysis, notification, digest, webhook, gate, defect or Jira call. The report's **History** block reads `412 runs from Aug 3, 2026 to Nov 1, 2026`, then the stored documents and attachments written and anything skipped (`1 attachment was skipped: it is larger than 256 MB`).
 - **Retention**: the new project's purge is **paused for 90 days** (the **Retention** page shows *Paused until …* and you can resume it there), so old imported runs are not purged the night they arrive; the report says when runs older than the project's retention window would be purged.
 - **Digests**: imported runs from the last 7 days can be listed by an all-projects digest — the report says how many (`4 imported runs are from the last 7 days; an all-projects digest can list them.`).
-- **Search**: `Search is being rebuilt for the new project.` — the new project's search index is rebuilt once after the import; if it could not be queued, use **Reindex** on the **Search** page.
+- **Search**: `Search is being rebuilt for the new project.` — the new project's search index is rebuilt once after the import; if it could not be queued, use **Reindex** on the **Search** page. Its flakiness scores and coverage history are computed once after the import too, so they do not wait for the night.
 - **Worker disk**: a history export holds its archive twice while it is built and verified, an import once plus its parts — up to about 4 GB of temporary disk per job on the worker.
 
 - **Nothing in an import can send or call out**: webhooks, team channels, the GitHub and GitLab integrations, notification transitions and quarantine auto-defects arrive **switched off** (a webhook reads *Secret required — add it, then switch this on.*), and expected-run cadences arrive **paused for 90 days** (*Imported — resume when this project receives runs.*). Switch each on after adding its secret.
@@ -219,7 +219,7 @@ Everything here that reaches outside the deployment is **switched off by offline
 3. A **value saved here** comes before the deployment's environment setting. A switch (**Enabled**) once saved always counts, so saving it off turns the integration off even when the environment turns it on.
 4. The **environment** applies to a field never saved here, or saved empty. Such a field says **From the deployment environment** under it, and a token reads **(set in the environment)** instead of **(set)**. To hand a field back to the environment, empty it and save.
 
-The Splunk and OpenShift look-ups of the AI analysis, the Jira tickets the pipeline files, and **Integration health** all read these values. A save reaches the rest of the deployment within 30 seconds. GitHub and GitLab are set per project instead ([below](#github-and-gitlab)).
+The Splunk and OpenShift look-ups of the analysis, the Jira tickets the pipeline files, and **Integration health** all read these values. A save reaches the rest of the deployment within 30 seconds. GitHub and GitLab are set per project instead ([below](#github-and-gitlab)).
 
 A **Base URL**, **API URL** or Jira **Domain** that points at the server itself (`localhost`, `127.0.0.1`) or at a link-local address (`169.254.x.x`, where cloud metadata lives) is refused with `Target host is not allowed` under the field, and nothing is saved; the same check runs again before every call, before a token is sent. An address on your own network is allowed. A URL must start with `http://` or `https://`; the Jira domain is a host name such as `your-company.atlassian.net`, without `https://`.
 
@@ -250,13 +250,13 @@ The **Project notification policy** card decides, for the project selected in th
 | The seven state-change boxes (with state changes on) | Each state change on its own | That one is not sent |
 | **Failed runs in a row before "Test newly failing"** | How many consecutive failed runs make a test newly failing (1-20, 2 by default) | — |
 
-AI analysis complete, quality gate failed and a test or suite becoming slower are not governed by the policy. A project that existed before state changes were introduced kept its old behaviour (state changes off, every run on) until someone changes its policy. In **All Projects** the card asks you to pick a project.
+Analysis complete, quality gate failed and a test or suite becoming slower are not governed by the policy. A project that existed before state changes were introduced kept its old behaviour (state changes off, every run on) until someone changes its policy. In **All Projects** the card asks you to pick a project.
 
 ### Digests and views
 
 **Digests & views** (`/settings/digests`): scheduled summaries to email, Slack or Teams — **Daily**, **Weekly**, **Per Run** (all runs, failed only, or degraded only), **Per Release** or **Per Suite**, and **Weekly Retro** when the `weekly_retro_digest` flag is on. For a daily or weekly email to one project, **Attach analysis report** adds the HTML analysis report (see [Reports and outputs](/docs/reports#summary-report-files)). Pause, resume or unsubscribe each digest. **Preview Digest** shows what one will look like.
 
-- **Per Release** names a release: pick it from the top bar project's releases (active and in-progress first). The digest goes out after the AI summary of each run of that release, including a run linked to it as a secondary release. In **All Projects** you are asked to pick a project first.
+- **Per Release** names a release: pick it from the top bar project's releases (active and in-progress first). The digest goes out after the run summary of each run of that release, including a run linked to it as a secondary release. In **All Projects** you are asked to pick a project first.
 - **Per Suite** needs a suite name.
 - A subscription that cannot deliver says so in its row (`Not delivering — choose a release`, `Not delivering — choose a suite`, `Not delivering — its release no longer exists`), with the fix in the row: choose, then **Save**.
 
@@ -295,7 +295,7 @@ Two switches are worth understanding:
 
 **AI agents** (`/settings/ai-agents`, one project) sets the policy for the two agents that can act on failures:
 
-- **Investigator** — investigates failure clusters. On by default, in **Shadow** mode: it reasons and records what it *would* do, without acting or proposing. **Suggest** files typed proposals (quarantine a flaky offender, reassign a failure to its suite owner, promote an internal defect) to **Inbox › Approvals › Agent actions**, where a QA lead approves or rejects each one; nothing runs. **Act** runs an approved proposal, but only of the action types ticked on the card: **Quarantine flaky offenders**, **Reassign failures to the suite owner**, **Promote an internal defect** (never Jira), each off until a QA lead ticks it. A person still approves every action, every run is audited, and **Undo** reverses it. Budgets: runs a day, model calls, tokens and seconds per run. It starts on its own when a test newly fails or the release gate decides NO_GO, within its runs-a-day budget (shared with investigations started by hand), except for a run uploaded with **Skip AI analysis**. Each investigation makes model calls.
+- **Investigator** — investigates failure clusters. On by default, in **Shadow** mode: it reasons and records what it *would* do, without acting or proposing. **Suggest** files typed proposals (quarantine a flaky offender, reassign a failure to its suite owner, promote an internal defect) to **Inbox › Approvals › Agent actions**, where a QA lead approves or rejects each one; nothing runs. **Act** runs an approved proposal, but only of the action types ticked on the card: **Quarantine flaky offenders**, **Reassign failures to the suite owner**, **Promote an internal defect** (never Jira), each off until a QA lead ticks it. A person still approves every action, every run is audited, and **Undo** reverses it. Budgets: runs a day, model calls, tokens and seconds per run. It starts on its own when a test newly fails or the release gate decides NO_GO, within its runs-a-day budget (shared with investigations started by hand), except for a run uploaded with **Skip analysis**. Each investigation makes model calls.
 - **Fixer** — proposes fixes for flaky tests, validated by re-running the test, as draft pull requests that a person must merge. Off by default. Its card sets the mode, a schedule (**Off (manual only)**, **Daily**, **Weekly**) and budgets.
 
 Saving a policy needs `QA_LEAD`. **Agent activity** (`/settings/agent-activity`) lists every agent run: agent, mode, trigger, status, tokens, cost and duration, with the **Actions proposed** and **Actions taken** for each, and the Fixer's attempts. In shadow mode, actions taken is always zero; the gap is the evidence for promoting an agent.
@@ -306,7 +306,7 @@ Saving a policy needs `QA_LEAD`. **Agent activity** (`/settings/agent-activity`)
 
 - **Current state** says **Audit only** or **Enforced**, and why. Until a date is set nothing is withheld; the page counts what *would* have been withheld in the last 30 days: how many runs' AI reports, and how many distribution attempts, by channel. If the audit log cannot be read it says **Not measured** instead of a number.
 - **Enforcement date**: **Enforce from** takes a date and time in your time zone (stored as UTC). A future date schedules enforcement; a date in the past enforces at once, so the page asks you to confirm first (**Enforce now**). **Clear date** goes back to audit only. A change takes effect on every server within 30 seconds and is recorded on **Settings › Audit**.
-- **Gated channels** lists every place the gate applies. Enforcement also turns the release value CI reads into `PENDING_REVIEW` for an unreviewed AI decision.
+- **Gated channels** lists every place the gate applies. Enforcement also turns the release value CI reads into `PENDING_REVIEW` for an unreviewed decision.
 
 The server setting `REVIEW_GATE_ENFORCED=true` enforces the gate whatever the date; the page says so while it is on. When a QA lead accepts a run's AI report, TestLookup also updates the run's existing comment on its pull or merge request with the reviewed labels and a *Reviewed by a person* line (never the reviewer's name); the run's activity records each update or the reason it was skipped. More in the administrator guide's AI configuration page.
 

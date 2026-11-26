@@ -692,14 +692,14 @@ describe('RetentionPage', () => {
     await waitFor(() => expect(screen.getByText('Save policy')).toBeTruthy())
 
     expect(container.querySelector('[data-retention-ai-summary]')?.textContent).toBe(
-      'AI history: keep 20 versions per run, 10 per test.',
+      'Analysis history: keep 20 versions per run, 10 per test.',
     )
     expect(dayInput('ai_versions_per_run').value).toBe('20')
     expect(dayInput('ai_versions_per_test').value).toBe('10')
     expect(dayInput('ai_versions_per_run').min).toBe('1')
     expect(dayInput('ai_versions_per_run').max).toBe('100')
-    expect(screen.getByText('AI versions kept per run (per kind)')).toBeTruthy()
-    expect(screen.getByText('AI versions kept per test result')).toBeTruthy()
+    expect(screen.getByText('Analysis versions kept per run (per kind)')).toBeTruthy()
+    expect(screen.getByText('Analysis versions kept per test result')).toBeTruthy()
     expect(
       screen.getByText(
         'Oldest are pruned first; version 1 and any version cited by a published decision report are never pruned.',
@@ -718,8 +718,8 @@ describe('RetentionPage', () => {
       expect(
         screen.getByText(
           bad === '2.5'
-            ? 'AI versions kept per run (per kind) must be a whole number of versions'
-            : 'AI versions kept per run (per kind) must be between 1 and 100 versions',
+            ? 'Analysis versions kept per run (per kind) must be a whole number of versions'
+            : 'Analysis versions kept per run (per kind) must be between 1 and 100 versions',
         ),
       ).toBeTruthy()
       expect(saveButton().disabled).toBe(true)
@@ -748,7 +748,7 @@ describe('RetentionPage', () => {
     // The summary reads the SAVED policy.
     await waitFor(() =>
       expect(container.querySelector('[data-retention-ai-summary]')?.textContent).toBe(
-        'AI history: keep 3 versions per run, 10 per test.',
+        'Analysis history: keep 3 versions per run, 10 per test.',
       ),
     )
   })
@@ -760,7 +760,7 @@ describe('RetentionPage', () => {
     await waitFor(() => expect(screen.getByText('Save policy')).toBeTruthy())
 
     expect(container.querySelector('[data-retention-ai-summary]')?.textContent).toBe(
-      'AI history caps: not reported by this server.',
+      'Analysis history caps: not reported by this server.',
     )
     expect(dayInput('ai_versions_per_run').disabled).toBe(true)
     expect(dayInput('ai_versions_per_run').value).toBe('')
@@ -796,9 +796,9 @@ describe('RetentionPage', () => {
     await act(async () => {
       fireEvent.click(screen.getByText('Preview purge'))
     })
-    await waitFor(() => expect(screen.getByText('AI history versions')).toBeTruthy())
-    const row = screen.getByText('AI history versions').closest('tr') as HTMLElement
-    expect(row.textContent).toBe('AI history versions12')
+    await waitFor(() => expect(screen.getByText('Analysis history versions')).toBeTruthy())
+    const row = screen.getByText('Analysis history versions').closest('tr') as HTMLElement
+    expect(row.textContent).toBe('Analysis history versions12')
     first.unmount()
 
     const { ai_history_versions: _dropped, ...older } = PREVIEW.candidates
@@ -808,9 +808,9 @@ describe('RetentionPage', () => {
     await act(async () => {
       fireEvent.click(screen.getByText('Preview purge'))
     })
-    await waitFor(() => expect(screen.getByText('AI history versions')).toBeTruthy())
-    expect((screen.getByText('AI history versions').closest('tr') as HTMLElement).textContent).toBe(
-      'AI history versionsnot measured',
+    await waitFor(() => expect(screen.getByText('Analysis history versions')).toBeTruthy())
+    expect((screen.getByText('Analysis history versions').closest('tr') as HTMLElement).textContent).toBe(
+      'Analysis history versionsnot measured',
     )
   })
 
@@ -841,7 +841,7 @@ describe('RetentionPage', () => {
     })
     await waitFor(() => expect(screen.getByText(label)).toBeTruthy())
     const rows = Array.from(first.container.querySelectorAll('tbody tr')).map(tr => tr.textContent)
-    expect(rows.indexOf(`${label}1,234`)).toBe(rows.indexOf('AI history versions12') + 1)
+    expect(rows.indexOf(`${label}1,234`)).toBe(rows.indexOf('Analysis history versions12') + 1)
     expect(screen.queryByText('not measured')).toBeNull()
     first.unmount()
 

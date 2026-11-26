@@ -30,9 +30,9 @@ import {
 test.use({ timezoneId: 'UTC', locale: 'en-US', reducedMotion: 'reduce', viewport: { width: 1280, height: 900 } })
 
 const AUDIT_ONLY =
-  "Audit only — nothing is withheld. 12 runs' AI reports would have been withheld in the last 30 days (42 distribution attempts)."
+  "Audit only — nothing is withheld. 12 runs' reports would have been withheld in the last 30 days (42 distribution attempts)."
 const PAST_WARNING =
-  'Setting a date in the past enforces the gate at once: CI reads PENDING_REVIEW for every unreviewed AI decision, and PDF and shared links of unreviewed reports are refused.'
+  'Setting a date in the past enforces the gate at once: CI reads PENDING_REVIEW for every unreviewed decision, and PDF and shared links of unreviewed reports are refused.'
 
 const h1 = (page: Page) => page.getByRole('heading', { level: 1, name: 'Review gate', exact: true })
 const stateCard = (page: Page) => page.locator('[data-review-gate-state]')
@@ -80,7 +80,7 @@ test('a future time saves at once with an offset and reads "Audit only until …
   await dateCard(page).getByLabel('Enforce from').fill('2026-09-25T09:00')
   await dateCard(page).getByRole('button', { name: 'Set date' }).click()
   await expect(stateCard(page)).toContainText(
-    "Audit only until Sep 25, 2026, 09:00 (UTC+00:00) — then unreviewed AI reports are withheld. 12 runs' AI reports would have been withheld in the last 30 days (42 distribution attempts).",
+    "Audit only until Sep 25, 2026, 09:00 (UTC+00:00) — then unreviewed run reports are withheld. 12 runs' reports would have been withheld in the last 30 days (42 distribution attempts).",
   )
   expect(puts(world)).toEqual([{ enforced_from: '2026-09-25T09:00:00+00:00' }])
   await expect(page.locator('[data-inline-confirm]')).toHaveCount(0)
@@ -97,7 +97,7 @@ test('a past time asks inline first; Enforce now sends it and reads "Enforced si
   expect(puts(world), 'nothing is sent before the second click').toEqual([])
   await confirm.getByRole('button', { name: 'Enforce now' }).click()
   await expect(stateCard(page)).toContainText(
-    'Enforced since Sep 17, 2026, 08:30 (UTC+00:00): unreviewed AI reports are withheld on the channels below.',
+    'Enforced since Sep 17, 2026, 08:30 (UTC+00:00): unreviewed run reports are withheld on the channels below.',
   )
   await expect(stateCard(page).locator('[data-review-gate-badge]')).toHaveText('Enforced')
   await expect(confirm).toHaveCount(0)

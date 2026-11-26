@@ -81,7 +81,7 @@ export function ReviewsBody() {
 
       {!canSettle && (
         <p className="text-xs text-[var(--color-text-muted)]" data-testid="review-readonly-note">
-          Only QA leads can accept or reject AI reports. You can see the queue.
+          Only QA leads can accept or reject run reports. You can see the queue.
         </p>
       )}
 
@@ -93,7 +93,7 @@ export function ReviewsBody() {
           title="Nothing here"
           description={
             state === 'pending_review'
-              ? 'No AI reports are awaiting review. A report joins this queue when its AI pipeline finishes.'
+              ? 'No run reports are awaiting review. A report joins this queue when its analysis pipeline finishes.'
               : 'No reviews in this state yet.'
           }
         />

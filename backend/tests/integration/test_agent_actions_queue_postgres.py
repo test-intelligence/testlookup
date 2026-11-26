@@ -201,7 +201,7 @@ async def test_the_pending_view_counts_the_filtered_set_and_runs_oldest_first(wo
     assert a["review_id"] and c["review_id"] is None
     assert a["test_run_build_number"] and a["pipeline_workflow_type"] == "investigation"
     assert a["approvable"] is True and a["approve_blocked_reason"] is None
-    assert b["approvable"] is False and b["approve_blocked_reason"].startswith("Accept the AI report first")
+    assert b["approvable"] is False and b["approve_blocked_reason"].startswith("Accept the run report first")
     assert b["canonical_type"] == "decision.acknowledge" and b["proposing_agent_label"] == "Decision report"
 
 

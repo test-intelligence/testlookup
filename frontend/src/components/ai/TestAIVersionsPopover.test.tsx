@@ -87,7 +87,7 @@ describe('TestAIVersionsPopover', () => {
     expect(current.textContent).toContain('LLM llama3.1')
     expect(current.textContent).toContain('needs human review')
     expect(container.querySelector('[data-test-ai-current-excerpt]')?.textContent).toBe('the tax line is skipped')
-    fireEvent.click(screen.getByRole('button', { name: 'Close AI versions' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Close analysis versions' }))
     expect(onClose).toHaveBeenCalledTimes(1)
   })
 

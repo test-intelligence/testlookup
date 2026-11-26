@@ -146,7 +146,7 @@ export const DOC_PAGES: DocPage[] = [
     group: 'Using TestLookup',
     icon: SearchCheck,
     summary:
-      'The Failures, Defects and Root cause (AI) pages: categories, evidence, corrections and defects.',
+      'The Failures, Defects and Root cause pages: categories, evidence, corrections and defects.',
     keywords: ['triage', 'root cause', 'classification', 'evidence', 'category', 'defect', 'jira', 'deep investigation', 'correct'],
   },
   {

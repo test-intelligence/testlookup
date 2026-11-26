@@ -34,7 +34,7 @@ test('a QA lead: 12 places, Failures active, and the section tabs above the page
   ])
   await expect(page.locator('[data-nav-id="failures"]')).toHaveAttribute('aria-current', 'page')
   const tabs = page.locator('[data-section-tabs="failures"] [data-route-tab]')
-  await expect(tabs).toHaveText(['Failures', 'Defects', 'Root cause (AI)'])
+  await expect(tabs).toHaveText(['Failures', 'Defects', 'Root cause'])
   await expect(page.locator('[data-route-tab="/failures"]')).toHaveAttribute('aria-current', 'page')
   // A whole-pixel bar: at 37.5 px every page under it sat on a half pixel, and
   // 94 unchanged regions re-rasterised in the P1 baselines.

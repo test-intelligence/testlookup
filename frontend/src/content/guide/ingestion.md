@@ -25,7 +25,7 @@ All of them authenticate with either an `X-API-Key` header or a signed-in sessio
 5. Optionally open **Optional metadata** to set a **Build label**, **Release**, **Branch** and **Commit**. Without a build label, one is generated.
 6. **Upload**. The upload form, which opens under the page header, shows the report being processed, then **View run** opens it.
 
-Ticking **Skip AI analysis** makes the upload faster: the run gets no AI analysis, no suite comparison report and no automatic Investigator run. Transition notifications are still sent. You can start the analysis later from the run's page.
+Ticking **Skip analysis** makes the upload faster: the run gets no analysis, no suite comparison report and no automatic Investigator run. Transition notifications are still sent. You can start the analysis later from the run's page.
 
 The **Upload report** button is controlled by the `manual_upload` feature flag. It is **on** for a new install; an administrator can turn it off under **Settings → System → Feature flags**, for example to make CI the only way in. If the button is missing, that flag is off. If it is greyed out with "QA Engineer role required", your role is below `QA_ENGINEER`.
 
@@ -76,9 +76,9 @@ Each removed value reads `[REDACTED]`. Review one captured run before enabling c
 
 **Caps.** 20 exchanges per test, 1,000 per run, bodies stored up to 16 KB after redaction (a cut body ends with a truncation note). Anything over a cap is counted, never an error, and a malformed exchange never costs the run its results.
 
-**Where it shows.** Open a test from its run and pick the **HTTP exchanges** tab. A deep AI investigation with the `contract_validation` stage on compares each JSON response's fields with the project's earlier runs of the same endpoint and reports a missing field or a changed type with the build it drifted from. Exchanges follow the project's raw-events retention and are deleted with their run; a held run keeps them.
+**Where it shows.** Open a test from its run and pick the **HTTP exchanges** tab. A deep investigation with the `contract_validation` stage on compares each JSON response's fields with the project's earlier runs of the same endpoint and reports a missing field or a changed type with the build it drifted from. Exchanges follow the project's raw-events retention and are deleted with their run; a held run keeps them.
 
-Over the API, send `http_exchanges` on each result of `POST /api/v1/ingest` (add `"run_ai": false` to skip the AI analysis), or post a live test's exchanges to `POST /api/v1/stream/http-exchanges`.
+Over the API, send `http_exchanges` on each result of `POST /api/v1/ingest` (add `"run_ai": false` to skip the analysis), or post a live test's exchanges to `POST /api/v1/stream/http-exchanges`.
 
 ## Attaching a run to a release
 

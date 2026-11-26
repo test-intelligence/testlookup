@@ -32,7 +32,7 @@ export const EVENT_LABELS: Record<NotificationEventType, string> = {
   run_failed: 'Run failed',
   run_passed: 'Run passed',
   high_failure_rate: 'High failure rate',
-  ai_analysis_complete: 'AI analysis complete',
+  ai_analysis_complete: 'Analysis complete',
   quality_gate_failed: 'Quality gate failed',
   flaky_test_detected: 'Flaky test detected',
   // Transition events — fire on state changes only (alert-fatigue fix)

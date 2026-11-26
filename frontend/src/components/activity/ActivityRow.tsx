@@ -42,7 +42,7 @@ const ACTOR_LABEL: Record<ActorType, string> = {
   api_key: 'API key',
   service_account: 'service account',
   system: 'system',
-  agent: 'AI agent',
+  agent: 'agent',
 }
 
 interface Props {

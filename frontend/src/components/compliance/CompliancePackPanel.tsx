@@ -129,7 +129,7 @@ export default function CompliancePackPanel({ releaseId, releaseName }: Props) {
 
       <p className="text-xs text-[var(--color-text-muted)]">
         Generate a ZIP that reconstructs the full release decision (run
-        snapshot, release gate policy, AI decision trail, clusters, defects,
+        snapshot, release gate policy, decision trail, clusters, defects,
         and audit events), sealed with a tamper-evident SHA-256 manifest. Each
         pack is retained for seven years.
       </p>

@@ -65,7 +65,7 @@ export default function AIVersionPicker({
       )}
       <select
         data-ai-version-select=""
-        aria-label="AI analysis version"
+        aria-label="Analysis version"
         disabled={loading}
         value={selected == null ? '' : String(selected)}
         onChange={(event) => {

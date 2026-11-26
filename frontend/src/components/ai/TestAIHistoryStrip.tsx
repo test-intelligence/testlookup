@@ -49,9 +49,9 @@ export default function TestAIHistoryStrip({
   const hiddenChanges = model.changes.length - visibleChanges.length
 
   return (
-    <section data-test-ai-strip="" aria-label="AI analysis across runs" className="space-y-1.5">
+    <section data-test-ai-strip="" aria-label="Analysis across runs" className="space-y-1.5">
       <p className="eyebrow uppercase text-[var(--color-text-muted)]">
-        AI analysis across runs (oldest → newest)
+        Analysis across runs (oldest → newest)
       </p>
       <div className="flex flex-wrap items-center gap-1.5">
         {model.chips.map((chip) => {

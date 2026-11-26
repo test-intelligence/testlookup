@@ -43,7 +43,7 @@ for (const theme of THEMES) {
     await visualRegion(page, 'run-ai-version-picker', theme, picker)
 
     // v1 (its stored snapshot) compared with v2: the drawer sits right under the control.
-    await page.getByRole('combobox', { name: 'AI analysis version' }).selectOption('1')
+    await page.getByRole('combobox', { name: 'Analysis version' }).selectOption('1')
     await expect(page.locator('[data-ai-snapshot-version="1"]')).toBeVisible()
     await page.getByRole('combobox', { name: 'Compare with' }).selectOption('2')
     const drawer = page.locator('[data-ai-diff-drawer]')

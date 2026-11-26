@@ -22,7 +22,7 @@ test.use({ viewport: { width: 1440, height: 900 }, timezoneId: 'UTC', locale: 'e
 const SOURCE_URL = '/my-failures?tab=approvals&source=actions'
 const PENDING_READ = `GET ${AGENT_ACTIONS_PATH}?view=pending&limit=200`
 const DECIDED_READ = `GET ${AGENT_ACTIONS_PATH}?view=decided&limit=20`
-const REVIEW_BLOCKED = 'Accept the AI report first: an approved action runs only on an accepted report.'
+const REVIEW_BLOCKED = 'Accept the run report first: an approved action runs only on an accepted report.'
 
 const ready = (p: Page) => p.locator('[data-page-header] h1')
 const chip = (page: Page) => page.locator('[data-chip-option="actions"]')
@@ -39,9 +39,9 @@ test('a QA lead: Agent actions 3, each with its AI-report fact; the inventory ad
   await expect(rows(page)).toHaveCount(3)
   await expect(row(page, 'act-quarantine-1')).toContainText('Quarantine checkout-retry')
   await expect(row(page, 'act-quarantine-1')).toContainText('Investigator · run #128')
-  await expect(row(page, 'act-quarantine-1')).toContainText('AI report: accepted')
-  await expect(row(page, 'act-reassign-1')).toContainText('AI report: awaiting review')
-  await expect(row(page, 'act-reassign-1').getByRole('link', { name: 'AI report: awaiting review' }))
+  await expect(row(page, 'act-quarantine-1')).toContainText('Run report: accepted')
+  await expect(row(page, 'act-reassign-1')).toContainText('Run report: awaiting review')
+  await expect(row(page, 'act-reassign-1').getByRole('link', { name: 'Run report: awaiting review' }))
     .toHaveAttribute('href', '/my-failures?tab=approvals&source=reports')
   await expect(row(page, 'act-ack-1')).toContainText('Decision report · run #128')
   await expect(section(page).getByRole('link', { name: 'Open AI agents settings' })).toHaveAttribute('href', '/settings/ai-agents')

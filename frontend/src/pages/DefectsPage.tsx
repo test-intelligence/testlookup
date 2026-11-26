@@ -1643,7 +1643,7 @@ export default function DefectsPage() {
               No defects in this project yet. To populate the queue:{' '}
               <Link to="/my-failures" className="text-[var(--color-accent)] hover:underline">review your assigned failures</Link>
               {', '}
-              <Link to="/deep-investigate" className="text-[var(--color-accent)] hover:underline">run an AI investigation</Link>
+              <Link to="/deep-investigate" className="text-[var(--color-accent)] hover:underline">run a deep investigation</Link>
               {', or use '}<strong>New defect</strong>{' above to create one manually.'}
             </>
           ) : undefined}

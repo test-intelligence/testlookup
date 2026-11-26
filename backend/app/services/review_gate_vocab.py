@@ -52,12 +52,12 @@ GATED_CHANNELS = (                               # every channel literal a decis
     # (GO / NO_GO → PENDING_REVIEW) and the release verdict quoted in reports (gate_release_verdict); the page lists
     # them under "Also changes". The parity test asserts every channel literal in app/ is in this tuple.
 GATE_SENTENCES = {
-    "unset": "Audit only — nothing is withheld. {runs} runs' AI reports would have been withheld in the last 30 days ({decisions} distribution attempts).",
-    "scheduled": "Audit only until {date} — then unreviewed AI reports are withheld. {runs} runs' AI reports would have been withheld in the last 30 days ({decisions} distribution attempts).",
-    "date": "Enforced since {date}: unreviewed AI reports are withheld on the channels below.",
+    "unset": "Audit only — nothing is withheld. {runs} runs' reports would have been withheld in the last 30 days ({decisions} distribution attempts).",
+    "scheduled": "Audit only until {date} — then unreviewed run reports are withheld. {runs} runs' reports would have been withheld in the last 30 days ({decisions} distribution attempts).",
+    "date": "Enforced since {date}: unreviewed run reports are withheld on the channels below.",
     "env": "Enforced by the server setting REVIEW_GATE_ENFORCED — the date below does not apply while it is on.",
     "not_measured": "Not measured: the audit log could not be read.",
-    "past_date_warning": "Setting a date in the past enforces the gate at once: CI reads PENDING_REVIEW for every unreviewed AI decision, and PDF and shared links of unreviewed reports are refused.",
+    "past_date_warning": "Setting a date in the past enforces the gate at once: CI reads PENDING_REVIEW for every unreviewed decision, and PDF and shared links of unreviewed reports are refused.",
 }
 REVIEW_GATE_ERRORS = {   # 422 / 403 detail {"code","message"}
     "naive_datetime": "enforced_from must carry a timezone offset, for example 2026-11-02T09:00:00+01:00.",

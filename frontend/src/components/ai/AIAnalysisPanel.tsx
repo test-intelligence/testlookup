@@ -293,7 +293,7 @@ export default function AIAnalysisPanel({
   if (!canTriggerLlm) {
     return (
       <div className="card py-8 text-center text-sm text-[var(--color-text-muted)]" data-ai-panel-restricted="">
-        AI root cause analysis is available to QA engineers and above.
+        Root cause analysis is available to QA engineers and above.
       </div>
     )
   }
@@ -316,7 +316,7 @@ export default function AIAnalysisPanel({
           <Bot className="h-10 w-10 text-[var(--color-text)]" />
         </div>
         <div className="text-center">
-          <p className="font-semibold text-[var(--color-text)]">AI Root Cause Analysis</p>
+          <p className="font-semibold text-[var(--color-text)]">Root Cause Analysis</p>
           <p className="text-sm text-[var(--color-text-muted)] mt-1 max-w-xs">
             {aiMode?.ai_offline_mode === true
               ? 'Runs on this deployment\'s local model — no data leaves your network'

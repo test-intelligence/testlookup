@@ -1222,7 +1222,7 @@ describe('FailureAnalysisPage — US-2.4 wired actions', () => {
     fireEvent.click(await screen.findByRole('button', { name: /Correct the classification/i }))
     const dialog = await screen.findByRole('region', { name: /Correct classification/i })
 
-    expect(within(dialog).getByText(/No AI analysis recorded for this test yet/i)).toBeInTheDocument()
+    expect(within(dialog).getByText(/No analysis recorded for this test yet/i)).toBeInTheDocument()
     // No submit button in the empty state — nothing to correct.
     expect(within(dialog).queryByRole('button', { name: /Record correction/i })).toBeNull()
   })

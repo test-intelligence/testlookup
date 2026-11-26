@@ -143,7 +143,7 @@ export const OUTCOME_COPY = {
   undone: 'Undone by {name}.',
   rejected: 'Rejected by {name} ({reason_code}).',
   superseded: 'Replaced by a newer proposal for the same target.',
-  notExecutedReview: 'Not executed: the AI report was not accepted.',
+  notExecutedReview: 'Not executed: the run report was not accepted.',
   notExecutedPolicy: 'Not executed: this action type does not run in Act mode in this project.',
   noExecutor: 'Approved and recorded — this action type has no executor.',
   outcomeUnknown:
@@ -190,7 +190,7 @@ export function outcomeSentence(
 
 // ── Why Approve is disabled ────────────────────────────────────────────────
 export const APPROVE_BLOCKED = {
-  reviewNotAccepted: 'Accept the AI report first: an approved action runs only on an accepted report.',
+  reviewNotAccepted: 'Accept the run report first: an approved action runs only on an accepted report.',
   actModeRequired:
     'This action type does not run in this project: a QA lead turns it on under Settings › AI agents › Investigator › Act, or do it yourself.',
   separationOfDuties: 'The person who requested this investigation cannot approve the changes it proposes.',
@@ -265,16 +265,16 @@ export function canUndo(action: AgentActionLike): boolean {
   return action.status === 'executed' && action.reversible === true && Boolean(action.canonical_type)
 }
 
-// ── The AI-report fact and the row's links ─────────────────────────────────
+// ── The run-report fact and the row's links ─────────────────────────────────
 export const REVIEW_FACT: Record<string, string> = {
-  accepted: 'AI report: accepted',
-  pending_review: 'AI report: awaiting review',
-  rejected: 'AI report: rejected',
-  superseded: 'AI report: superseded',
-  none: 'no AI report',
+  accepted: 'Run report: accepted',
+  pending_review: 'Run report: awaiting review',
+  rejected: 'Run report: rejected',
+  superseded: 'Run report: superseded',
+  none: 'no run report',
 }
 
-/** The proposing run's review, as one fact; `linkToReports` when a person can act on it under AI reports. */
+/** The proposing run's review, as one fact; `linkToReports` when a person can act on it under Run reports. */
 export function reviewFact(action: AgentActionLike): { text: string; linkToReports: boolean } {
   const state = action.proposing_review_state || 'none'
   return { text: REVIEW_FACT[state] ?? REVIEW_FACT.none, linkToReports: state === 'pending_review' }

@@ -1,6 +1,6 @@
 # Investigating failures
 
-What happens to a failed test between ingestion and the explanation you read, the three pages under **Failures** in the sidebar (**Failures**, **Defects** and **Root cause (AI)**), and how to correct the result when it is wrong.
+What happens to a failed test between ingestion and the explanation you read, the three pages under **Failures** in the sidebar (**Failures**, **Defects** and **Root cause**), and how to correct the result when it is wrong.
 
 ## The path a failure takes
 
@@ -27,7 +27,7 @@ Open a failed test from a run (see [Runs and run detail](/docs/runs#one-test-res
 
 - **Error and stack trace** — the evidence as recorded. Read this first.
 - **Category** — what kind of problem this looks like (for example product bug, automation defect, infrastructure, test data, flaky).
-- **AI root cause** — **Analyse Root Cause** produces a suggested root cause, with a confidence, actions for your role and all recommended actions.
+- **Root cause** — **Analyse Root Cause** produces a suggested root cause, with a confidence, actions for your role and all recommended actions.
 - **History** — this test's recent results across runs, and for step-based tests, which step flips between pass and fail.
 
 > **Important.** The suggested root cause is generated text. It is the first hypothesis a colleague would offer, not a finding. Check it against the evidence.
@@ -107,13 +107,13 @@ A failure becomes a tracked **defect** in one of three ways (all need `QA_ENGINE
 2. **From a failing test** — **Jira** on the Failures page, or **File Jira** on a quarantined test, opens **Create Jira issue**. The summary and description are filled in by the server (test or cluster, failure message, stack trace, first and last seen, failing-run count, branch and build, a link back, and the AI's suggested root cause clearly labelled as AI). Choose the **Jira project**, **Issue type** and an optional **Comment**, then **Create issue**. Nothing is filed until you confirm.
 3. **By hand** — **Defects → New defect**: title, severity (**P0 — Blocker** to **P3 — Low**), failure category, component, and optionally the test, suite, the release it **affects** (**Affects release**; a defect filed against a release that is already live counts toward the escape rate), an existing Jira ticket URL and a description.
 
-A promotion that names a Jira project key, is **CRITICAL** or **HIGH**, or has low AI confidence comes back as **Defect created — awaiting approval**. A QA lead decides it in [Inbox › Approvals](/docs/inbox#defects) (source **Defects**): **Approve** makes it effective and, when a Jira project key was given and Jira is reachable, files the ticket on that defect; **Reject** (with a reason) closes it as **Invalid**.
+A promotion that names a Jira project key, is **CRITICAL** or **HIGH**, or has low analysis confidence comes back as **Defect created — awaiting approval**. A QA lead decides it in [Inbox › Approvals](/docs/inbox#defects) (source **Defects**): **Approve** makes it effective and, when a Jira project key was given and Jira is reachable, files the ticket on that defect; **Reject** (with a reason) closes it as **Invalid**.
 
 If an open defect is already linked to Jira for the same failure, **Create Jira issue** does not file a duplicate: the button reads **Note recurrence**, and the existing issue gets a "recurred" comment instead. With no Jira, the same form can **Deliver via** **Webhook event**, which sends the filled-in issue to your own system as an outbound webhook (an administrator sets that up).
 
 Jira ticket creation needs Jira to be configured and offline mode to be off. A defect can always exist in TestLookup without an external ticket.
 
-> **Warning.** Automatic promotion during the AI pipeline (`defect_commander`) is **off by default** and gated by a project feature flag. Manual promotion is always available. See [Settings and administration](/docs/administration#feature-flags).
+> **Warning.** Automatic promotion during the analysis pipeline (`defect_commander`) is **off by default** and gated by a project feature flag. Manual promotion is always available. See [Settings and administration](/docs/administration#feature-flags).
 
 ## Defects
 
@@ -138,14 +138,14 @@ QA engineers, QA leads and administrators get a **⋯ Defect actions** menu on e
 
 Every change is recorded in the [activity log](/docs/administration#activity-log) and the row updates in place. While offline mode is on (the default) or Jira is not set up, all three still work: a key is saved without a check ("saved locally"), and nothing is sent to Jira. With Jira reachable, a key is checked against Jira before it is saved, and changing the status of a linked defect moves its Jira issue to the matching status (To Do, In Progress or Done); if Jira refuses the move, the status is still saved and a second message says so.
 
-## Root cause (AI): deep investigation
+## Root cause: deep investigation
 
-**Failures → Root cause (AI)** (`/deep-investigate`, titled **Deep Investigation**) runs a deeper, AI-driven analysis of one run's failures: it clusters them semantically, investigates each cluster against the available evidence sources, and records a finding per cluster.
+**Failures → Root cause** (`/deep-investigate`, titled **Deep Investigation**) runs a deeper analysis of one run's failures (with a language model when one is configured): it clusters them semantically, investigates each cluster against the available evidence sources, and records a finding per cluster.
 
 1. The page picks the newest run; choose another from **Recent runs**, or narrow by suite.
 2. Read the verdict: **Ready to investigate**, **Nothing to investigate**, **No evidence sources**, **Investigation running**, **Last run failed** or **Awaiting runs**, with how many failures are eligible.
 3. **Run Deep Analysis** (or **Run on all N failures**, or **Run on selection** in the run configuration) starts it. It needs the `QA_ENGINEER` role, and analysis in **Auto**, **LLM** or **ML** mode (not **Rules**). The buttons appear only when the server would accept the run: a configured **Auto** that resolves to rules shows the reason in their place, never a button that fails when clicked.
-4. **Proposed clusters** fills in as it works: for each cluster, the failure count, a likely severity, and when an AI finding exists, the suggested root cause with its confidence and where it came from (**the deep-analysis pipeline**, or **seeded demo data** on a demo install). A cluster without one says "No AI finding recorded for this cluster yet."
+4. **Proposed clusters** fills in as it works: for each cluster, the failure count, a likely severity, and when an investigation finding exists, the suggested root cause with its confidence and where it came from (**the deep-analysis pipeline**, or **seeded demo data** on a demo install). A cluster without one says "No AI finding recorded for this cluster yet."
 
 The page also shows five KPIs: **Eligible** (eligible failures), **Clusters** (the last analysis's clusters and their average confidence), **Analyzed** (the last analysis), **Confidence** (average cluster confidence) and **Spend MTD**. Hover a label to see its full name.
 

@@ -310,9 +310,9 @@ export default function RunDetailPage() {
       await runIntelligenceService.refreshIntelligence(runId)
       // Every version's cached analysis of this run (`useRunIntelligence` keys).
       await appMutate((key) => typeof key === 'string' && key.startsWith(`run-intelligence-${runId}-`))
-      toast.success('AI analysis refreshed')
+      toast.success('Analysis refreshed')
     } catch {
-      toast.error('Failed to refresh the AI analysis')
+      toast.error('Failed to refresh the analysis')
     } finally {
       setRefreshing(false)
     }
@@ -343,7 +343,7 @@ export default function RunDetailPage() {
         ]
       : []),
     {
-      label: refreshing ? 'Refreshing AI analysis…' : 'Refresh AI analysis',
+      label: refreshing ? 'Refreshing analysis…' : 'Refresh analysis',
       icon: <RefreshCw className="h-3.5 w-3.5" />,
       onClick: () => void handleRefreshAnalysis(),
       disabled: refreshing || !run,
@@ -362,7 +362,7 @@ export default function RunDetailPage() {
     },
     // W03 AIH-06: every stored AI version of the run, as one JSON file.
     {
-      label: 'Export AI history',
+      label: 'Export analysis history',
       icon: <FileDown className="h-3.5 w-3.5" />,
       onClick: () => { if (runId) void downloadAIHistory(runId, run?.build_number ?? null) },
       disabled: !run,
@@ -466,7 +466,7 @@ export default function RunDetailPage() {
           (a clusters payload that is not a list) must not take the header,
           the tabs and the other sections down with it. */}
       {runId && tab === 'analysis' && (
-        <SectionErrorBoundary message="The run's AI analysis failed to load">
+        <SectionErrorBoundary message="The run's analysis failed to load">
           <RunIntelligenceBody
             runId={runId}
             reportVersion={readReportVersion(searchParams)}
