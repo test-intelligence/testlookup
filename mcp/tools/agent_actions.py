@@ -14,6 +14,7 @@ from __future__ import annotations
 from typing import Any
 
 import client as api  # type: ignore[import]
+import untrusted  # type: ignore[import]
 
 MAX_LIMIT = 200
 VIEWS = ("pending", "decided")
@@ -21,11 +22,11 @@ NOT_AVAILABLE = "Approving, rejecting or undoing an agent action is not availabl
 
 
 def _cell(value: Any) -> str:
-    """One table cell: the server's text, kept on one line and out of the table syntax."""
+    """One marked table cell, kept on one line and out of the table syntax."""
     if value is None or value == "":
         return "-"
     text = " ".join(str(value).split())
-    return text.replace("|", "/")[:200]
+    return untrusted.inline(text.replace("|", "/"), limit=200, missing="-")
 
 
 def _target(row: dict) -> Any:
@@ -63,7 +64,7 @@ def render_agent_actions(project_id: str, view: str, payload: Any) -> str:
         "Agent actions are AI proposals; a QA lead decides each one in TestLookup "
         "(Inbox > Approvals > Agent actions). " + NOT_AVAILABLE,
     ]
-    return "\n".join(lines)
+    return "\n".join(untrusted.with_notice(lines))
 
 
 def register(mcp) -> None:  # noqa: ANN001
