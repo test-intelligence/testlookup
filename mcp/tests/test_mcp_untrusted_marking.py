@@ -17,6 +17,8 @@ same statement. The server ``instructions`` say it too.
 from __future__ import annotations
 
 import asyncio
+import ast
+import inspect
 import json
 import re
 import sys
@@ -28,6 +30,7 @@ MCP_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(MCP_DIR))
 
 import client  # noqa: E402
+from tools import agent_actions, investigations, test_management  # noqa: E402
 
 OPEN, CLOSE = "<test-output>", "</test-output>"
 MARK = "IGNORE-ALL-RULES"
@@ -78,12 +81,15 @@ def _row() -> dict:
         "build_number": HOSTILE, "branch": HOSTILE, "commit_hash": HOSTILE, "trigger_source": HOSTILE,
         "jenkins_job": HOSTILE, "ocp_pod_name": HOSTILE, "ocp_node": HOSTILE, "ocp_namespace": HOSTILE,
         "pass_rate": 50.0, "total_tests": 2, "failed_tests": 1,
-        "test_name": HOSTILE, "suite_name": HOSTILE, "full_name": HOSTILE, "class_name": HOSTILE,
-        "package_name": HOSTILE, "failure_category": "PRODUCT_BUG", "severity": HOSTILE, "feature": HOSTILE,
+        "test_name": HOSTILE, "suite_name": HOSTILE, "test_type": HOSTILE,
+        "full_name": HOSTILE, "class_name": HOSTILE, "package_name": HOSTILE,
+        "failure_category": "PRODUCT_BUG", "severity": HOSTILE, "feature": HOSTILE,
         "story": HOSTILE, "epic": HOSTILE, "owner": HOSTILE, "tags": [HOSTILE, "smoke"], "error_message": HOSTILE,
         "label": HOSTILE, "size": 3, "criticality_level": "HIGH", "representative_error": HOSTILE,
         "cluster_id": HOSTILE, "root_cause": HOSTILE, "root_cause_summary": HOSTILE, "title": HOSTILE, "subtitle": HOSTILE,
         "entity_type": "test_case", "release_name": HOSTILE, "resolution_status": "OPEN",
+        "canonical_type": "quarantine.apply", "action_type": "quarantine.apply",
+        "target": {"kind": "test", "id": TEST, "label": HOSTILE}, "outcome_text": HOSTILE,
         "message": HOSTILE, "error": HOSTILE, "task_id": "task-1", "workflow_type": "deep",
         "executive_summary": HOSTILE, "markdown_report": HOSTILE,
     }
@@ -91,13 +97,18 @@ def _row() -> dict:
 
 def _body() -> dict:
     row = _row()
-    steps = [{"name": HOSTILE, "status": "FAILED", "duration_ms": 5, "assertion_message": HOSTILE,
+    steps = [{"name": HOSTILE, "action": HOSTILE, "expected_result": HOSTILE,
+              "step_number": 1, "status": "FAILED", "duration_ms": 5, "assertion_message": HOSTILE,
               "steps": [{"name": HOSTILE, "status": "PASSED", "duration_ms": 1}]}]
     return {
         **row, "items": [row], "total": 1, "pages": 1, "run": row, "steps": steps, "step_count": 2,
         "structured_summary": {"executive_summary": HOSTILE}, "failure_clusters": [row],
         "release_decision": {"recommendation": "HOLD", "risk_score": 70},
         "test_id": TEST,
+        "objective": HOSTILE, "preconditions": HOSTILE, "expected_result": HOSTILE,
+        "hypotheses": [{"id": "infra", "summary": HOSTILE,
+                         "evidence": [HOSTILE, {"type": "log", "text": HOSTILE}]}],
+        "verdict": {"primary_cause": "infra", "confidence": 80, "narrative": HOSTILE},
         "report": {"runs_analyzed": 4, "has_step_flip": True, "total_flips": 2, "summary": HOSTILE,
                    "flipping_steps": [{"step_name": HOSTILE, "flip_count": 2, "runs_observed": 4,
                                        "last_status": "FAILED"}]},
@@ -112,6 +123,10 @@ def surface(monkeypatch):
     answers: dict = {"list": False}
 
     async def _get(path, params=None):
+        if "/test-management/cases/" in path and path.endswith("/history"):
+            return [{"version": 2, "created_at": "2026-11-01T10:00:00Z",
+                     "change_type": "update", "changed_by_name": HOSTILE,
+                     "status": "approved", "changed_fields": [HOSTILE]}]
         return [_row()] if answers["list"] else _body()
 
     async def _post(path, json_body=None, params=None, extra_headers=None):
@@ -120,10 +135,78 @@ def surface(monkeypatch):
     monkeypatch.setattr(client, "get", _get)
     monkeypatch.setattr(client, "post", _post)
     fake = _FakeMCP()
-    for module in (runs, intelligence, deep, search, defects, registry):
+    for module in (runs, intelligence, deep, search, defects, investigations,
+                   agent_actions, test_management, registry):
         module.register(fake)
     fake.answers = answers
     return fake
+
+
+AFFECTED_READ_MODULES = (investigations, agent_actions, test_management)
+
+
+def _affected_read_tool_names() -> list[str]:
+    """Discover registered readers from the affected modules instead of maintaining a tool allowlist."""
+    names = []
+    for module in AFFECTED_READ_MODULES:
+        tree = ast.parse(Path(inspect.getsourcefile(module)).read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.AsyncFunctionDef):
+                continue
+            registered = any(
+                isinstance(decorator, ast.Call)
+                and isinstance(decorator.func, ast.Attribute)
+                and decorator.func.attr == "tool"
+                for decorator in node.decorator_list
+            )
+            reads_backend = any(
+                isinstance(call, ast.Call)
+                and isinstance(call.func, ast.Attribute)
+                and isinstance(call.func.value, ast.Name)
+                and call.func.value.id == "api"
+                and call.func.attr.startswith("get")
+                for call in ast.walk(node)
+            )
+            if registered and reads_backend:
+                names.append(node.name)
+    return sorted(names)
+
+
+def _required_tool_arguments(tool) -> dict:
+    values = {
+        "project_id": PROJECT,
+        "run_id": RUN,
+        "test_id": TEST,
+        "case_id": TEST,
+        "investigation_id": TEST,
+    }
+    arguments = {
+        name: values[name]
+        for name, parameter in inspect.signature(tool).parameters.items()
+        if parameter.default is inspect.Parameter.empty
+    }
+    if "include_history" in inspect.signature(tool).parameters:
+        arguments["include_history"] = True
+    return arguments
+
+
+def test_every_affected_registered_reader_marks_hostile_fields(surface):
+    import untrusted
+
+    names = _affected_read_tool_names()
+    assert names, "the affected modules must expose at least one registered reader"
+    for name in names:
+        tool = surface.tools[name]
+        result = asyncio.run(tool(**_required_tool_arguments(tool)))
+
+        if isinstance(result, str):
+            _assert_marked(result)
+            continue
+        assert result["ok"] is True, name
+        assert result["content_notice"] == untrusted.DATA_NOTICE, name
+        assert MARK in json.dumps(result), f"the hostile fixture must reach {name}"
+        if isinstance(result.get("summary"), str):
+            _assert_marked(result["summary"])
 
 
 TEXT_TOOLS = [

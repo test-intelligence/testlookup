@@ -24,6 +24,7 @@ from __future__ import annotations
 from typing import Any
 
 import client as api  # type: ignore[import]
+import untrusted  # type: ignore[import]
 
 # Character budget for long free-text fields in get_investigation output
 # (hypothesis summaries, evidence lines, the verdict narrative). Full text
@@ -155,7 +156,11 @@ def register(mcp) -> None:  # noqa: ANN001
             data = await api.get(api.path("/api/v1/investigations/{investigation_id}", investigation_id=api.uuid_id(investigation_id)))
         except Exception as exc:
             return api.error_payload(exc)
-        return {"ok": True, "investigation": _compact_detail(data or {})}
+        return {
+            "ok": True,
+            "content_notice": untrusted.DATA_NOTICE,
+            "investigation": _compact_detail(data or {}),
+        }
 
     @mcp.tool()
     async def list_investigations(project_id: str, limit: int = 20) -> dict:
@@ -177,6 +182,7 @@ def register(mcp) -> None:  # noqa: ANN001
         data = data or {}
         return {
             "ok": True,
+            "content_notice": untrusted.DATA_NOTICE,
             "items": data.get("items", []),
             "total": data.get("total", 0),
         }
