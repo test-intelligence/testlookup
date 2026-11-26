@@ -15,16 +15,15 @@ node_desired_size   = 2
 node_min_size       = 2
 node_max_size       = 4
 
-# Both are off by default; read the variable descriptions before turning them on.
 # enable_network_policy: the VPC CNI enforces NetworkPolicy. Turn it on for any
 #   cluster other workloads share. The aws-eks overlay admits the ALB to the
 #   frontend, backend and MCP pods; narrow its 0.0.0.0/0 to the output
 #   public_subnet_cidrs.
-# require_imdsv2: nodes require IMDSv2 with a hop limit of 1. On an existing
-#   cluster this REPLACES the node group; the AWS Load Balancer Controller then
-#   needs its own IRSA role, region and vpcId.
+# require_imdsv2 is mandatory: nodes require IMDSv2 with a hop limit of 1. On
+#   an existing cluster this REPLACES the node group; the AWS Load Balancer
+#   Controller then needs its own IRSA role, region and vpcId.
 # enable_network_policy = true
-# require_imdsv2        = true
+require_imdsv2 = true
 
 rds_instance_class   = "db.t3.medium"
 rds_multi_az         = false

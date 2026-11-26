@@ -11,6 +11,7 @@ node_instance_types = ["t3.large"]
 node_desired_size   = 3
 node_min_size       = 2
 node_max_size       = 6
+require_imdsv2      = true
 
 # Required, no default: the CIDRs that may reach the EKS API endpoint (your
 # office/VPN egress). Terraform asks for it when it is not set here.

@@ -50,9 +50,14 @@ variable "enable_network_policy" {
 }
 
 variable "require_imdsv2" {
-  description = "Start nodes from a launch template that requires IMDSv2 and sets the metadata hop limit to 1, so pods off the host network cannot read the node role's credentials. Turning it on for an existing cluster REPLACES the managed node group (every node is recreated). The AWS Load Balancer Controller, and any other controller that reads the instance metadata service, then needs its own IRSA role and explicit region and vpcId settings."
+  description = "Require nodes to use a launch template that enforces IMDSv2 and sets the metadata hop limit to 1, so pods off the host network cannot read the node role's credentials. This compatibility input must remain true. Applying this to an existing cluster without the launch template REPLACES the managed node group (every node is recreated). The AWS Load Balancer Controller, and any other controller that reads the instance metadata service, needs its own IRSA role and explicit region and vpcId settings."
   type        = bool
-  default     = false
+  default     = true
+
+  validation {
+    condition     = var.require_imdsv2
+    error_message = "require_imdsv2 must be true; node metadata hardening cannot be disabled."
+  }
 }
 
 variable "tags" {
