@@ -8,8 +8,8 @@
 ## 1. Identity & tokens
 
 - **JWT access + refresh** — the SPA holds a short-lived access token and
-  refreshes it through a single-flight refresh flow (one refresh even when
-  many requests 401 together). API clients use **API keys** (Bearer / 
+  refreshes it through a single-flight refresh flow within and across browser
+  tabs (one rotation even when many requests 401 together). API clients use **API keys** (Bearer /
   `X-API-Key`), created per user under Settings → API Keys; streaming SDKs use
   project-scoped keys plus per-session tokens.
 - **Revocation** — `core/token_revocation.py`: token validation consults a

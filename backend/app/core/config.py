@@ -667,12 +667,6 @@ class Settings(BaseSettings):
     # Clients keep a session going with the refresh token. It was 720.
     JWT_ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     JWT_REFRESH_TOKEN_EXPIRE_DAYS: int = 7
-    # Two tabs of one browser can send the same refresh token at the same
-    # moment; the second arrives just after the first rotated it. For this many
-    # seconds after a rotation the old token is answered with a new pair, not
-    # treated as a stolen token (which signs the user out of every device).
-    # 0 turns the leeway off: every reuse of a rotated token is then a replay.
-    JWT_REFRESH_REUSE_LEEWAY_SECONDS: int = Field(default=10, ge=0, le=60)
     # Escape hatch for the fail-CLOSED token-revocation check. Default False:
     # when the revocation store (Redis) is unreachable, authenticated requests
     # get 503 rather than being honoured unchecked. Setting this True restores
