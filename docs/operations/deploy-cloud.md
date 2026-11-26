@@ -55,7 +55,7 @@ How to check a running cluster, and what starts being blocked when you turn enfo
 |---|---|
 | `network` | VPC, subnets across availability zones, NAT |
 | `ecr` | ECR repositories for the backend, frontend and MCP images |
-| `eks` | EKS cluster, managed node group and the core addons. Two security switches, both off by default: `enable_network_policy` and `require_imdsv2` (below) |
+| `eks` | EKS cluster, managed node group and the core addons. Node metadata hardening is mandatory; `enable_network_policy` remains an opt-in security switch (below) |
 | `data` | RDS for PostgreSQL 16, Amazon DocumentDB, ElastiCache (Redis OSS 7.1, TLS and auth token), two encrypted S3 buckets, and a Secrets Manager secret with the generated credentials |
 
 ```bash
@@ -69,14 +69,14 @@ aws eks update-kubeconfig --region <region> --name <cluster name>
 
 `validate.sh` needs no AWS account. No CI workflow runs it, so run it yourself after you change `infra/aws/` or the `aws-eks` overlay. The design and cost reasoning are in [`infra/aws/STRATEGY.md`](../../infra/aws/STRATEGY.md); the commands are in [`infra/aws/README.md`](../../infra/aws/README.md).
 
-The `eks` module has two switches that are off by default, because each one changes a running cluster and needs preparation. Set them in your `.tfvars` file and review the plan before you apply.
+The `eks` module always requires IMDSv2 with a metadata hop limit of 1. The `require_imdsv2` compatibility input defaults to `true` and cannot be set to `false`. Set it explicitly to `true` in `.tfvars` files so the security requirement remains visible. `enable_network_policy` is still off by default because enabling it on a running cluster needs network-policy preparation. Review the plan before applying either change to an existing cluster.
 
-| Variable | What it does when `true` | What must be in place first |
+| Variable | Behavior | What must be in place first |
 |---|---|---|
 | `enable_network_policy` | Sets `enableNetworkPolicy` on the VPC CNI addon, so the cluster enforces NetworkPolicy. While it is `false`, every policy in the manifests is stored and none is applied | `default-deny-all` starts applying at once. With ALB `target-type: ip` the load balancer reaches the frontend, backend and MCP pods directly. The `aws-eks` overlay admits it to all three (`allow-frontend`, `allow-backend`, `allow-mcp`) from `0.0.0.0/0`: replace that with the ALB's subnets (Terraform output `public_subnet_cidrs`), which also stops other workloads in the cluster from skipping the load balancer. If you render your own manifests without that overlay, add those rules first, or the application stops answering through the ALB. Label any monitoring namespace as described in [network policies](deploy-kubernetes.md#network-policies). Needs VPC CNI v1.14 or later |
-| `require_imdsv2` | Starts the nodes from a launch template that requires IMDSv2 and sets the metadata hop limit to 1, so a pod off the host network cannot read the node role's credentials | On an existing cluster the plan replaces the managed node group, because AWS does not let a node group adopt a launch template in place: every node is recreated and the pods restart. A controller running in a pod can no longer read the region or the VPC id from the instance metadata service: give the AWS Load Balancer Controller its own IAM role (IRSA or EKS Pod Identity) and install it with `--set region=<region> --set vpcId=<vpc id>`; do the same for any other controller that used the node role |
+| `require_imdsv2` | Must remain `true`. Every node starts from a launch template that requires IMDSv2 and sets the metadata hop limit to 1, so a pod off the host network cannot read the node role's credentials | On an existing cluster without the launch template, the plan replaces the managed node group because AWS does not let a node group adopt a launch template in place: every node is recreated and the pods restart. A controller running in a pod can no longer read the region or the VPC id from the instance metadata service: give the AWS Load Balancer Controller its own IAM role (IRSA or EKS Pod Identity) and install it with `--set region=<region> --set vpcId=<vpc id>`; do the same for any other controller that used the node role |
 
-Turn both on for a new cluster once those pieces are ready. With both left `false`, applying this Terraform to a cluster built from an earlier version changes nothing in the node group or the addons.
+Prepare metadata-dependent controllers before applying this Terraform to an existing cluster, because the mandatory launch template replaces a node group that did not already use it. Turn `enable_network_policy` on once its network rules are ready.
 
 ### Wire the application
 

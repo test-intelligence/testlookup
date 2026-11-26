@@ -102,12 +102,12 @@ resource "aws_iam_role_policy_attachment" "node" {
 # bootstrap user data and the disk stay with the managed node group below, as
 # they were before this template existed.
 #
-# Opt-in (var.require_imdsv2, default false). A node group that was created
-# without a launch template cannot adopt one, so turning this on for an
-# existing cluster replaces the node group. With the variable false this
-# resource does not exist and the node group is exactly as it was.
+# A node group that was created without a launch template cannot adopt one, so
+# applying this hardening to an existing cluster replaces the node group. Keep
+# count = 1 so clusters that already enabled the former compatibility switch
+# retain the existing counted resource address.
 resource "aws_launch_template" "node" {
-  count = var.require_imdsv2 ? 1 : 0
+  count = 1
 
   name_prefix = "${var.name}-ng-"
 
