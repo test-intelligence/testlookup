@@ -101,9 +101,8 @@ export interface MfaEnrollConfirmResponse {
   /** Exactly 10 codes, shown once and never again. */
   recovery_codes: string[]
   /**
-   * Non-null ONLY on the forced-enrollment path (the request carried an
-   * `enrollment_token`). On the voluntary path the caller keeps its session
-   * and this is null.
+   * The sole MFA-assured replacement after all pre-enrollment sessions are
+   * revoked. Nullable only for compatibility with older backend versions.
    */
   tokens: TokenResponse | null
 }

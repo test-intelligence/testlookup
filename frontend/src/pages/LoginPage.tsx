@@ -388,9 +388,9 @@ export default function LoginPage() {
                   )
                 }
                 onComplete={(result) => {
-                  // The forced path is the only one where `tokens` is non-null —
-                  // it is how the user finishes signing in without re-entering
-                  // their password.
+                  // Unlike voluntary enrollment, the forced path deliberately
+                  // waits to install its replacement session until the user
+                  // acknowledges the one-time recovery codes.
                   if (result.tokens) {
                     void completeSignIn(result.tokens);
                   } else {

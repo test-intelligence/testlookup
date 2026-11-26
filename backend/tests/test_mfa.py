@@ -1090,8 +1090,9 @@ class TestPolicy:
         assert "access_token" in resp.json()
 
     async def test_forced_enrollment_completes_the_login(self, db, client):
-        await set_policy(db, require_mfa=True, required_for_role=None)
         user = await make_user(db, username="pol-forced")
+        pre_enrollment = (await login(client, user=user)).json()
+        await set_policy(db, require_mfa=True, required_for_role=None)
 
         body = (await login(client, user=user)).json()
         token = body["enrollment_token"]
@@ -1111,6 +1112,24 @@ class TestPolicy:
         payload = confirm.json()
         assert len(payload["recovery_codes"]) == 10
         assert payload["tokens"]["access_token"]
+
+        records = (
+            await db.execute(
+                select(RefreshTokenRecord).where(RefreshTokenRecord.user_id == user.id)
+            )
+        ).scalars().all()
+        assert len([record for record in records if record.revoked_at is None]) == 1
+
+        replacement = await client.post(
+            "/api/v1/auth/refresh",
+            json={"refresh_token": payload["tokens"]["refresh_token"]},
+        )
+        assert replacement.status_code == 200
+        stale = await client.post(
+            "/api/v1/auth/refresh",
+            json={"refresh_token": pre_enrollment["refresh_token"]},
+        )
+        assert stale.status_code == 401
 
         await db.refresh(user)
         assert user.mfa_enabled is True
@@ -1249,8 +1268,8 @@ class TestEnrollmentFlow:
 
     async def test_full_voluntary_enrollment_then_challenge_then_verify(self, db, client):
         user = await make_user(db, username="enr-full")
-        tok = (await login(client, user=user)).json()["access_token"]
-        headers = {"Authorization": f"Bearer {tok}"}
+        original = (await login(client, user=user)).json()
+        headers = {"Authorization": f"Bearer {original['access_token']}"}
 
         start = await client.post("/api/v1/auth/mfa/enroll/start", headers=headers, json={})
         secret = start.json()["secret"]
@@ -1260,7 +1279,24 @@ class TestEnrollmentFlow:
             json={"code": pyotp.TOTP(secret).now()},
         )
         assert confirm.status_code == 200
-        assert confirm.json()["tokens"] is None  # already had a session
+        replacement = confirm.json()["tokens"]
+        assert replacement["access_token"] != original["access_token"]
+        assert replacement["refresh_token"] != original["refresh_token"]
+
+        # The sole replacement remains a normal renewable session.  It is
+        # allowed through CHALLENGE because the enrollment code assured it.
+        refreshed = await client.post(
+            "/api/v1/auth/refresh",
+            json={"refresh_token": replacement["refresh_token"]},
+        )
+        assert refreshed.status_code == 200
+
+        # A credential minted before the security boundary cannot cross it.
+        stale = await client.post(
+            "/api/v1/auth/refresh",
+            json={"refresh_token": original["refresh_token"]},
+        )
+        assert stale.status_code == 401
 
         # Next login is now two-legged.
         body = (await login(client, user=user)).json()

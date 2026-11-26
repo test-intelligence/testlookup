@@ -23,6 +23,23 @@ const mockEnrollStart = vi.fn()
 const mockEnrollConfirm = vi.fn()
 const mockDisable = vi.fn()
 const mockRegenerate = vi.fn()
+const mockAuth = vi.hoisted(() => ({
+  setAuth: vi.fn(),
+  user: {
+    id: 'user-1',
+    email: 'alice@example.com',
+    username: 'alice',
+    full_name: 'Alice Adams',
+    role: 'ADMIN',
+    is_active: true,
+    must_change_password: false,
+    avatar_color: 'blue',
+  },
+}))
+
+vi.mock('@/store/authStore', () => ({
+  useAuthStore: (selector: (state: typeof mockAuth) => unknown) => selector(mockAuth),
+}))
 
 vi.mock('@/services/mfaService', () => ({
   mfaService: {
@@ -57,6 +74,13 @@ const ENROLL_START = {
 }
 
 const RECOVERY_CODES = Array.from({ length: 10 }, (_, i) => `AAAA-BBBB-CCCC-DD${i}${i}`)
+const REPLACEMENT_TOKENS = {
+  access_token: 'mfa-access',
+  refresh_token: 'mfa-refresh',
+  token_type: 'bearer',
+  expires_in: 1800,
+  must_change_password: false,
+}
 
 function renderSection() {
   return render(
@@ -134,11 +158,11 @@ describe('MfaSecuritySection', () => {
   it('walks voluntary enrollment and requires acknowledging the recovery codes', async () => {
     mockStatus.mockResolvedValue({ ...BASE })
     mockEnrollStart.mockResolvedValue(ENROLL_START)
-    // Voluntary path: `tokens` is null — the user keeps their session.
+    // Voluntary enrollment replaces the now-revoked pre-MFA session.
     mockEnrollConfirm.mockResolvedValue({
       enabled: true,
       recovery_codes: RECOVERY_CODES,
-      tokens: null,
+      tokens: REPLACEMENT_TOKENS,
     })
     renderSection()
 
@@ -156,6 +180,11 @@ describe('MfaSecuritySection', () => {
 
     await screen.findByTestId('recovery-codes-panel')
     expect(mockEnrollConfirm).toHaveBeenCalledWith('123456', undefined)
+    expect(mockAuth.setAuth).toHaveBeenCalledWith(
+      'mfa-access',
+      'mfa-refresh',
+      mockAuth.user,
+    )
 
     const finish = screen.getByRole('button', { name: /finish/i })
     expect(finish).toBeDisabled()
