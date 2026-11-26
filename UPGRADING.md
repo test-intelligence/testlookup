@@ -121,8 +121,9 @@ Members below QA_LEAD see a webhook's target URL as `https://host/...`.
 - The web app, the CLI and the MCP server renew on their own. The Python, JS
   and Go SDKs do not refresh a password sign-in: a run longer than the token
   lifetime should use an API key.
-- A refresh token used again more than 10 seconds after it was rotated
-  (`JWT_REFRESH_REUSE_LEEWAY_SECONDS`) signs the user out of every device.
+- A refresh token used again after it was rotated signs the user out of every
+  device. The web app serializes refreshes within and across tabs so ordinary
+  concurrent requests share the first rotated pair.
 - The SSE and WebSocket live streams refuse a logged-out token, a refresh
   token and an account on a temporary password, and an SSE stream ends when
   its token expires. Clients reconnect with a fresh access token.
