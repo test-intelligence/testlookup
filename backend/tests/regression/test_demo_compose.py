@@ -107,8 +107,7 @@ def test_the_only_public_entry_is_the_tunnel_behind_a_profile(demo):
     ("postgres", "POSTGRES_PUBLISH_ADDR", "${POSTGRES_PUBLISH_ADDR:-127.0.0.1}:"),
     ("minio", "MINIO_PUBLISH_ADDR", "${MINIO_PUBLISH_ADDR:-127.0.0.1}:"),
     ("ollama", "OLLAMA_PUBLISH_ADDR", "${OLLAMA_PUBLISH_ADDR:-127.0.0.1}:"),
-    # The front door: every interface unless a tunnel or proxy is the way in.
-    ("frontend", "FRONTEND_PUBLISH_ADDR", "${FRONTEND_PUBLISH_ADDR:+${FRONTEND_PUBLISH_ADDR}:}"),
+    ("frontend", "FRONTEND_PUBLISH_ADDR", "${FRONTEND_PUBLISH_ADDR:-127.0.0.1}:"),
 ])
 def test_release_ports_take_a_bind_address(service, variable, prefix):
     ports = _load(RELEASE)["services"][service]["ports"]

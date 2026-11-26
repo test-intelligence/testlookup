@@ -38,13 +38,11 @@ name: testlookup
 # This stack still reads secrets from .env — generate one with
 # scripts/gen-dev-env.sh (local/demo) or supply your own for production.
 #
-# PLAIN HTTP, ON EVERY NETWORK INTERFACE: the frontend is published on port
-# 3000 of every interface and nothing in this file terminates TLS. Anyone on
-# the same network can read passwords, session tokens and API keys sent to
-# it. Before other people use the install, put a TLS-terminating reverse
-# proxy in front of it and set FRONTEND_PUBLISH_ADDR=127.0.0.1 in .env so
-# port 3000 answers only on this host (docs/operations/deploy-compose.md,
-# "Before other people use it"). Every other port is already loopback-only.
+# LOCAL HTTP BY DEFAULT: nothing in this file terminates TLS, so the frontend
+# is published on 127.0.0.1:3000 unless FRONTEND_PUBLISH_ADDR is set explicitly.
+# Before other people use the install, keep that loopback binding and put a
+# TLS-terminating reverse proxy on this host (docs/operations/deploy-compose.md,
+# "Before other people use it"). Every other port is also loopback-only.
 # ============================================================
 
 x-app-image: &app-backend-image
@@ -517,9 +515,10 @@ services:
     # (uid 101) and listens on 8080 inside the container; the host port is
     # still 3000.
     ports:
-      # Every interface by default (unchanged); FRONTEND_PUBLISH_ADDR=127.0.0.1
-      # when something on the host (a tunnel, a reverse proxy) is the only way in.
-      - "${FRONTEND_PUBLISH_ADDR:+${FRONTEND_PUBLISH_ADDR}:}3000:8080"
+      # Loopback-only by default because this listener is plain HTTP. Set
+      # FRONTEND_PUBLISH_ADDR explicitly only for a deliberately configured
+      # network path; a same-host TLS proxy reaches the loopback default.
+      - "${FRONTEND_PUBLISH_ADDR:-127.0.0.1}:3000:8080"
     environment:
       - BACKEND_UPSTREAM=backend:8000
     healthcheck:

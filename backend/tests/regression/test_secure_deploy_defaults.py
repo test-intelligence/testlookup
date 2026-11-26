@@ -19,8 +19,7 @@ Found by the 2026-11-12 open-source repository review:
 * ``gen-dev-env.sh`` left ``.env`` (every generated secret) world-readable.
 
 Every published port must resolve to 127.0.0.1 with an empty environment. The
-two deliberate public entry points are the release frontend (the product's
-front door) and the single-VM frontend on port 80.
+single deliberate public entry point is the single-VM frontend on port 80.
 """
 from __future__ import annotations
 
@@ -49,9 +48,8 @@ COMPOSE_FILES = (
     "docker-compose.demo.yml",
     ".devcontainer/docker-compose.codespaces.yml",
 )
-#: (file, service): the deliberate front doors, published on every interface.
+#: (file, service): the deliberate front door, published on every interface.
 PUBLIC_ENTRY_POINTS = {
-    ("docker-compose.release.yml", "frontend"),
     ("docker-compose.gcp-vm.yml", "frontend"),
 }
 #: First Ollama release with CVE-2026-7482 (GHSA-x8qc-fggm-mpqg) fixed.
@@ -122,7 +120,7 @@ def test_the_port_scan_covers_the_services_that_were_exposed():
 
 def test_the_resolver_reads_compose_interpolation():
     assert _published("${POSTGRES_PUBLISH_ADDR:-127.0.0.1}:5433:5432")[0] == "127.0.0.1"
-    assert _published("${FRONTEND_PUBLISH_ADDR:+${FRONTEND_PUBLISH_ADDR}:}3000:80")[0] == ""
+    assert _published("${FRONTEND_PUBLISH_ADDR:-127.0.0.1}:3000:80")[0] == "127.0.0.1"
     assert _published("8000:8000")[0] == ""
     assert _published("127.0.0.1:27017:27017")[0] == "127.0.0.1"
 
