@@ -185,11 +185,13 @@ async def verify_installation_repository(
         if response.status_code != 200:
             raise GitHubAppUnavailable("GitHub refused the installation repository list")
         try:
-            body = response.json() or {}
+            body = response.json()
+            if not isinstance(body, dict):
+                raise ValueError("invalid repository response")
             repositories = body.get("repositories")
-            total = int(body.get("total_count"))
-            if not isinstance(repositories, list):
-                raise ValueError("repositories")
+            total = body.get("total_count")
+            if not isinstance(repositories, list) or type(total) is not int or total < 0:
+                raise ValueError("invalid repository list")
             if any(str(repo.get("full_name") or "").casefold() == expected for repo in repositories if isinstance(repo, dict)):
                 return
         except (TypeError, ValueError):
