@@ -116,6 +116,80 @@ def test_task_registry_is_frozen_and_hard_capped(monkeypatch):
         worker._metric_task_names.cache_clear()
 
 
+def test_task_registry_loads_configured_modules_before_freezing(monkeypatch):
+    from app.worker import celery_app as worker
+
+    registry = {"celery.group": object()}
+
+    def import_default_modules():
+        registry["registered.application-task"] = object()
+
+    loader = SimpleNamespace(import_default_modules=Mock(side_effect=import_default_modules))
+    monkeypatch.setattr(worker, "celery_app", SimpleNamespace(tasks=registry, loader=loader))
+    worker._metric_task_names.cache_clear()
+    try:
+        names = worker._metric_task_names()
+        assert names == frozenset({"celery.group", "registered.application-task"})
+        registry["late-customer-task"] = object()
+        assert worker._metric_task_names() is names
+        assert worker._metric_task_name(SimpleNamespace(name="late-customer-task")) == "other"
+        loader.import_default_modules.assert_called_once_with()
+    finally:
+        worker._metric_task_names.cache_clear()
+
+
+def test_failed_task_module_import_does_not_freeze_partial_registry(monkeypatch):
+    from app.worker import celery_app as worker
+
+    registry = {"celery.group": object()}
+    loader = SimpleNamespace(import_default_modules=Mock(side_effect=ImportError("unavailable module")))
+    monkeypatch.setattr(worker, "celery_app", SimpleNamespace(tasks=registry, loader=loader))
+    worker._metric_task_names.cache_clear()
+    try:
+        with pytest.raises(ImportError, match="unavailable module"):
+            worker._metric_task_names()
+        assert worker._metric_task_names.cache_info().currsize == 0
+        registry["registered.application-task"] = object()
+        loader.import_default_modules.side_effect = None
+        assert "registered.application-task" in worker._metric_task_names()
+    finally:
+        worker._metric_task_names.cache_clear()
+
+
+def test_early_real_task_observation_retains_application_alert_identities():
+    root = Path(__file__).resolve().parents[3]
+    script = r'''
+import sys
+from types import SimpleNamespace
+from app.core.metric_dimensions import MAX_METRIC_TASK_NAMES
+from app.worker import celery_app as worker
+
+assert "app.worker.tasks" not in sys.modules
+assert "app.worker.training_tasks" not in sys.modules
+assert worker._metric_task_name(SimpleNamespace(name="celery.group")) == "celery.group"
+names = worker._metric_task_names()
+assert "app.worker.tasks" in sys.modules
+assert "app.worker.training_tasks" in sys.modules
+for suffix in (
+    "run_flaky_quarantine_maintenance", "refresh_perf_baselines",
+    "dispatch_scheduled_digests", "deliver_webhook",
+    "flag_orphan_test_suites", "run_suite_membership_parity",
+):
+    name = f"app.worker.tasks.{suffix}"
+    assert worker._metric_task_name(worker.celery_app.tasks[name]) == name
+assert "app.worker.training_tasks.export_training_data" in names
+assert len(names) == len(worker.celery_app.tasks) <= MAX_METRIC_TASK_NAMES
+worker.celery_app.tasks["late-customer-task"] = SimpleNamespace(name="late-customer-task")
+assert worker._metric_task_names() is names
+assert worker._metric_task_name(worker.celery_app.tasks["late-customer-task"]) == "other"
+'''
+    subprocess.run(
+        [sys.executable, "-c", script], cwd=root / "backend",
+        env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"),
+        capture_output=True, text=True, check=True, timeout=30,
+    )
+
+
 def test_deployed_worker_registry_fits_task_budget():
     from app.worker import tasks  # noqa: F401 -- load the production registry
     from app.worker.celery_app import celery_app

@@ -11,9 +11,8 @@
 # The backend service is extended with the OTEL environment variables so it
 # automatically ships spans to Jaeger and exposes /metrics for Prometheus.
 #
-# Every port is published on 127.0.0.1 only: Jaeger, the OTLP receivers and
-# Prometheus have no authentication. Reach them through an SSH tunnel, or set
-# MONITORING_PUBLISH_ADDR=0.0.0.0 in .env behind something that authenticates.
+# Operational ports default to loopback. Keep the direct listeners there and
+# use an SSH tunnel or an authenticated TLS proxy for authorized remote access.
 
 services:
 

@@ -39,6 +39,23 @@ def test_missing_rule_in_mounted_file_fails_reference_parity(mounted):
         check(mounted)
 
 
+def test_infrastructure_opt_in_matches_generated_inventory(mounted):
+    generated = mounted.parent / "generated-infrastructure.yml"
+    generated.write_text(yaml.safe_dump({"groups": [{"name": "infrastructure-fixture", "rules": [
+        {"record": "testlookup:infrastructure_expected_target", "expr": "vector(1)", "labels": {"instance": "node-a"}},
+    ]}]}), encoding="utf-8")
+    path = mounted.parent / "rules" / "infrastructure-contract.yml"
+    with pytest.raises(InventoryError, match="1 missing"):
+        check(mounted, infrastructure_rules=generated)
+    shutil.copyfile(generated, path)
+    with pytest.raises(InventoryError, match="1 unexpected"):
+        check(mounted)
+    assert check(mounted, infrastructure_rules=generated)[1] >= 35
+    path.write_text(path.read_text(encoding="utf-8").replace("node-a", "node-b"), encoding="utf-8")
+    with pytest.raises(InventoryError, match="rule groups differ"):
+        check(mounted, infrastructure_rules=generated)
+
+
 @pytest.mark.skipif(not os.environ.get("PROMTOOL_TEST_BINARY"), reason="requires the pinned CI promtool binary")
 def test_native_config_check_rejects_a_bad_mounted_expression(mounted):
     rule_file = mounted.parent / "rules" / "testlookup-alerts.yml"

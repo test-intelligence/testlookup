@@ -25,7 +25,14 @@ def read_yaml(path: Path) -> dict:
     return document
 
 
-def check(config: Path, *, alerting: bool = False, durable: bool = False, objectives: bool = False) -> tuple[int, int]:
+def check(
+    config: Path,
+    *,
+    alerting: bool = False,
+    durable: bool = False,
+    objectives: bool = False,
+    infrastructure_rules: Path | None = None,
+) -> tuple[int, int]:
     expected = {f"rules/{path.name}": path for path in (REFERENCE / "prometheus-rules").glob("*.yml")}
     if alerting:
         expected["alertmanager-contract.yml"] = REFERENCE / "alertmanager" / "telemetry-contract.yml"
@@ -34,6 +41,8 @@ def check(config: Path, *, alerting: bool = False, durable: bool = False, object
     if objectives:
         expected["rules/api-slos.yml"] = REFERENCE / "objectives" / "api-slos.yml"
         expected["rules/slo-adoption.yml"] = REFERENCE / "objectives" / "adoption.example.yml"
+    if infrastructure_rules is not None:
+        expected["rules/infrastructure-contract.yml"] = infrastructure_rules
 
     root = config.resolve().parent
     paths = []
@@ -69,9 +78,13 @@ def main() -> int:
     parser.add_argument("--alerting", action="store_true")
     parser.add_argument("--durable", action="store_true")
     parser.add_argument("--objectives", action="store_true")
+    parser.add_argument("--infrastructure-rules", type=Path, help="Generated site infrastructure expected-target rules")
     args = parser.parse_args()
     try:
-        groups, rules = check(args.config, alerting=args.alerting, durable=args.durable, objectives=args.objectives)
+        groups, rules = check(
+            args.config, alerting=args.alerting, durable=args.durable, objectives=args.objectives,
+            infrastructure_rules=args.infrastructure_rules,
+        )
     except (InventoryError, OSError, ValueError, TypeError, KeyError, yaml.YAMLError) as error:
         reason = str(error) if isinstance(error, InventoryError) else "the reference mount layout could not be read"
         print(f"Prometheus rule inventory failed: {reason}", file=sys.stderr)

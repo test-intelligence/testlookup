@@ -87,10 +87,27 @@ Alerts group by installation, environment, cluster, namespace and alert name.
 Critical alerts wait 10 seconds and repeat every 30 minutes; other incidents
 wait 30 seconds and repeat every four hours. A separate watchdog route sends
 each minute. Both routes send resolved notifications. The external heartbeat
-service must distinguish `status=firing` from `status=resolved` and page if
-firing heartbeats stop for the site's chosen allowance, for example three
-minutes. A receiver on the same host or cluster cannot independently detect
-that host or cluster failing.
+service monitors authenticated `TestLookupWatchdog` firing events for each
+expected installation, environment, cluster and namespace. Keep its deadline
+and incident route outside the monitored host or cluster. Arm the deadline
+when enrolling the installation so the first missing heartbeat is detectable.
+
+The Watchdog includes the Prometheus evaluation time as the
+`heartbeat_evaluated_at_unix_seconds` annotation. Alertmanager can repeat the
+last firing event during the alert's validity window after Prometheus stops.
+TestLookup's pinned Alertmanager sends a zero `endsAt` on firing webhooks.
+Advance the receiver deadline only for a firing Watchdog whose evaluation
+annotation advances that stream's last accepted timestamp. Reject malformed,
+out-of-order and implausibly future timestamps. A repeated value or resolved
+event leaves the deadline in place. A fresh firing event restores the healthy
+state. Synchronize clocks and allow for the observed interval between fresh
+deliveries, including evaluation, resend, grouping and receiver retry. [Pinned Prometheus alert validity](https://github.com/prometheus/prometheus/blob/v3.16.0/rules/alerting.go#L576-L590), [Pinned Alertmanager webhook formatting](https://github.com/prometheus/alertmanager/blob/v0.35.1/template/template.go).
+
+An arrival-only heartbeat receiver can still detect a stopped path. Include
+the last alert's remaining validity, repeat delivery and the configured silence
+allowance when measuring its worst-case outage detection. Test the actual
+deadline separately with Prometheus and Alertmanager stopped before relying
+on the receiver for production paging.
 
 Use `severity`, an accountable `owner`, and annotations `summary`,
 `description`, `runbook_url`, `dashboard_url` on production rules. Link to
@@ -114,8 +131,8 @@ Check Prometheus `/api/v1/alertmanagers` for the active destination, the
 `alertmanager` scrape for health, and notification-failure/config-reload
 rules for delivery errors. A working Prometheus-to-Alertmanager connection
 alone does not prove receiver delivery. A failed receiver also cannot report
-its own failure over the failed route: independent heartbeat absence is the
-last-mile outage signal.
+its own failure over the failed route. Use the independently operated
+heartbeat deadline for last-mile outage detection.
 
 Rotate URL/token files using the secret manager, revalidate/regenerate and
 recreate the config-check and Alertmanager services. File bind mounts may
@@ -156,5 +173,9 @@ its real delivery case. It starts only loopback listeners, generates an
 ephemeral TLS certificate and credentials, evaluates synthetic rules in a
 temporary Prometheus, and observes Alertmanager firing/resolved delivery,
 deduplication, maintenance silence, scoped inhibition, separate watchdog
-delivery and an HTTP 503 followed by retry/recovery. No actual on-call service
-is contacted. Skipping this case is not full signal-path verification.
+delivery and an HTTP 503 followed by retry and recovery. The outage fixture
+stops Prometheus while Alertmanager continues delivering cached heartbeats,
+then stops Alertmanager while Prometheus remains ready. The independent
+receiver detects both failures and recovers on a fresh evaluation. Its short
+test intervals exercise behavior. Measure the deadline again with production
+routing and the site's approved receiver.

@@ -61,13 +61,14 @@ spec:
         summary: A healthy scrape is missing required application telemetry
         description: 'Target {{ $labels.instance }} is up but required signal {{ $labels.signal }} (collector {{ $labels.collector }}) is absent. Check exporter initialization and metric relabel/drop filters. Zero is valid; lazy task histograms and optional collectors are deliberately excluded. Runbook: docs/operations/telemetry-contract.md.'
     - alert: TestLookupWatchdog
-      expr: vector(1)
+      expr: vector(time())
       labels:
         severity: none
         category: watchdog
       annotations:
         summary: TestLookup notification heartbeat
         description: 'Always firing. Route to an independently hosted authenticated dead-man receiver that alarms on missing heartbeats; do not page on normal receipt. Runbook: docs/operations/alert-routing.md.'
+        heartbeat_evaluated_at_unix_seconds: '{{ printf "%.0f" $value }}'
     - alert: TestLookupAlertmanagerDown
       expr: up{job="alertmanager"} == 0
       for: 2m
@@ -299,23 +300,51 @@ spec:
         summary: Celery task P99 latency > 120s
         description: Task {{ $labels.task_name }} p99 execution time exceeds 2 minutes.
     - alert: TestLookupDiskSpaceLow
-      expr: '(node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) < 0.10
-
-        '
+      expr: "(\n  node_filesystem_avail_bytes{job=~\"node-exporter|testlookup-infra-host\",mountpoint=\"/\"}\n  / (node_filesystem_size_bytes{job=~\"node-exporter|testlookup-infra-host\",mountpoint=\"/\"} > 0)\n) < 0.10\n"
       for: 10m
       labels:
         severity: critical
       annotations:
         summary: Disk space < 10% remaining
-        description: Root filesystem has less than 10% free space. Data loss risk.
+        description: The root filesystem on {{ $labels.instance }} has less than 10% available space. Check host storage and the installation's data volumes. Runbook at docs/operations/infrastructure-exporters.md.
     - alert: TestLookupOOMKillDetected
-      expr: increase(node_vmstat_oom_kill[5m]) > 0
+      expr: increase(node_vmstat_oom_kill{job=~"node-exporter|testlookup-infra-host"}[5m]) > 0
       for: 0m
       labels:
         severity: critical
       annotations:
         summary: OOM kill detected on host
-        description: The kernel OOM killer terminated a process. Check container resource limits.
+        description: The Linux host {{ $labels.instance }} reports an OOM kill. Check affected workloads and memory pressure. Runbook at docs/operations/infrastructure-exporters.md.
+  - name: testlookup.infrastructure_exporters
+    interval: 30s
+    rules:
+    - alert: TestLookupInfrastructureExporterUnavailable
+      expr: "(testlookup:infrastructure_expected_target == 1)\nunless on (cluster, namespace, telemetry_profile, telemetry_role, job, instance)\n  (up == 1)\n"
+      for: 2m
+      labels:
+        severity: warning
+      annotations:
+        summary: A declared infrastructure exporter is unavailable
+        description: Check discovery, private routing and TLS trust for {{ $labels.telemetry_role }} target {{ $labels.instance }}. Runbook at docs/operations/infrastructure-exporters.md.
+    - record: testlookup:infrastructure_expected_healthy_target
+      expr: "(testlookup:infrastructure_expected_target == 1)\nand on (cluster, namespace, telemetry_profile, telemetry_role, job, instance)\n  (up == 1)\n"
+    - alert: TestLookupInfrastructureExporterSignalMissing
+      expr: "label_replace(\n  testlookup:infrastructure_expected_healthy_target{job=\"testlookup-infra-host\"}\n  unless on (cluster, namespace, telemetry_profile, telemetry_role, job, instance)\n    node_filesystem_avail_bytes{job=\"testlookup-infra-host\",mountpoint=\"/\"},\n  \"signal\", \"root_available_bytes\", \"job\", \".*\"\n)\nor\nlabel_replace(\n  testlookup:infrastructure_expected_healthy_target{job=\"testlookup-infra-host\"}\n  unless on (cluster, namespace, telemetry_profile, telemetry_role, job, instance)\n    (node_filesystem_size_bytes{job=\"testlookup-infra-host\",mountpoint=\"/\"} > 0),\n  \"signal\", \"root_size_bytes\", \"job\", \".*\"\n)\nor\nlabel_replace(\n  testlookup:infrastructure_expected_healthy_target{job=\"testlookup-infra-host\"}\n  unless on (cluster, namespace, telemetry_profile, telemetry_role, job, instance)\n    node_vmstat_oom_kill{job=\"testlookup-infra-host\"},\n  \"signal\", \"oom_kills\", \"job\", \".*\"\n)\nor\nlabel_replace(\n  testlookup:infrastructure_expected_healthy_target{job=\"\
+        testlookup-infra-postgres\"}\n  unless on (cluster, namespace, telemetry_profile, telemetry_role, job, instance)\n    pg_up{job=\"testlookup-infra-postgres\"},\n  \"signal\", \"database_up\", \"job\", \".*\"\n)\nor\nlabel_replace(\n  (\n    testlookup:infrastructure_expected_healthy_target{job=\"testlookup-infra-postgres\"}\n    and on (cluster, namespace, telemetry_profile, telemetry_role, job, instance)\n      (pg_up{job=\"testlookup-infra-postgres\"} == 1)\n  )\n  unless on (cluster, namespace, telemetry_profile, telemetry_role, job, instance)\n    (pg_settings_max_connections{job=\"testlookup-infra-postgres\"} > 0),\n  \"signal\", \"database_max_connections\", \"job\", \".*\"\n)\n"
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: An infrastructure exporter is missing a required signal
+        description: Target {{ $labels.instance }} answered its scrape without a usable {{ $labels.signal }} sample. Check collector configuration and metric filters. Runbook at docs/operations/infrastructure-exporters.md.
+    - alert: TestLookupPostgresExporterDatabaseUnavailable
+      expr: "(pg_up{job=\"testlookup-infra-postgres\"} == 0)\nand on (cluster, namespace, telemetry_profile, telemetry_role, job, instance)\n  testlookup:infrastructure_expected_healthy_target{job=\"testlookup-infra-postgres\"}\n"
+      for: 2m
+      labels:
+        severity: warning
+      annotations:
+        summary: A PostgreSQL exporter cannot reach its database
+        description: Exporter {{ $labels.instance }} answered but reported a PostgreSQL connection failure. Check datastore availability, the restricted monitor account and TLS. Runbook at docs/operations/infrastructure-exporters.md.
   - name: testlookup.slo
     interval: 30s
     rules:

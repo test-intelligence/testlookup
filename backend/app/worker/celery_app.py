@@ -894,6 +894,13 @@ def _metric_task_names() -> frozenset[str]:
     """Freeze deployed task identities, never growing with received headers."""
     from app.core.metric_dimensions import MAX_METRIC_TASK_NAMES
 
+    # An eager task or an early signal can reach this before worker startup
+    # imports the configured task modules. Freeze the complete code registry,
+    # rather than permanently admitting only Celery's built-in tasks. Import
+    # failures leave the cache empty so a partial registry is never frozen.
+    loader = getattr(celery_app, "loader", None)
+    if loader is not None:
+        loader.import_default_modules()
     return frozenset(sorted(celery_app.tasks)[:MAX_METRIC_TASK_NAMES])
 
 

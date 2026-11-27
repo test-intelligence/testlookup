@@ -17,8 +17,8 @@ Status meanings: **Open** is planned; **In progress** has partial implementation
 | Epic | Capability | Iteration sequence |
 |---|---|---|
 | OBS-E01 | Safe correlated application telemetry | 1: privacy, errors and worker log context. 7: Celery trace propagation and build-scoped MCP HTTP logs. 9: worker and Beat lifecycle, client correlation and MCP tool signals. |
-| OBS-E02 | Reliable metric collection | 1: bounded reads, queue coverage and SQL outcomes. 2: producers, exporters and access. 10: queue freshness, worker progress and durable outcome evidence. |
-| OBS-E03 | Alerting and scheduled detection | 1: low-volume webhook and new outcome rules; 3: schedules, discovery and routing |
+| OBS-E02 | Reliable metric collection | 1: bounded reads, queue coverage and SQL outcomes. 2: producers, exporters and access. 10: queue freshness, worker progress and durable outcomes. 11: site-owned infrastructure exporters. |
+| OBS-E03 | Alerting and scheduled detection | 1: low-volume webhook and outcome rules. 3: schedules, discovery and routing. 11: receiver-side heartbeat freshness and outage drills. |
 | OBS-E04 | Durable log and trace platform | 4: profile contract, collection, storage and offline package. |
 | OBS-E05 | Durable operational and audit evidence | 5: event outbox, replay, audit archive and retention. |
 | OBS-E06 | Objectives and capacity | 6: measured journeys, scoped budgets, sampling and capacity. |
@@ -37,7 +37,7 @@ Status meanings: **Open** is planned; **In progress** has partial implementation
 | OBS-E02-S01 | Bound dependency collection and expose freshness | Verification |
 | OBS-E02-S02 | Monitor every routed queue including agent children | Verification |
 | OBS-E02-S03 | Emit real SQLAlchemy pool saturation measurements | Verification |
-| OBS-E02-S04 | Wire dependency and host exporters by deployment profile | In progress |
+| OBS-E02-S04 | Wire dependency and host exporters by deployment profile | Verification |
 | OBS-E02-S05 | Make authenticated scrapes work in reference profiles | Verification |
 | OBS-E02-S06 | Detect durable downstream failure independently of Celery success | Verification |
 | OBS-E03-S01 | Make weekly digest alerts reflect actual due work and delivery | Verification |
@@ -45,7 +45,7 @@ Status meanings: **Open** is planned; **In progress** has partial implementation
 | OBS-E03-S03 | Deliver routed firing and resolved notifications | Verification |
 | OBS-E03-S04 | Observe durable expected-run and last-success state | Verification |
 | OBS-E03-S05 | Detect missing targets and required telemetry | Verification |
-| OBS-E03-S06 | Detect monitoring and notification path outages independently | In progress |
+| OBS-E03-S06 | Detect monitoring and notification path outages independently | Verification |
 | OBS-E04-S01 | Define the production telemetry and ownership contract | Verification |
 | OBS-E04-S02 | Deploy bounded and secure log/trace collection | Verification |
 | OBS-E04-S03 | Provide central log search and working trace-to-log navigation | Verification |
@@ -259,3 +259,19 @@ This iteration builds on `2fe65c27`. It adds freshness to queue depth and worker
 Queue metrics keep application payloads out of observation. The worker records a fresh publication stamp for each attempt, excludes intentional scheduled delay and reports starts without usable timing separately. Completion rates come from the existing runtime histogram. The deployed Prometheus alerts use both target reachability and actual worker observations, including old messages during a rolling upgrade.
 
 A disposable worker stayed scrapeable with its child subscription cancelled. Three deliveries across priority lists remained pending. A denied read invalidated only that queue's observation. Restoring the subscription completed the same three deliveries, recorded two usable wait observations and one legacy start without a stamp, and drained the queue. Prometheus tests use the production rules and cover scope, stale samples, scrape loss and recovery. The native PostgreSQL suite now runs in the existing integration job with a dedicated empty broker database. This adds no workflow job.
+
+## Iteration 11 — infrastructure exporters and independent heartbeat detection
+
+This iteration builds on `c17347a4`. It adds an opt-in scrape profile for site-managed exporters and verifies freshness-based monitoring outage detection.
+
+| Story | Change | Remaining acceptance |
+|---|---|---|
+| OBS-E02-S04 | A bounded offline generator creates mutually authenticated scrapes and an independent expected-target inventory for host and PostgreSQL exporters. Compose mounts the generated files. The Operator uses its existing additional scrape configuration and rule selectors. Rules distinguish target loss, missing signals and a reachable exporter reporting database failure. The overview dashboard uses stable site aliases. [Infrastructure exporters](../operations/infrastructure-exporters.md). | Approve the selected agents, site ingress, network trust, credentials, selector and instance inventory. Verify the actual Linux root, datastore volumes, backups and deployment-specific capacity separately. |
+| OBS-E03-S06 | The Watchdog adds its source evaluation time to the authenticated firing payload. The receiver can distinguish a newer evaluation from an Alertmanager repeat. The disposable test observes Prometheus and Alertmanager loss independently and restores health after each restart. [Alert delivery and recovery notifications](../operations/alert-routing.md). | Enroll the approved external receiver, prove placement outside the monitored failure domain, measure actual deadlines and verify escalation and recovery with the responsible on-call team. |
+| OBS-E05-S03 | Local custody, signing, tamper and hold checks were rerun with stubbed provider actions. | Verify deployed source database and audit-role separation, source completeness, independent IAM and KMS authority, provider retention and legal-hold controls, and restore evidence. |
+
+The verified native Linux node exporter exposed filesystem and OOM signals and rejected a client without a certificate. Disabling its filesystem collector kept transport healthy while required series disappeared. A verified native PostgreSQL exporter on a disposable PostgreSQL 16.15 database used a restricted monitor account, which could read the configured connection ceiling and was denied product-table reads. Stopping the database kept the exporter reachable with `pg_up=0`. Restart restored `pg_up=1` and the capacity series. The Prometheus transport fixture separately verified the generated filters, scope, certificate identity and redirect controls.
+
+The pinned Alertmanager sent `endsAt` with a zero value on firing webhooks and delivered four copies of the last heartbeat after Prometheus stopped. Freshness-based detection fired after 2.500 seconds in the shortened fixture. Arrival-only detection took 4.094 seconds. Stopping Alertmanager while Prometheus stayed ready triggered the receiver in 2.516 seconds. Both restarts produced fresh source timestamps. These intervals are fixture measurements. The site's receiver, alert delivery and detection window still require acceptance.
+
+The regression sweep reproduced an early Celery signal freezing the metric label inventory before the application task modules loaded. Six monitored task counters lost their names. The worker now loads its configured task modules before freezing the existing capped registry. Fresh-process and import-order tests cover the correction.

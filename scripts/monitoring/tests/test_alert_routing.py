@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+import copy
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import importlib.util
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import socket
@@ -14,6 +16,7 @@ import ssl
 import subprocess
 import threading
 import time
+from types import SimpleNamespace
 from urllib.error import HTTPError
 from urllib.request import ProxyHandler, Request, build_opener
 import uuid
@@ -107,8 +110,87 @@ def _eventually(check, timeout=15):
     raise AssertionError("Local synthetic routing condition did not become true before its deadline")
 
 
+class _IndependentWatchdog:
+    """Disposable receiver clock, outside both monitored native processes."""
+
+    def __init__(self, allowance=2.5, *, start_thread=True):
+        self.allowance = allowance
+        self.lock = threading.Lock()
+        self.stop = threading.Event()
+        self.last_progress = None
+        self.last_arrival = None
+        self.source_timestamp = None
+        self.started = time.monotonic()
+        self.progress_missing = False
+        self.arrival_missing = False
+        self.transitions = []
+        self.accepted = 0
+        self.repeated = 0
+        self.advances = 0
+        self.firing_ends_at = set()
+        self.thread = threading.Thread(target=self._monitor, daemon=True) if start_thread else None
+        if self.thread is not None:
+            self.thread.start()
+
+    def record(self, payload, *, authenticated, received_at=None, now_utc=None):
+        if not authenticated or payload.get("receiver") != "watchdog" or payload.get("status") != "firing":
+            return
+        for alert in payload.get("alerts", []):
+            labels = alert.get("labels", {})
+            if (alert.get("status") != "firing" or labels.get("alertname") != "TestLookupWatchdog"
+                    or labels.get("installation") != "fixture" or labels.get("environment") != "test"):
+                continue
+            now = time.monotonic() if received_at is None else received_at
+            utc = time.time() if now_utc is None else now_utc
+            raw = alert.get("annotations", {}).get("heartbeat_evaluated_at_unix_seconds")
+            valid = isinstance(raw, str) and re.fullmatch(r"[0-9]{1,12}", raw)
+            source = int(raw) if valid else None
+            # printf rounds the rule value to seconds. Allow that rounding,
+            # while refusing old/future data as fresh receiver-side progress.
+            fresh = source is not None and 0 < source <= utc + 1 and utc - source <= self.allowance
+            with self.lock:
+                self.accepted += 1
+                self.last_arrival = now
+                self.firing_ends_at.add(alert.get("endsAt"))
+                if fresh and (self.source_timestamp is None or source > self.source_timestamp):
+                    self.source_timestamp = source
+                    self.last_progress = now
+                    self.advances += 1
+                else:
+                    self.repeated += 1
+
+    def _monitor(self):
+        while not self.stop.wait(0.02):
+            self.evaluate()
+
+    def evaluate(self, *, now=None):
+        now = time.monotonic() if now is None else now
+        with self.lock:
+            for mode, stamp in (("progress", self.last_progress), ("arrival", self.last_arrival)):
+                if stamp is None:
+                    stamp = self.started
+                missing = now - stamp > self.allowance
+                attribute = mode + "_missing"
+                if getattr(self, attribute) != missing:
+                    setattr(self, attribute, missing)
+                    self.transitions.append({"mode": mode, "missing": missing, "at": now})
+
+    def snapshot(self):
+        with self.lock:
+            return {"source_timestamp": self.source_timestamp, "last_progress": self.last_progress,
+                    "last_arrival": self.last_arrival, "progress_missing": self.progress_missing,
+                    "arrival_missing": self.arrival_missing, "accepted": self.accepted, "repeated": self.repeated,
+                    "advances": self.advances,
+                    "firing_ends_at": set(self.firing_ends_at), "transitions": list(self.transitions)}
+
+    def close(self):
+        self.stop.set()
+        if self.thread is not None:
+            self.thread.join(timeout=2)
+
+
 @contextmanager
-def _routing_stack(tmp_path):
+def _routing_stack(tmp_path, *, independent_watchdog=False):
     from cryptography import x509
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import rsa
@@ -128,8 +210,9 @@ def _routing_stack(tmp_path):
     cert_path, key_path = tmp_path / "sink-ca.pem", tmp_path / "sink-key.pem"
     cert_path.write_bytes(certificate.public_bytes(serialization.Encoding.PEM))
     key_path.write_bytes(key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
-    state = {"flags": {}, "events": [], "fail": False}
+    state = {"flags": {}, "events": [], "watchdog_receipts": [], "fail": False}
     lock = threading.Lock()
+    monitor = _IndependentWatchdog() if independent_watchdog else None
 
     class Sink(BaseHTTPRequestHandler):
         def log_message(self, *args):
@@ -153,6 +236,14 @@ def _routing_stack(tmp_path):
             with lock:
                 status = 503 if state["fail"] and self.path == "/incident" else (200 if valid else 401)
                 state["events"].append((self.path, status, payload))
+                if self.path == "/watchdog" and valid:
+                    for alert in payload.get("alerts", []):
+                        if alert.get("labels", {}).get("alertname") == "TestLookupWatchdog":
+                            state["watchdog_receipts"].append({"at": time.monotonic(), "status": alert.get("status"),
+                                "source": alert.get("annotations", {}).get("heartbeat_evaluated_at_unix_seconds"),
+                                "ends_at": alert.get("endsAt")})
+            if monitor is not None and self.path == "/watchdog":
+                monitor.record(payload, authenticated=valid)
             self.send_response(status)
             self.end_headers()
 
@@ -169,6 +260,8 @@ def _routing_stack(tmp_path):
         route.update(group_wait="300ms", group_interval="300ms", repeat_interval="30s")
         if route["receiver"] == "watchdog":
             route["repeat_interval"] = "1s"
+            if independent_watchdog:
+                route.update(group_wait="0s", group_interval="100ms", repeat_interval="300ms")
     for receiver in am["receivers"]:
         webhook = receiver["webhook_configs"][0]
         route_path = "incident" if receiver["name"] == "incidents" else "watchdog"
@@ -193,6 +286,12 @@ def _routing_stack(tmp_path):
         rules.append({"alert": alertname, "expr": f'synthetic_alert_active{{name="{name}"}} == 1',
                       "labels": labels,
                       "annotations": {"summary": "Disposable delivery proof", "runbook_url": "https://docs.invalid/runbook", "dashboard_url": "https://grafana.invalid/dashboard"}})
+    if independent_watchdog:
+        production = yaml.safe_load((ROOT / "infra/monitoring/prometheus-rules/testlookup-alerts.yml").read_text())
+        canonical = [rule for group in production["groups"] for rule in group["rules"]
+                     if rule.get("alert") == "TestLookupWatchdog"]
+        assert len(canonical) == 1
+        rules = [copy.deepcopy(canonical[0])]
     rule_file = tmp_path / "rules.yml"
     rule_file.write_text(yaml.safe_dump({"groups": [{"name": "synthetic", "rules": rules}]}))
     base = {"global": {"scrape_interval": "500ms", "scrape_timeout": "400ms", "evaluation_interval": "500ms"}, "rule_files": [str(rule_file)], "scrape_configs": [
@@ -226,26 +325,55 @@ def _routing_stack(tmp_path):
                     and any(alert["labels"]["alertname"] == alertname for alert in body["alerts"])]
 
     processes = []
+    running = {}
+    binaries = {
+        "alertmanager": (os.environ["ALERTMANAGER_TEST_BINARY"], [f"--config.file={am_config}", f"--web.listen-address=127.0.0.1:{am_port}", f"--storage.path={tmp_path / 'am-data'}", "--cluster.listen-address=", "--log.level=warn"]),
+        "prometheus": (os.environ["PROMETHEUS_TEST_BINARY"], [f"--config.file={prom_file}", f"--web.listen-address=127.0.0.1:{prom_port}", f"--storage.tsdb.path={tmp_path / 'prom-data'}", "--rules.alert.resend-delay=500ms", "--log.level=warn"]),
+    }
+
+    def launch(name):
+        binary, arguments = binaries[name]
+        log = (tmp_path / (name + "-" + str(len(processes)) + ".log")).open("wb")
+        process = subprocess.Popen([binary, *arguments], stdout=log, stderr=subprocess.STDOUT)
+        processes.append((process, log))
+        running[name] = process
+        return process
+
+    def stop(name):
+        process = running[name]
+        if process.poll() is None:
+            process.kill()  # A real fault, without a graceful final notification.
+            process.wait(timeout=5)
+        return process.returncode
+
+    def prometheus_ready():
+        try:
+            with opener.open(f"http://127.0.0.1:{prom_port}/-/ready", timeout=1) as response:
+                return response.status == 200
+        except (OSError, HTTPError):
+            return False
+
+    state["control"] = SimpleNamespace(launch=launch, stop=stop, running=running,
+        prometheus_ready=prometheus_ready, alertmanager_ready=ready, monitor=monitor)
     try:
         if os.environ.get("AMTOOL_TEST_BINARY"):
             subprocess.run([os.environ["AMTOOL_TEST_BINARY"], "check-config", str(am_config)], check=True, capture_output=True, timeout=10)
-        for binary, arguments in (
-            (os.environ["ALERTMANAGER_TEST_BINARY"], [f"--config.file={am_config}", f"--web.listen-address=127.0.0.1:{am_port}", f"--storage.path={tmp_path / 'am-data'}", "--cluster.listen-address=", "--log.level=warn"]),
-            (os.environ["PROMETHEUS_TEST_BINARY"], [f"--config.file={prom_file}", f"--web.listen-address=127.0.0.1:{prom_port}", f"--storage.tsdb.path={tmp_path / 'prom-data'}", "--rules.alert.resend-delay=500ms", "--log.level=warn"]),
-        ):
-            log = (tmp_path / (Path(binary).stem + ".log")).open("wb")
-            processes.append((subprocess.Popen([binary, *arguments], stdout=log, stderr=subprocess.STDOUT), log))
+        launch("alertmanager")
+        launch("prometheus")
         _eventually(ready)
         yield state, lock, api, events
     finally:
         for process, log in reversed(processes):
-            process.terminate()
+            if process.poll() is None:
+                process.terminate()
             try:
                 process.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait(timeout=5)
             log.close()
+        if monitor is not None:
+            monitor.close()
         server.shutdown()
         server.server_close()
         server_thread.join(timeout=2)
@@ -298,3 +426,124 @@ def test_actual_rule_delivery_recovery_dedup_silence_inhibition_and_receiver_fai
         with lock:
             state["flags"]["Failure"] = 0
         _eventually(lambda: events("SyntheticFailure", "resolved"))
+
+
+def _heartbeat(source="1000", *, status="firing", installation="fixture"):
+    return {"receiver": "watchdog", "status": status, "alerts": [{
+        "status": status, "labels": {"alertname": "TestLookupWatchdog", "installation": installation,
+                                      "environment": "test"},
+        "annotations": {"heartbeat_evaluated_at_unix_seconds": source},
+        "endsAt": "0001-01-01T00:00:00Z",
+    }]}
+
+
+def test_independent_watchdog_requires_authenticated_scoped_fresh_advancing_source_time():
+    receiver = _IndependentWatchdog(start_thread=False)
+    receiver.started = 10
+    try:
+        receiver.record(_heartbeat(), authenticated=False, received_at=10, now_utc=1000)
+        receiver.record(_heartbeat(installation="different"), authenticated=True, received_at=10, now_utc=1000)
+        receiver.record(_heartbeat(status="resolved"), authenticated=True, received_at=10, now_utc=1000)
+        assert receiver.snapshot()["last_progress"] is None
+        receiver.evaluate(now=13)
+        assert receiver.snapshot()["progress_missing"]
+
+        receiver.record(_heartbeat(), authenticated=True, received_at=14, now_utc=1000)
+        receiver.evaluate(now=14)
+        assert not receiver.snapshot()["progress_missing"]
+        # Authenticated repeats remain arrivals. They cannot renew source progress.
+        receiver.record(_heartbeat(), authenticated=True, received_at=16, now_utc=1002)
+        receiver.evaluate(now=17)
+        snapshot = receiver.snapshot()
+        assert snapshot["progress_missing"] and not snapshot["arrival_missing"]
+        assert snapshot["advances"] == 1
+
+        for raw in ("malformed", "-1", "1000000000000", "999", "1010"):
+            receiver.record(_heartbeat(raw), authenticated=True, received_at=17, now_utc=1003)
+        receiver.record(_heartbeat("1001"), authenticated=True, received_at=17, now_utc=1005)
+        assert receiver.snapshot()["advances"] == 1
+        receiver.record(_heartbeat("1003"), authenticated=True, received_at=18, now_utc=1003)
+        receiver.evaluate(now=18)
+        assert receiver.snapshot()["advances"] == 2
+        assert not receiver.snapshot()["progress_missing"]
+    finally:
+        receiver.close()
+
+
+@pytest.mark.skipif(not (os.environ.get("ALERTMANAGER_TEST_BINARY") and os.environ.get("PROMETHEUS_TEST_BINARY")), reason="requires pinned local Alertmanager and Prometheus binaries")
+def test_independent_watchdog_detects_each_native_process_outage_and_recovers(tmp_path, record_testsuite_property):
+    evidence = {}
+    with _routing_stack(tmp_path, independent_watchdog=True) as (state, lock, _, _):
+        control = state["control"]
+        receiver = control.monitor
+        _eventually(control.prometheus_ready)
+        _eventually(lambda: receiver.snapshot()["advances"] >= 3)
+        assert not receiver.snapshot()["progress_missing"]
+        # Firing webhook endsAt is zero in the pinned runtime. The source annotation
+        # supplies the evidence that a rule evaluation, rather than delivery, advanced.
+        assert receiver.snapshot()["firing_ends_at"] == {"0001-01-01T00:00:00Z"}
+        assert receiver.thread.is_alive()
+
+        prometheus_fault = time.monotonic()
+        control.stop("prometheus")
+        assert control.running["prometheus"].poll() is not None
+        assert control.alertmanager_ready()
+
+        def stale_repeats():
+            with lock:
+                sources = [receipt["source"] for receipt in state["watchdog_receipts"]
+                           if receipt["at"] >= prometheus_fault and receipt["status"] == "firing"]
+            return len(sources) >= 2 and len(set(sources)) < len(sources)
+
+        _eventually(stale_repeats)
+        _eventually(lambda: receiver.snapshot()["progress_missing"], timeout=6)
+        assert control.alertmanager_ready()
+        _eventually(lambda: receiver.snapshot()["arrival_missing"], timeout=12)
+        snapshot = receiver.snapshot()
+        with lock:
+            stale_sources = [receipt["source"] for receipt in state["watchdog_receipts"]
+                             if receipt["at"] >= prometheus_fault and receipt["status"] == "firing"]
+        assert stale_sources.count(str(snapshot["source_timestamp"])) >= 2
+
+        def missing_at(mode, after):
+            return next(transition["at"] for transition in receiver.snapshot()["transitions"]
+                        if transition["mode"] == mode and transition["missing"] and transition["at"] >= after)
+
+        source_detected = missing_at("progress", prometheus_fault)
+        arrival_detected = missing_at("arrival", prometheus_fault)
+        assert source_detected - prometheus_fault <= receiver.allowance + 1
+        assert arrival_detected > source_detected
+        evidence["prometheus_outage"] = {
+            "source_detection_seconds": round(source_detected - prometheus_fault, 3),
+            "arrival_only_detection_seconds": round(arrival_detected - prometheus_fault, 3),
+            "stale_repeated_firing_seen": True,
+            "repeated_last_source_count": stale_sources.count(str(snapshot["source_timestamp"])),
+        }
+        old_source = snapshot["source_timestamp"]
+        control.launch("prometheus")
+        _eventually(control.prometheus_ready)
+        _eventually(lambda: receiver.snapshot()["source_timestamp"] > old_source
+                    and not receiver.snapshot()["progress_missing"])
+
+        # Let another source timestamp advance before the second independent fault.
+        recovered_advances = receiver.snapshot()["advances"]
+        _eventually(lambda: receiver.snapshot()["advances"] > recovered_advances)
+        alertmanager_fault = time.monotonic()
+        control.stop("alertmanager")
+        assert control.running["alertmanager"].poll() is not None
+        assert control.prometheus_ready()
+        _eventually(lambda: receiver.snapshot()["progress_missing"], timeout=6)
+        assert control.prometheus_ready()
+        evidence["alertmanager_outage"] = {
+            "source_detection_seconds": round(missing_at("progress", alertmanager_fault) - alertmanager_fault, 3),
+        }
+        assert evidence["alertmanager_outage"]["source_detection_seconds"] <= receiver.allowance + 1
+        old_source = receiver.snapshot()["source_timestamp"]
+        control.launch("alertmanager")
+        _eventually(control.alertmanager_ready)
+        _eventually(lambda: receiver.snapshot()["source_timestamp"] > old_source
+                    and not receiver.snapshot()["progress_missing"], timeout=20)
+        assert receiver.thread.is_alive()
+        evidence["recoveries"] = 2
+        evidence["firing_ends_at"] = sorted(receiver.snapshot()["firing_ends_at"])
+        record_testsuite_property("independent_watchdog_evidence", json.dumps(evidence, sort_keys=True))

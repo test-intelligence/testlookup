@@ -27,12 +27,14 @@ Redis documents both the [INFO memory fields](https://redis.io/docs/latest/comma
 
 | Profile | Required built-in path | Additional infrastructure responsibility |
 |---|---|---|
-| Source/release Compose | API `/metrics`, actual configured Redis roles, `redis` collector freshness, supplied memory alerts. | Host/container CPU, disk, OOM, restarts and datastore storage need an independently configured platform exporter. Commented example targets in `infra/monitoring/prometheus.yml` do not install one. |
+| Source/release Compose | API `/metrics`, actual configured Redis roles, `redis` collector freshness, supplied memory alerts. | The optional site profile scrapes selected host and PostgreSQL exporters over mutual TLS. The platform supplies CPU, workload restarts and data-volume capacity as applicable. |
 | Kubernetes/K3s/OpenShift | Selected API PodMonitor, allowed namespace/network path, correct scrape credentials and loaded generated rules. | Reuse node-exporter/kube-state-metrics or approved platform equivalents. Their presence and actual samples must be verified. |
 | Managed/BYO Redis | Built-in `INFO memory` when supported and authorized. | For clustered/managed services, verify all required primaries/shards and provider-specific memory limits. A single app connection is not evidence of whole-cluster capacity. |
 | Disconnected | Same native reader and locally available metrics/routing; no monitoring downloads introduced by this producer. | Any optional external exporter must be pinned, scanned, mirrored and included in the installation inventory. |
 
 An external Redis exporter may coexist in a separate scrape job for node, replication and provider-specific coverage. Its similarly named `redis_memory_*` metrics do not automatically satisfy TestLookup's native `store_role`, freshness and job contract. The supplied memory rules explicitly select `job="testlookup-backend"`; provide a separately tested adapter/rule for the external job. Do not relabel an arbitrary server as the application's broker or merge native and external samples into one total. PostgreSQL exporters likewise do not substitute for Python connection-pool observations.
+
+The optional host and PostgreSQL profile declares its expected targets separately from discovery and checks that healthy scrapes contain the required samples. [Infrastructure exporters](infrastructure-exporters.md).
 
 Acceptance requires actual target discovery, nonempty required series, a controlled threshold crossing/recovery on disposable storage, and denied/unavailable `INFO` yielding failed freshness rather than healthy memory. Run:
 

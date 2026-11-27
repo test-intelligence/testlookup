@@ -30,9 +30,9 @@ python scripts/security/render_reference_profiles.py \
   --source-sha "$GITHUB_SHA" --output .tmp/infrastructure-policy.json
 ```
 
-The complete reference inventory currently has 27 profiles:
+The complete reference inventory has 29 profiles.
 
-- Thirteen Compose combinations cover source, release, dev-lite, GCP VM, air-gap, demo, monitoring, durable telemetry and combined authenticated alerting/objective profiles. Both supported auth/alerting overlay orders are included.
+- Fifteen Compose combinations cover source, release, dev-lite, GCP VM, air-gap, demo, monitoring, durable telemetry, opt-in infrastructure exporter mounts and combined authenticated alerting/objective profiles. Both supported auth/alerting overlay orders are included.
 - Kubernetes base and all thirteen overlays cover the generic, cloud, K3s, OpenShift and telemetry-client variants.
 
 Every profile must pass its normal render and two in-memory negative controls. The controls publish an actual protected datastore/API listener and request a privileged API container. Each mutation must produce a new matching finding. Those mutated documents are never written to a deployment file or submitted to a runtime. A disabled detector makes the controls fail.

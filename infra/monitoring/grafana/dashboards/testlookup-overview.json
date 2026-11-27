@@ -1153,6 +1153,56 @@
       ],
       "title": "Completed worker attempts per second",
       "type": "timeseries"
+    },
+    {
+      "collapsed": true,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 146 },
+      "id": 117,
+      "title": "Infrastructure exporters",
+      "type": "row",
+      "panels": [
+        {
+          "datasource": "Prometheus",
+          "description": "Available space on the monitored Linux root filesystem. Monitor datastore volumes and PVC capacity through the platform's separate storage signals.",
+          "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1 }, "overrides": [] },
+          "gridPos": { "h": 8, "w": 8, "x": 0, "y": 147 },
+          "id": 118,
+          "targets": [{
+            "expr": "node_filesystem_avail_bytes{job=\"testlookup-infra-host\",mountpoint=\"/\"} / (node_filesystem_size_bytes{job=\"testlookup-infra-host\",mountpoint=\"/\"} > 0)",
+            "legendFormat": "{{cluster}} {{namespace}} {{instance}}",
+            "refId": "A"
+          }],
+          "title": "Root filesystem available",
+          "type": "timeseries"
+        },
+        {
+          "datasource": "Prometheus",
+          "description": "Kernel OOM kills reported by the selected host exporter over the preceding five minutes.",
+          "fieldConfig": { "defaults": { "unit": "short", "min": 0 }, "overrides": [] },
+          "gridPos": { "h": 8, "w": 8, "x": 8, "y": 147 },
+          "id": 119,
+          "targets": [{
+            "expr": "increase(node_vmstat_oom_kill{job=\"testlookup-infra-host\"}[5m])",
+            "legendFormat": "{{cluster}} {{namespace}} {{instance}}",
+            "refId": "A"
+          }],
+          "title": "Host OOM kills",
+          "type": "timeseries"
+        },
+        {
+          "datasource": "Prometheus",
+          "description": "Compare exporter scrape reachability with the database connection result reported by the exporter.",
+          "fieldConfig": { "defaults": { "unit": "short", "min": 0, "max": 1 }, "overrides": [] },
+          "gridPos": { "h": 8, "w": 8, "x": 16, "y": 147 },
+          "id": 120,
+          "targets": [
+            { "expr": "up{job=\"testlookup-infra-postgres\"}", "legendFormat": "{{cluster}} {{namespace}} {{instance}} exporter", "refId": "A" },
+            { "expr": "pg_up{job=\"testlookup-infra-postgres\"}", "legendFormat": "{{cluster}} {{namespace}} {{instance}} database", "refId": "B" }
+          ],
+          "title": "PostgreSQL reachability",
+          "type": "timeseries"
+        }
+      ]
     }
   ],
   "refresh": "30s",

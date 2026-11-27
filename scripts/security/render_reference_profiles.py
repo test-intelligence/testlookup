@@ -40,6 +40,9 @@ for base, file in (("source", "docker-compose.yml"), ("release", "docker-compose
         *monitoring, "docker-compose.monitoring-auth.yml", "docker-compose.telemetry.yml",
         "docker-compose.alerting.yml", "docker-compose.objectives.yml",
     )
+    COMPOSE_PROFILES[f"compose-{base}-infrastructure"] = (
+        *COMPOSE_PROFILES[f"compose-{base}-observability"], "docker-compose.infrastructure-metrics.yml",
+    )
 COMPOSE_PROFILES["compose-release-observability-auth-last"] = (
     "docker-compose.release.yml", "docker-compose.monitoring.yml", "docker-compose.telemetry.yml",
     "docker-compose.alerting.yml", "docker-compose.objectives.yml", "docker-compose.monitoring-auth.yml",
@@ -80,7 +83,9 @@ def _fixture_environment(root: Path, scratch: Path, profile: str, files: tuple[s
     secret = scratch / "synthetic-secret"
     secret.write_text(uuid.uuid4().hex, encoding="utf-8")
     for key in ("METRICS_API_TOKEN_SOURCE", "METRICS_PROMETHEUS_TOKEN_SOURCE", "ALERTMANAGER_INCIDENT_URL_SOURCE",
-                "ALERTMANAGER_INCIDENT_TOKEN_SOURCE", "ALERTMANAGER_WATCHDOG_URL_SOURCE", "ALERTMANAGER_WATCHDOG_TOKEN_SOURCE"):
+                "ALERTMANAGER_INCIDENT_TOKEN_SOURCE", "ALERTMANAGER_WATCHDOG_URL_SOURCE", "ALERTMANAGER_WATCHDOG_TOKEN_SOURCE",
+                "INFRASTRUCTURE_SCRAPE_CONFIG_SOURCE", "INFRASTRUCTURE_RULES_SOURCE", "INFRASTRUCTURE_CA_SOURCE",
+                "INFRASTRUCTURE_CLIENT_CERT_SOURCE", "INFRASTRUCTURE_CLIENT_KEY_SOURCE"):
         values[key] = secret.as_posix()
     values["ALERTING_PROMETHEUS_CONFIG_SOURCE"] = (root / "infra/monitoring/prometheus.yml").as_posix()
     values["SLO_ADOPTION_RULES_FILE"] = (root / "infra/monitoring/objectives/adoption.example.yml").as_posix()
