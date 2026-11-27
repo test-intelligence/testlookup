@@ -157,6 +157,10 @@ changes.
 - **Health paths.** The ingress publishes `/health/live`, `/health/ready`, `/health/version` and `/health/details` (the last needs a sign-in).
 - **The image registry** the script deploys is still plain HTTP with no login on a NodePort; keep that port off untrusted networks.
 
+## Monitor the installation
+
+Select the Prometheus Operator resources for your cluster. To export logs and traces to a site-operated authenticated gateway, use the `k3s-telemetry` client overlay as the reference for your site configuration. Keep the K3s installer's image pinning, datastore authentication, and rollout checks when adding it. [Kubernetes monitoring](deploy-kubernetes.md#monitoring-podmonitor-and-prometheusrule) · [Telemetry gateway](durable-telemetry.md#kubernetes-and-managed-gateways) · [Production observability checklist](observability-checklist.md).
+
 ## Troubleshooting
 
 | Symptom | Fix |

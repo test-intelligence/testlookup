@@ -118,3 +118,4 @@ If no host can reach both the internet and the Artifactory, use the [offline bun
 - [Backup component](../../k8s/components/backup/README.md)
 - [Air-gapped install](../../user-guide/air-gapped-install.md)
 - [Durable telemetry and site gateway credentials](durable-telemetry.md#kubernetes-and-managed-gateways)
+- [Production observability checklist](observability-checklist.md) for OpenShift monitoring selection, client admission, and signal readback

@@ -29,7 +29,9 @@ If **Upload confirmation pending** appears, use **Check status** to follow that
 upload. If a connection drops before a receipt arrives, keep the form open and
 retry with the same files and settings. Changing the selection or settings
 starts another attempt. Closing or reloading the form ends its local recovery
-state, so check the original run before uploading the report again.
+state, so check the original run before uploading the report again. See
+[Ingestion troubleshooting](/docs/troubleshooting#ingestion) for accepted
+reports that have yet to appear in Runs.
 
 Ticking **Skip analysis** makes the upload faster: the run gets no analysis, no suite comparison report and no automatic Investigator run. Transition notifications are still sent. You can start the analysis later from the run's page.
 

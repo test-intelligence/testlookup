@@ -17,6 +17,9 @@ contain breaking changes; [UPGRADING.md](UPGRADING.md) lists them).
 - The optional Compose alerting overlay adds a private Alertmanager with authenticated HTTPS incident and watchdog receivers. Compose and Kubernetes monitoring inventories detect missing scrape roles and required metric series.
 - Operational metrics report SQLAlchemy pool pressure and acquisition timeouts for API and worker processes, plus Redis and Valkey memory for the application and broker. Optional Compose and Kubernetes profiles support file-backed authentication for API scrapes.
 - Operational metrics expose collector freshness and durable downstream-outbox failure/overdue state, including alerts that avoid counting the same SQL rows across API replicas.
+- Worker and MCP telemetry support correlated execution and selected log readback. The optional Collector profile exposes bounded MCP tool completion metrics for enabled transports.
+- Monitoring measures broker-pending depth, queue wait, and worker progress, with separate signals for child work. Optional host and PostgreSQL exporters and a receiver-side watchdog track infrastructure and notification-path health.
+- The observability guide and production checklist cover profile selection, deployment verification, incident triage, and release evidence. [Observability guide](user-guide/observability.md) · [Production checklist](docs/operations/observability-checklist.md).
 
 - Release verification: journey **TL-AUTH-003** (one account per browser profile, P1, disposable stack) checks the D-0019 fix on the live stack. In two tabs of one browser, a sign-in as a viewer moves the admin's tab onto the viewer with the note, a new tab opens as the viewer, and the viewer's sign-out signs the other tab out (`frontend/tests/release/session.spec.ts`, `e2e-runner/catalogue.yaml`).
 

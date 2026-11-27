@@ -7,7 +7,7 @@ Symptoms that need someone with access to the deployment, configuration or setti
 - **`/health/details`** on the API (for example `http://localhost:8000/health/details`) reports every dependency and the running build. `/health/ready` is the readiness probe; `/health/live` only says the process is up; `/health/version` is the build identity without probes.
 - **Settings → Integrations → Integration health** shows whether each configured integration is reachable and delivering.
 - **Settings → Security & access → Audit dashboard** shows whether an event or a settings change was recorded at all.
-- The observability stack (metrics, traces, alerts) is described in [architecture/OBSERVABILITY.md](../architecture/OBSERVABILITY.md).
+- Use the [observability guide](observability.md) to verify metrics, logs, and alert delivery for your deployment profile.
 
 ## A run shows totals but no per-test rows
 
@@ -23,6 +23,18 @@ Same root cause as above: the shard-queue subscription on the workers. It is not
 ## The Upload button is missing on Runs
 
 The `manual_upload` feature flag is off. It is on for a new install; an instance upgraded from an older version keeps its stored value. Turn it on under **Settings → System → Feature flags** (administrators only). See [Connecting CI and test frameworks](getting-results-in.md#1-upload-from-the-dashboard).
+
+## The upload still needs confirmation
+
+If the open form shows **Upload confirmation pending**, use **Check status**. The form checks the original receipt. If the CLI reports an uncertain upload, keep its original task ID, run ID, and retained idempotency key, when provided. Use the documented recovery path before starting another upload for the same report. [Upload caller recovery](../docs/operations/upload-client-recovery.md).
+
+## A worker looks healthy while work is stalled
+
+Check that the worker subscribes to the affected queue, including each configured ingestion shard and the dedicated `agent_children` queue when you use child investigations. Compare fresh broker-pending depth, starts, completed attempts, and the current worker readiness probe. Use the upload receipt or workflow outcome to confirm completion. [Celery queue monitoring](../docs/operations/celery-queue-monitoring.md). [Worker readiness](../docs/operations/worker-readiness.md).
+
+## Metrics or pages stop arriving
+
+Check that the expected role appears in Prometheus and that its scrape and collection timestamp are current. If an alert fires locally, verify the configured Alertmanager route, HTTPS trust, and receiver status. If the independent watchdog goes stale, check the monitoring and delivery path from outside the installation. [Required telemetry and discovery failures](../docs/operations/telemetry-contract.md). [Alert routing](../docs/operations/alert-routing.md).
 
 ## A workflow page says it is turned off
 

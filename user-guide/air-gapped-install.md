@@ -316,7 +316,7 @@ docker compose -f docker-compose.release.yml -f docker-compose.airgap.yml up -d
 ```
 
 `docker-compose.airgap.yml` is the piece that makes Compose air-gap-capable.
-An optional `--with-telemetry` bundle includes configuration and redistributable images for [durable Compose monitoring](../docs/operations/durable-telemetry.md#offline-compose). Its prerequisite list pins the Grafana and Loki images operators must transfer separately.
+An optional `--with-telemetry` bundle includes configuration and redistributable images for durable Compose monitoring. Use matching source and bundle versions, transfer the Grafana and Loki prerequisites at their listed digests, and verify local signal readback with outbound network access blocked. [Offline telemetry](../docs/operations/durable-telemetry.md#offline-compose) · [Production observability checklist](../docs/operations/observability-checklist.md).
 `docker-compose.release.yml` alone names Docker Hub (postgres, mongo, valkey)
 and GHCR (versitygw) with no way to redirect them; the override re-points
 **every** image — app and third-party, MongoDB included — at

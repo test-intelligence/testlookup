@@ -23,6 +23,7 @@ Installing the stack is covered elsewhere: start with [GETTING_STARTED.md](../GE
 | [Fixer](fixer.md) | The agent that proposes validated fixes for flaky tests as draft pull requests |
 | [Compliance & governance](compliance.md) | Compliance packs and the SOC 2 / GDPR / HIPAA control-family mapping, with its limits |
 | [Sizing & capacity](sizing.md) | Reference hardware profiles, per-service CPU and memory, and disk-growth math for retention planning |
+| [Monitor a TestLookup installation](observability.md) | Health and revision checks, monitoring profiles, operational logs and traces, alert verification, and incident triage |
 | [Air-gapped install](air-gapped-install.md) | Building and importing the offline bundle for Compose, Kubernetes and OpenShift |
 | [Offline model pack](offline-model-pack.md) | Side-loading the local LLM and embedding models into an air-gapped deployment |
 | [Troubleshooting](troubleshooting.md) | Operator-side symptoms: workers and queues, integrations that do not fire, AI features that are unavailable, stale bundles |

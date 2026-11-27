@@ -126,13 +126,13 @@ Local-model RAM, VRAM and disk depend on the model, quantization, context and co
 | `/health/live` | The API process can respond; do not restart dependencies based on this alone |
 | `/health/ready` | Critical PostgreSQL, MongoDB and Valkey/Redis readiness; 503 removes the pod from traffic |
 | `/health/version` | Version, revision, build and environment attribution |
-| `/health/details` | Bounded dependency report; can return HTTP 200 with degraded components |
-| `/metrics` | HTTP and domain counters and gauges when `METRICS_ENABLED`; queue depth refreshes on scrape |
+| `/health/details` | Authenticated, bounded dependency report that can return HTTP 200 with degraded components |
+| `/metrics` | Application metrics when `METRICS_ENABLED=true`. Check collection success and freshness before using broker, database, or durable outcome samples. |
 | Worker and beat logs, Flower | Dispatch, consumption and retry visibility; Flower is bound to loopback in Compose |
 | Project activity and decision trail | User-visible receipts and agent reasoning/provenance events |
-| Upload, outbox, DLQ and pipeline records | Locate the failed asynchronous step, not just HTTP health |
+| Upload receipts, downstream outbox, dead letters, and pipeline events | Locate the failed or delayed asynchronous step |
 
-Prometheus alert rules live in `infra/monitoring/prometheus-rules/`; Compose loads them through the [monitoring add-on](deploy-compose.md#monitoring-add-on) and Kubernetes through [`k8s/monitoring`](deploy-kubernetes.md#monitoring-podmonitor-and-prometheusrule). Alert on stalled pipelines, lease or retry exhaustion, outbox/DLQ backlog, queue imbalance, database connections and broker memory. Installing an OpenTelemetry library does not by itself trace Celery tasks. [Dependency metrics](dependency-metrics.md), [scheduled maintenance monitoring](scheduled-maintenance.md), [observability deep dive](../../architecture/OBSERVABILITY.md), [troubleshooting](../../user-guide/troubleshooting.md).
+Follow the production observability checklist to choose a profile and verify rollout identity, required scrape roles, queue progress, central logs and traces, and notification delivery. It covers Compose, Kubernetes, existing monitoring platforms, and offline installations. [Production observability checklist](observability-checklist.md) · [Observability architecture](../../architecture/OBSERVABILITY.md) · [Troubleshooting](../../user-guide/troubleshooting.md).
 
 ## Related
 

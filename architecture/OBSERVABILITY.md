@@ -1,18 +1,16 @@
-# Observability — metrics, traces, decisions
+# Observability architecture
 
-> Companion to [README.md](./README.md). How you see inside TestLookup: the
-> Prometheus/Grafana stack, OTEL tracing, structured logs, and the layer that's
-> unusual here — **agent decision logs**, which make the AI pipeline's choices
-> as observable as its latencies. Verified against the implementation
-> 2026-09-15.
+This page explains how TestLookup produces and stores health signals,
+operational telemetry, and durable evidence. For deployment choices and
+verification steps, see [Monitor a TestLookup installation](../user-guide/observability.md).
 
 ## 1. The three signals plus one
 
 | Signal | Where it comes from | Where it goes |
 |---|---|---|
 | **Metrics** | `core/metrics.py` (prometheus_client) | Prometheus → Grafana (`infra/monitoring`) |
-| **Traces** | `core/tracing.py` (OTEL SDK) | OTLP HTTP → Jaeger or any OTEL collector |
-| **Logs** | `structlog` (JSON, kwargs-only) | stdout → your log pipeline |
+| **Traces** | OpenTelemetry SDK instrumentation for API, Celery, and MCP operations | Sanitized OTLP export through a configured destination. The durable Compose profile uses an OpenTelemetry Collector and Jaeger. |
+| **Logs** | API, worker, and MCP structured logging | Process logs. MCP stdio diagnostics use stderr. The optional operational projection sends selected records to the Collector and Loki. |
 | **Decisions** | `BaseAgent.log_decision` | `agent_stage_results.decision_log` + OTEL span events + the Decision Trail UI |
 
 ## 2. Metrics (`core/metrics.py`)
@@ -24,10 +22,16 @@ metrics: ingestion (`ingestion_runs_total`, `ingestion_test_cases_total`,
 (`ai_analyses_total`, …) — so dashboards speak the product's language
 ("analyses per mode", not just "requests per route").
 
-The compose sidecar stack (`docker-compose.monitoring.yml` +
-`infra/monitoring/`) ships `prometheus.yml` scrape config, provisioned
-**Grafana dashboards**, and **alert rules** (`prometheus-rules/testlookup-alerts.yml`)
-— alerts are versioned artifacts in the repo, not console-configured state.
+The monitoring overlay provisions Prometheus, Grafana dashboards, and rule
+files from `infra/monitoring/`. The Kubernetes monitoring resources use
+Prometheus Operator PodMonitors and rules. Scrape and collector freshness
+rules use an expected role inventory independent of discovery. The optional
+Alertmanager profile routes incident notifications and watchdog heartbeats
+over HTTPS. An operator configures a separate receiver to detect stale heartbeats.
+Operators can also configure private host and PostgreSQL exporter scrapes.
+[Telemetry contract](../docs/operations/telemetry-contract.md).
+[Alert routing](../docs/operations/alert-routing.md).
+[Infrastructure exporters](../docs/operations/infrastructure-exporters.md).
 
 ### 2a. LLM endpoint circuit breakers
 
@@ -86,9 +90,9 @@ The standard Redis transport uses four lists per logical queue; reading only
 the unsuffixed list misses nonzero-priority work. Collection uses one
 nontransactional read pipeline. A failed bin makes that logical queue unknown
 (`null` in health), preserves other readable queues, and fails the scrape
-collector's success/freshness contract. Retained metric values must be read
-with `testlookup_metric_collection_success{collector="queues"}` and collection
-freshness; they are not a current measurement after a failed read.
+collector's success and freshness contract. Dashboards and rules can use
+`testlookup:celery_queue_pending`, which requires a healthy scrape and a
+successful observation for that queue at most 60 seconds old.
 
 The health endpoint's `status`, `redis_reachable` and memory/admission fields
 retain their existing meaning: **application admission Redis**. Queue counts
@@ -99,29 +103,40 @@ Pipeline work is linear in the declared inventory: with default priorities,
 profile sizing; the scrape's collection deadline is not a fixed command-count
 limit or a claim of unlimited throughput.
 
-These counts exclude active, prefetched/reserved and unacknowledged deliveries.
-They do not measure oldest pending age, consumption rate or durable completion.
-Those require producer timestamp and consumer/lifecycle contracts plus a
-disposable stopped-consumer/recovery check; no age is inferred from an arbitrary
-Redis list endpoint. SQL outbox lifecycle signals remain separate. See the
-[Celery Redis priority contract](https://docs.celeryq.dev/en/stable/userguide/routing.html#redis-message-priorities).
+These counts exclude active, reserved, and unacknowledged deliveries. Use the
+worker's queue wait histogram to see how long observed deliveries took to
+start. The duration can include publication, broker wait, and reservation.
+Starts and completed attempts indicate progress. SQL outbox lifecycle signals
+track durable outcomes. The size-only broker reader leaves exact oldest
+pending message age unknown.
+[Celery queue monitoring](../docs/operations/celery-queue-monitoring.md).
 
 ## 3. Traces (`core/tracing.py`)
 
-`setup_tracing(otlp_endpoint=…)` wires the OTEL SDK with an OTLP HTTP exporter
-(e.g. `http://jaeger:4318`); unset, tracing is a no-op — consistent with the
-offline-first posture (no telemetry leaves a default install, see
-[SECURITY.md §5](./SECURITY.md#5-offline-first-as-a-security-property)).
-Requests, Celery stages, and agent stages become spans, so a slow analysis is
-attributable to a specific pipeline stage in a Jaeger timeline.
+Network trace export requires a configured OTLP endpoint. API, worker, and MCP
+instrumentation sends sanitized spans when export is enabled. Worker
+instrumentation starts inside the relevant process, including prefork children.
+A validated W3C
+`traceparent` links publication and delivery spans, and separately instrumented
+Beat processes record scheduled publication work. Sampled spans can show where
+an API request, worker attempt, or MCP tool spent time. Configure a destination
+with access, egress, and retention policy for the installation.
+[Worker and Beat tracing](../docs/operations/worker-tracing.md).
+[Durable logs and traces](../docs/operations/durable-telemetry.md).
 
 ## 4. Logs — structlog, kwargs only
 
-JSON structured logging via `structlog`. One sharp edge is a repo convention
-because it caused real 500s: **BoundLogger does not accept stdlib-style
-positional args** — `logger.warning("x: %s", exc)` raises `TypeError`
-*inside the except block that was handling the original error*. Always
-key-value: `logger.warning("thing_failed", error=str(exc))`.
+Use event names and keyword fields with `structlog` loggers. For an event that
+can contain sensitive exception details, log a bounded category such as
+`logger.warning("thing_failed", error_type=type(exc).__name__)`.
+
+When the operational export is enabled, API, Celery, and MCP records use fixed
+event names and bounded status and duration fields. Request and task IDs are
+hashed for log lookup. When a record has an active span, its trace and span
+IDs can correlate the record with the trace. Use resource labels to select the
+service and environment, and use the record fields to filter by identifiers.
+[Collector and export contract](../docs/operations/telemetry-collector.md).
+[Search an incident](../docs/operations/durable-telemetry.md#search-an-incident).
 
 ## 5. Decision logs — observability for the AI layer
 
@@ -159,11 +174,13 @@ this":
 - **`fix_attempts`** records every Fixer attempt — `status`, `attempt_no`,
   `patch_summary`, `patch` — whether or not it succeeded. Failed attempts are
   kept deliberately: "the Fixer tried and could not" is the useful signal.
-- **`GET /api/v1/agents/event-log/health`** exposes the pipeline event log's own
-  health: `write_failure_count`, `dead_letter_count` against `dead_letter_limit`,
-  and `recent_dead_letters`. This is the "is the observability itself working"
-  surface — a silent event-log write failure would otherwise make every other
-  agent signal quietly incomplete.
+- **`GET /api/v1/agents/event-log/health`** gives authorized QA leads and
+  administrators a current, project-scoped view of the SQL outbox, including
+  backlog, oldest pending age, capacity, and status counts. The shared
+  PostgreSQL outbox stages event intent with the originating change. A leased
+  relay materializes events idempotently in MongoDB, and authorized operators
+  can requeue a failed event delivery for its project.
+  [Pipeline event delivery](../docs/operations/pipeline-event-delivery.md).
 - Surfaces: `/agents` (activity), `/settings/agent-activity`,
   `/settings/ai-agents` (policy + budgets).
 
@@ -175,8 +192,10 @@ this":
 
 ## 6. Health surfaces
 
-- `GET /health/live` / `/health/ready` — K8s probes.
-- `GET /health/details` — per-dependency status (postgres/mongo/redis/minio/
+- `GET /health/live` and `/health/ready` support Kubernetes API probes.
+- `GET /health/version` identifies the serving API build without dependency probes.
+- `GET /health/details` requires a signed-in session or an accepted API key. It
+  reports per-dependency status (postgres/mongo/redis/minio/
   ollama/chroma, each probed with a time budget), uptime, and the **build
   provenance block** (`revision`, `built_at` — baked in at image build), so an
   operator can match a running container to its commit without shelling in.
@@ -184,8 +203,15 @@ this":
 - **Integration Health** (`/settings/integration-health`) — the user-facing
   status board for outbound integrations.
 
+Worker health uses a separate process probe. Readiness records consumer startup
+for the current Linux parent, and liveness tracks whether that parent exists.
+Use queue progress and durable outcomes to assess work after startup.
+[Worker launch and readiness](../docs/operations/worker-readiness.md).
+
 ## Related docs
 
 - The pipeline whose stages these signals instrument: [README.md §5](./README.md#5-ai-analysis-pipeline-langgraph)
 - Deploying the monitoring stack: [DEPLOYMENT.md §2](./DEPLOYMENT.md#2-compose-variants)
 - The audit trail (who-did-what, distinct from telemetry): [SECURITY.md §6](./SECURITY.md#6-audit--data-hygiene)
+- [Measured API and SQL journeys](../docs/operations/journey-slis.md)
+- [Release assurance and rollout evidence](../docs/operations/release-assurance.md)

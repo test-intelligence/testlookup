@@ -4,7 +4,7 @@
 
 This section is for people who maintain TestLookup or take over an area of it: an onboarding order, an acceptance checklist for a new environment, where changes belong, and how the documentation itself is kept correct. Contribution mechanics (branches, tests, DCO sign-off, review) are in [CONTRIBUTING.md](../../CONTRIBUTING.md).
 
-The [observability delivery program](observability-delivery.md) tracks the epic/story implementation sequence, candidate behavior and remaining production acceptance.
+The observability delivery program tracks the implementation sequence and the site's remaining acceptance work. The documentation backlog records the product and website epics, stories, and review evidence. [Implementation ledger](observability-delivery.md) · [Documentation backlog](observability-documentation.md).
 
 Drafts for the public launch (starter issues, the 0.1.0 release notes, the social preview and the organisation profile), with the settings only the owner can change, are in [launch/](launch/README.md).
 

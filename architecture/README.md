@@ -193,24 +193,32 @@ sequenceDiagram
 
 ## 4. Celery topology
 
-Four priority queues plus per-shard ingestion fan-out. Workers subscribe to all
-queues; the broker is Redis (FIFO) with priority hints set for a RabbitMQ broker.
+The broker is Valkey or Redis. The queue inventory declares four parent queues,
+per-shard ingestion queues, and the isolated `agent_children` queue. Reference
+Compose installations use one parent worker service and one child worker
+service. Reference Kubernetes profiles split the parent queues by role and
+retain the dedicated child worker. Check that the ingestion workers subscribe
+to every configured shard.
 
 ```mermaid
 flowchart LR
-    subgraph Queues ["priority: high → low"]
-        CR["critical (9)<br/>run_live_test_analysis"]
-        ING["ingestion (7)<br/>ingest_*, persist_live_session"]
-        SH["ingestion.shard.0..7 (7)<br/>persist_live_session by hash(project_id)"]
-        AIQ["ai_analysis (5)<br/>run_agent_pipeline, compare/generate"]
-        DEF["default (1)<br/>notifications, snapshots, training, maintenance"]
+    subgraph Queues ["Parent worker queues"]
+        CR["critical<br/>run_live_test_analysis"]
+        ING["ingestion<br/>uploaded report processing"]
+        SH["ingestion.shard.*<br/>persist_live_session by hash(project_id)"]
+        AIQ["ai_analysis<br/>run_agent_pipeline, compare/generate"]
+        DEF["default<br/>notifications, snapshots, training, maintenance"]
     end
     BEAT["Celery beat (scheduler)"] --> ING & AIQ & DEF
+    AIQ --> CHILD["agent_children<br/>dedicated child worker"]
 ```
 
-**Worker config:** `worker_prefetch_multiplier=1` (fair dispatch), `task_acks_late=True`
-(safe retry on crash), `worker_max_tasks_per_child=200` (GC), soft/hard time
-limits 29 min / 31 min.
+The Linux worker launcher clears stale metrics and records the current parent
+generation before starting the worker. Readiness follows consumer startup.
+Monitor queue collection freshness, observed worker progress, and durable
+outcomes to assess delivery.
+[Worker readiness](../docs/operations/worker-readiness.md).
+[Celery queue monitoring](../docs/operations/celery-queue-monitoring.md).
 
 **Notable beat tasks** (UTC):
 

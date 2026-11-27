@@ -164,6 +164,8 @@ Before real users or credentials reach the VM, terminate HTTPS in front of port 
 
 ## Operating the VM
 
+Use the Compose monitoring profile with your VM's matching application files to inspect API, worker, and dependency health. Keep Prometheus and telemetry store access private, and size the VM's storage before enabling durable logs and traces. [Compose monitoring](deploy-compose.md#monitoring-add-on) · [Production observability checklist](observability-checklist.md).
+
 | Task | Command |
 |---|---|
 | Logs | `docker compose logs -f backend worker` |

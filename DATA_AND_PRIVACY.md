@@ -7,9 +7,10 @@ describes how the software behaves; it is not legal advice.
 
 ## What TestLookup sends to the project
 
-Nothing. TestLookup's own code has no telemetry, analytics, crash reporting or
-update check. The web UI reports browser errors and page-timing metrics to your
-own backend, which writes them to its log.
+TestLookup sends no usage analytics, crash reports, or update checks to the
+project maintainers. The web UI sends browser diagnostics to your own
+backend. Optional operational telemetry goes to destinations you configure.
+[Observability profiles](user-guide/observability.md#choose-a-monitoring-profile).
 
 The bundled Ollama container runs with `OLLAMA_NO_CLOUD=1`. Without it, Ollama
 calls ollama.com at startup and about every four hours (model recommendations
@@ -52,10 +53,16 @@ attachments, are kept unchanged in object storage until retention removes them.
   outbound webhooks, e-mail through your SMTP server, Splunk, OpenShift and
   Prometheus.
 - **Infrastructure:** sign-in through your SAML or OpenID Connect provider,
-  traces to an OpenTelemetry collector you name, and secrets read from a
-  HashiCorp Vault you name.
-- **Installation:** container images (ghcr.io and Docker Hub), the install script
-  (GitHub) and any model you pull. The offline bundle avoids all three.
+  selected operational logs, traces, and MCP tool measurements to a configured
+  OpenTelemetry destination, and secrets read from a configured HashiCorp Vault.
+- **Monitoring delivery and archives:** alert notifications sent to configured
+  receivers, optional Prometheus scrapes by your monitoring platform, and
+  evidence archives you choose to publish to your approved object store.
+  [Alert routing](docs/operations/alert-routing.md) · [Archive custody](docs/operations/audit-archive-custody.md).
+- **Installation:** container images (GHCR and Docker Hub), the install script
+  (GitHub), and model downloads. For disconnected runtime, stage the verified
+  offline bundle and its prerequisites first. MongoDB and optional Grafana and
+  Loki images require a separate approved source. [Air-gapped install](user-guide/air-gapped-install.md) · [Offline telemetry](docs/operations/durable-telemetry.md#offline-compose).
 - **Search embeddings with offline mode off:** the bundled embedder downloads its
   model weights (about 79 MB) on first use. Put them in `CHROMA_ONNX_MODEL_DIR`
   to avoid the download.
@@ -72,8 +79,9 @@ attachments, are kept unchanged in object storage until retention removes them.
 - Slack, Teams and e-mail reach only private addresses or the hosts you list in
   `OFFLINE_NOTIFICATION_ALLOWED_HOSTS`, and e-mail goes only to the domains in
   `OFFLINE_EMAIL_ALLOWED_RECIPIENT_DOMAINS`;
-- SSO sign-in, an OpenTelemetry collector and a Vault secret store are not
-  affected.
+- SSO sign-in, OpenTelemetry export and Vault continue to use the configured
+  infrastructure endpoints. Set network policy and receiver destinations for
+  your required egress boundary.
 
 A setting saved in the UI cannot switch offline mode off; only the deployment's
 environment can.

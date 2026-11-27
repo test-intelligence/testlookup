@@ -127,6 +127,7 @@ assembled release. Branch protection should require the lightweight check on
 ## Release checklist
 
 - [ ] CI green on the commit to tag
+- [ ] Record exact-SHA scan and rollout evidence, and rehearse the monitored candidate before enabling the release signal gate for promotion. [Release assurance](docs/operations/release-assurance.md).
 - [ ] CHANGELOG section dated, `[Unreleased]` reset
 - [ ] UPGRADING.md has the version's notes (or says "no action needed")
 - [ ] `VERSION` matches the tag

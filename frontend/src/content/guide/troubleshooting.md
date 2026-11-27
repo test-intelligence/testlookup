@@ -21,7 +21,10 @@ An administrator has turned the `manual_upload` feature flag off. Send results t
 Sending results needs the `QA_ENGINEER` role in that project, and an API key acts with its owner's role.
 
 **Upload returns 202 but no run appears.**
-Still queued, or the report parsed to zero results. Wait and refresh; confirm the report actually contains test cases; confirm the format is supported.
+The API accepted the upload for processing. Check the upload form or poll the original task ID to see whether processing has completed. If it completed but the run has no tests, check that the file contains cases in a supported format.
+
+**The form shows Upload confirmation pending.**
+Select **Check status** to resume watching the original upload. Keep the form open if the connection dropped before a receipt arrived. Use the same files and settings if you retry from that form. [Upload a report](/docs/ingestion#upload-a-report-from-the-app).
 
 **Upload rejected as empty (400).**
 A zero-byte file — usually a wrong path in `-F file=@…`. Check it locally with `ls -l`.

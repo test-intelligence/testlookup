@@ -6,6 +6,8 @@ This program extends the existing Prometheus, Grafana and OpenTelemetry foundati
 
 ## Delivery and change tracking
 
+The implementation merged in PR #497. The publication backlog tracks the product docs and website follow-up alongside site acceptance evidence. [Merged pull request](https://github.com/test-intelligence/testlookup/pull/497) · [Documentation backlog](observability-documentation.md).
+
 Use the single `feat/production-observability` branch for this program. Keep changes in signed commits by iteration; validate locally and push a reviewed batch when it is ready. Do not create a branch per story, dispatch workflows for status checks, or remove required CI checks to save Actions usage. Each iteration updates this page with affected stories, behavior, checks, remaining acceptance and commit history.
 
 Implementation baseline: `bc71694ca8fc91af2ab1fd72819e14ea3e66d540` on `main`. The earlier assessment baseline was `74fdb6b0c1c003c6d70350e8b4fa22a6686e1ac7`. Upstream authentication/MFA changes are included.

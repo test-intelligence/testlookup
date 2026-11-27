@@ -25,7 +25,7 @@ latest patch release of the target line.
    of your choice (the migration Job runs before the rollout; see
    [docs/operations/deployment.md](docs/operations/deployment.md)). Single-node
    K3s: `./k3ssetup/deploy-k3s.sh --skip-registry --skip-models`.
-5. **Verify.** `GET /health/ready` is `ok` and `GET /health/version` reports
+5. **Verify.** `GET /health/ready` returns HTTP 200 with `status` set to `ready` and `GET /health/version` reports
    the new commit.
 
 Database migrations only move forward in production. To roll back, restore the
@@ -46,6 +46,12 @@ previous API. If your rollout replaces API and worker roles together, pause
 uploads until all ingestion workers and the API report the candidate revision.
 Keep PostgreSQL connections in direct or session mode and allocate at least two
 connections per ingestion worker child. [Upload dispatch and recovery](docs/operations/upload-dispatch-recovery.md).
+
+### Upgrade observability profiles with their images
+
+Deploy matching worker images and manifests together. The new reference worker launch and readiness probes depend on the process helper in the candidate image. Check every application's running digest and `/health/version`, then confirm a representative upload reaches a persisted outcome. [Worker launch and readiness](docs/operations/worker-readiness.md#image-and-profile-compatibility) · [Release rollout evidence](docs/operations/release-assurance.md#verify-a-kubernetes-rollout).
+
+Review existing dashboards and alerts for the bounded labels, expected role inventory, and optional objectives and receiver changes. If you enable durable telemetry, assign storage, access, and alert-delivery owners and run the profile checks before widening production use. Rehearse rollback with the previous compatible backup, image set, and manifests. [Metric cardinality](docs/operations/metric-cardinality.md) · [Production observability checklist](docs/operations/observability-checklist.md).
 
 ### Check `.env` if you installed the release images by hand
 

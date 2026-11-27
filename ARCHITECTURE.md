@@ -131,7 +131,7 @@ Five roles (`VIEWER`, `TESTER`, `QA_ENGINEER`, `QA_LEAD`, `ADMIN`), project memb
 
 ## Deployment and operations
 
-The same three images (backend, frontend, MCP) run under Docker Compose, Kubernetes (generic, EKS, GKE, AKS, OpenShift, single-node K3s) and fully air-gapped installs. Health endpoints (`/health/live`, `/health/ready`, `/health/version`, `/health/details`), Prometheus metrics and optional OpenTelemetry tracing support operations. [Deployment guide](docs/operations/deployment.md), [deployment topologies](architecture/DEPLOYMENT.md), [observability](architecture/OBSERVABILITY.md).
+The same three images (backend, frontend, MCP) run under Docker Compose, Kubernetes (generic, EKS, GKE, AKS, OpenShift, single-node K3s) and fully air-gapped installs. Health and build endpoints report API state. Prometheus collects bounded API, dependency, and worker signals. The optional durable Compose profile routes selected logs and traces through an OpenTelemetry Collector to Loki and Jaeger. Kubernetes client overlays use a site-operated gateway with mutual TLS. [Deployment guide](docs/operations/deployment.md). [Deployment topologies](architecture/DEPLOYMENT.md). [Observability architecture](architecture/OBSERVABILITY.md).
 
 ## Further reading
 

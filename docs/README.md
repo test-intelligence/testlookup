@@ -26,6 +26,9 @@ Start with the [README](../README.md) for what TestLookup is, and [GETTING_START
 | EKS, GKE, AKS | [Managed clouds](operations/deploy-cloud.md) |
 | No internet at the site | [Air-gapped install](../user-guide/air-gapped-install.md), [offline model pack](../user-guide/offline-model-pack.md) |
 | Size the hardware | [Sizing](../user-guide/sizing.md), [database connection budget](operations/database-connection-budget.md) |
+| Monitor an installation | [Observability guide](../user-guide/observability.md) for profile choice, health verification, and incident triage |
+| Collect, alert, and investigate | [Required telemetry](operations/telemetry-contract.md), [alert routing](operations/alert-routing.md), [durable logs and traces](operations/durable-telemetry.md), [API objectives](operations/api-objectives.md) |
+| Validate an upgrade or rollout | [Release assurance](operations/release-assurance.md), [release signal gate](operations/release-signal-gate.md), [upgrade guide](../UPGRADING.md) |
 | Configure settings | [Configuration reference](reference/configuration.md) (generated from the settings class), [worker operations](reference/worker-operations.md) |
 | Administer, back up, upgrade | [Operator guide](../user-guide/README.md), [administration](../user-guide/administration.md), [UPGRADING.md](../UPGRADING.md) |
 | Troubleshoot | [Troubleshooting](../user-guide/troubleshooting.md), [known limitations](maintainers/limitations.md) |
@@ -52,7 +55,7 @@ docs/
   architecture/  system, module, data and integration maps, design decisions, security
   pipelines/     ingestion, test-run, AI and reporting flows
   api/           authentication, errors, examples, REST and streaming usage
-  operations/    deployment modes, configuration, local development, testing
+  operations/    deployment, monitoring, configuration, local development, testing
   maintainers/   maintainer guide, limitations, glossary, documentation maintenance
   reference/     generated: OpenAPI, endpoint index, schemas, tables, settings, migrations, worker tasks
 user-guide/      operator and administrator guide

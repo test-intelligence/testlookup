@@ -44,20 +44,23 @@ flowchart LR
 sequenceDiagram
   participant C as Client
   participant A as API
+  participant S as Object storage
   participant Q as Queue
   participant W as Worker
   participant DB as Database
-  C->>A: POST results
+  C->>A: POST report
   A->>A: authenticate + validate
-  A-->>C: 202 Accepted
-  A->>Q: enqueue
+  A->>DB: reserve upload receipt
+  A->>S: store report payload
+  A->>Q: publish using receipt ID
+  A-->>C: 202 Accepted with task and run IDs
   Q->>W: dispatch
   W->>DB: parse, normalise, persist
   W->>DB: finalise run
   W->>Q: enqueue analysis
 ```
 
-**In words:** the API accepts and validates, returns 202 immediately, and queues the work. A worker parses and persists, finalises the run, and queues analysis. Nothing slow happens in the request.
+**In words:** the API validates the request, records an upload receipt, and prepares the payload for a worker. An accepted response supplies the task and run IDs. The worker parses and persists the results, finalizes the run, and queues analysis when enabled. Follow the original receipt if publication confirmation is pending. [Upload a report](/docs/ingestion#upload-a-report-from-the-app).
 
 ## Analysis path
 
@@ -81,7 +84,7 @@ sequenceDiagram
 
 ## Queues
 
-Work is separated by priority so a burst of one kind cannot starve another — a critical lane, an ingestion lane, an AI-analysis lane and a default lane, with ingestion further sharded.
+The parent workers consume the critical, ingestion, AI-analysis, and default queues. Ingestion shards distribute ingestion work. A dedicated worker consumes `agent_children` for child investigations.
 
 > **Tip.** "Analysis is slow" and "ingestion is slow" are different problems on different lanes. Knowing which is queued narrows it quickly.
 
@@ -101,7 +104,7 @@ flowchart LR
 
 ## Deployment
 
-TestLookup is deployed as containers — web app, API, workers, and the data stores — behind a single ingress. The ingress routes API traffic, health, metrics, webhooks and the API reference to the backend; everything else is served by the web app.
+TestLookup runs the web app, API, workers, and data stores in containers. The deployment routes browser and API requests to the appropriate services. Operators scrape metrics through a private monitoring path and can enable searchable operational logs and traces. Use the **Help** menu to identify the frontend build and `/health/version` on the backend to identify the API build.
 
 > **Note.** The API reference (Swagger) is at **`/api-docs`**. This page you are reading is at `/docs`, served by the web app.
 

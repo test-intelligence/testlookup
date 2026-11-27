@@ -12,7 +12,7 @@ TestLookup turns test execution data into a project-scoped history of quality, e
 | QA engineer | Maintain coverage and authored test content | Suites, canonical tests, test management, plans, knowledge generation | Reviewed test lifecycle and traceable execution history |
 | QA lead | Review AI conclusions and decide release readiness | Reviews, intelligence, release gate, releases, quarantine | Accepted/rejected report, auditable decision and reasons |
 | Developer/service owner | Investigate failures in an owned area | Evidence, clusters, ownership, commit attribution, Jira defects | Reproducible evidence and a tracked correction |
-| Platform administrator | Operate storage, identity, workers and policies | Settings, identity audit, integration health, retention, storage | Healthy queues, authorized access, recoverable data |
+| Platform administrator | Operate storage, identity, workers and policies | Settings, health endpoints, Prometheus and Grafana, configured alerts, identity audit, retention | Current dependency and worker signals, authorized access, recoverable data |
 | Viewer/manager | Understand trends and delivery risk | Overview, summary reports, value metrics | Scoped, current information with clear denominators and review state |
 | CI/agent client | Submit telemetry and retrieve policy results | API, CLI, SDK, MCP | Stable IDs, explicit terminal state, actionable errors |
 
@@ -29,6 +29,8 @@ Roles are `VIEWER < TESTER < QA_ENGINEER < QA_LEAD < ADMIN`. Project membership 
 **Test management.** Authored test cases, plans and strategies are distinct from observed execution records. Knowledge retrieval and generated test content can support authoring, with feature gates, source provenance and review. Lifecycle version 2 is gated; callers should use returned allowed actions instead of inventing transitions.
 
 **Communication and access.** In-app views, downloads, share links, notification subscriptions, Jira/GitHub/GitLab and MCP provide different access paths. A connector must be configured and allowed by policy. SSO/SCIM and project API keys are implemented; older “future enterprise” marketing labels do not describe the source snapshot.
+
+**Operational observability.** Platform teams can check health and build identity, monitor queue progress and dependency metrics, and verify the outcome of asynchronous work through durable receipts and event-delivery health. Optional profiles support authenticated alert routing, an independent watchdog, and searchable operational logs and traces in infrastructure the operator controls. The API objectives profile measures selected request journeys and requires site adoption before it can page. See the operator guide for profile prerequisites and compatibility with the running revision. [Monitor a TestLookup installation](../../user-guide/observability.md).
 
 ## Scope, assumptions and expectations
 

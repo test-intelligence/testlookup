@@ -184,11 +184,11 @@ docker compose -f docker-compose.yml -f docker-compose.monitoring.yml up -d
 | Prometheus | [localhost:9090](http://localhost:9090) | Scrape config `infra/monitoring/prometheus.yml`, alert rules `infra/monitoring/prometheus-rules/`, 15-day retention |
 | Jaeger | [localhost:16686](http://localhost:16686) | OTLP receivers on 4317 (gRPC) and 4318 (HTTP) |
 
-All of these listen on `127.0.0.1` only (`MONITORING_PUBLISH_ADDR`): Jaeger, the OTLP receivers and Prometheus have no authentication. Prometheus runs without `--web.enable-lifecycle`, so restart its container to reload the configuration.
+Published monitoring ports default to `127.0.0.1` through `MONITORING_PUBLISH_ADDR`. Keep the private access path for Prometheus, Jaeger and the OTLP receivers, which lack their own authentication in this profile. Restart Prometheus to reload the configuration.
 
 The optional objectives overlay records core API availability and latency for a named installation, with separate adoption and routing for burn alerts. [API objectives](api-objectives.md).
 
-The override sets `OTEL_ENABLED=true`, `OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318` and `METRICS_ENABLED=true` on the backend. The same alert rules are rendered for Kubernetes in [`k8s/monitoring`](deploy-kubernetes.md#monitoring-podmonitor-and-prometheusrule). Metric and alert reference: [observability](../../architecture/OBSERVABILITY.md).
+The monitoring override sets `OTEL_ENABLED=true`, `OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318` and `METRICS_ENABLED=true` on the backend. For persistent log and trace search, layer `docker-compose.telemetry.yml` after the monitoring override. This adds the Collector, Loki, and persistent Jaeger, and enables worker, Beat, and MCP telemetry. [Durable profile and acceptance steps](durable-telemetry.md) · [Production observability checklist](observability-checklist.md).
 
 The alert routing overlay delivers incident notifications and an independent watchdog over authenticated HTTPS. The monitoring guides cover required roles, broker backlog and worker progress. [Alert routing overlay](alert-routing.md), [telemetry contract](telemetry-contract.md), [Celery queue monitoring](celery-queue-monitoring.md).
 

@@ -105,7 +105,11 @@ TestLookup ingests Allure results and JUnit-style output from those tools; it co
 - `AI_OFFLINE_MODE=true` is the default. It blocks hosted model providers and other outbound AI calls, while local endpoints such as [Ollama](https://ollama.com) keep working. The default local model is `qwen2.5:7b-instruct` (Apache-2.0).
 - Without any model, analysis still works through the built-in rules and ML classifiers; models add explanations and summaries on top.
 - An [offline bundle](user-guide/air-gapped-install.md) installs TestLookup on networks with no internet access (MongoDB, licensed SSPL-1.0, is mirrored separately).
-- TestLookup sends nothing to the project: no telemetry, analytics or update check. [Data and privacy](DATA_AND_PRIVACY.md) lists what is stored and what can leave your network.
+- TestLookup does not send telemetry, analytics, or update checks to the project. You can enable operational telemetry for destinations you control. [Data and privacy](DATA_AND_PRIVACY.md).
+
+### Operate and monitor TestLookup
+
+Use health and build probes, Prometheus metrics, and Grafana dashboards to check the API, dependencies, and workers. Optional profiles add authenticated alert delivery, searchable logs and traces, and site-operated telemetry gateways. Follow upload receipts and durable event-delivery status when asynchronous work needs investigation. The operator guide describes the profiles on `main` and how to match them to the revision you run. [Monitor an installation](user-guide/observability.md).
 
 ## Install options
 
@@ -197,6 +201,7 @@ Ingestion, analysis and reporting run in Celery workers; the API answers quickly
 |---|---|
 | Use TestLookup | The in-app guide at `/docs` on your instance, [product overview](docs/product/overview.md), [user journeys](docs/product/workflows.md) |
 | Install and operate it | [Deployment guide](docs/operations/deployment.md), [operator guide](user-guide/README.md), [sizing](user-guide/sizing.md), [upgrading](UPGRADING.md) |
+| Monitor a deployment | [Observability guide](user-guide/observability.md), [troubleshooting](user-guide/troubleshooting.md), [release assurance](docs/operations/release-assurance.md) |
 | Integrate CI, SDKs or AI assistants | [API guide](docs/api/README.md), [all endpoints](docs/reference/api-index.md), [CLI, SDKs and MCP](user-guide/cli-sdk-mcp.md) |
 | Understand or change the code | [Architecture](ARCHITECTURE.md), [codebase map](docs/architecture/codebase-map.md), [contributing](CONTRIBUTING.md) |
 
