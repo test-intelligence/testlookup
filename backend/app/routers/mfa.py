@@ -31,6 +31,7 @@ from app.core.token_revocation import (
     RevocationUnavailable,
     is_jti_revoked,
     is_token_before_cutoff,
+    revoke_all_user_tokens,
     revoke_jti,
     unavailable_detail,
 )
@@ -50,8 +51,10 @@ from app.models.schemas import (
 )
 from app.services import mfa_service
 from app.services.auth_session_tokens import issue_access_jwt
-from app.services.refresh_token_service import _revoke_family as _revoke_refresh_family
-from app.services.refresh_token_service import issue_refresh_token
+from app.services.refresh_token_service import (
+    _revoke_family as _revoke_refresh_family,
+    issue_refresh_token,
+)
 from app.services.sso_service import log_identity_event
 
 logger = logging.getLogger(__name__)
@@ -210,6 +213,29 @@ async def _issue_session(db: AsyncSession, user: User) -> TokenResponse:
     )
 
 
+async def _lock_account_row(db: AsyncSession, user: User) -> None:
+    """Take the user lock and re-read security state before changing it."""
+    await db.execute(select(User.id).where(User.id == user.id).with_for_update())
+    await db.refresh(user)
+
+
+async def _replace_sessions_after_mfa_enrollment(
+    db: AsyncSession, user: User
+) -> TokenResponse:
+    """End every pre-enrollment session, then mint one MFA-assured replacement.
+
+    The caller holds the user row lock, which is also taken by login and
+    refresh.  A concurrent rotation therefore either precedes this revocation
+    and is revoked with the old family, or follows it and cannot use an old
+    record.  The access-token cutoff and MFA state share this transaction;
+    ``issue_access_jwt`` reads the database clock after the cutoff, so the one
+    replacement access token is not self-revoked.
+    """
+    await _revoke_refresh_family(db, user.id, reason="mfa_enrollment")
+    await revoke_all_user_tokens(user.id, db)
+    return await _issue_session(db, user)
+
+
 async def _resolve_enrolling_user(
     db: AsyncSession,
     enrollment_token: Optional[str],
@@ -313,9 +339,14 @@ async def confirm_enrollment(
 
     Recovery codes are minted in the same unit of work as the flag flip — an
     account must never reach ``mfa_enabled=True`` without a way back in. They
-    are returned once and only digests are kept.
+    are returned once and only digests are kept. Every older session is ended
+    in that unit of work and one MFA-assured replacement is returned.
     """
     user, forced = await _resolve_enrolling_user(db, payload.enrollment_token, session_user)
+    # Refresh and every direct session issuer take this same lock.  Keep the
+    # MFA state transition, session revocation and replacement issuance on one
+    # side of that serialization boundary.
+    await _lock_account_row(db, user)
     if user.mfa_enabled:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -338,14 +369,24 @@ async def confirm_enrollment(
         ip_address=_client_ip(request),
     )
 
-    # Enrollment raises the session's assurance. End every pre-enrollment
-    # refresh root before minting the replacement so a password-only token
-    # cannot outlive the newly enabled factor.
-    await _revoke_refresh_family(db, user.id, reason="mfa_enrollment")
-    tokens = await _issue_session(db, user)
+    try:
+        tokens = await _replace_sessions_after_mfa_enrollment(db, user)
+    except RevocationUnavailable as exc:
+        # Do not leave MFA enabled while credentials from before enrollment
+        # remain valid.  The TOTP step and recovery codes roll back too, so the
+        # same authenticator code can be retried once the store recovers.
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "Token revocation store unavailable; MFA was not enabled. "
+                "Try again."
+            ),
+        ) from exc
+
     if forced:
-        # The enrollment token was the only credential in play; completing
-        # enrollment is what completes the login.
+        # The enrollment token was the only credential in play and is consumed
+        # after its MFA-assured replacement has been staged.
         await _consume_mfa_token(user)
 
     await db.commit()
@@ -441,12 +482,6 @@ async def verify_mfa(
 
 
 # ── Self-service management ──────────────────────────────────────────────────
-
-
-async def _lock_account_row(db: AsyncSession, user: User) -> None:
-    """Take the row lock and re-read the user, so concurrent guesses are counted one by one."""
-    await db.execute(select(User.id).where(User.id == user.id).with_for_update())
-    await db.refresh(user)
 
 
 async def _count_failed_attempt(

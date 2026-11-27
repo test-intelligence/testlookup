@@ -15,6 +15,7 @@ from typing import Any, Optional
 
 import client as api  # type: ignore[import]
 import release_resolver  # type: ignore[import]
+import untrusted  # type: ignore[import]
 
 #: The list route's largest page (``size`` 1-200).
 MAX_SIZE = 200
@@ -31,7 +32,15 @@ def short_id(case_id: Any) -> str:
 
 
 def _cell(value: Any) -> str:
-    """A markdown table cell: a pipe or a newline in a title would break the row."""
+    """Marked authored text that cannot break its markdown table row."""
+    if value is None or value == "":
+        return "-"
+    text = str(value).replace("|", "\\|").replace("\r", " ").replace("\n", " ")
+    return untrusted.inline(text, missing="-")
+
+
+def _fixed_cell(value: Any) -> str:
+    """A generated or enum-valued table cell, kept out of the table syntax."""
     text = "-" if value is None or value == "" else str(value)
     return text.replace("|", "\\|").replace("\r", " ").replace("\n", " ")
 
@@ -49,50 +58,50 @@ def list_markdown(body: dict, page: int) -> str:
     ]
     for c in items:
         lines.append(
-            f"| {short_id(c.get('id'))} | {_cell(c.get('title'))} | {_cell(c.get('status'))} "
-            f"| {_cell(c.get('priority'))} | {_cell(c.get('test_type'))} | {_cell(c.get('suite_name'))} "
+            f"| {short_id(c.get('id'))} | {_cell(c.get('title'))} | {_fixed_cell(c.get('status'))} "
+            f"| {_fixed_cell(c.get('priority'))} | {_cell(c.get('test_type'))} | {_cell(c.get('suite_name'))} "
             f"| {_cell(c.get('owner'))} | {'yes' if c.get('is_automated') else 'no'} | `{c.get('id')}` |"
         )
     if page < (pages or 0):
         lines.append(f"\n{len(items)} shown of {total}; more — call again with page={page + 1}.")
     lines.append("\n*Use `get_managed_test_case` with an ID for the steps (and include_history=true for the versions).*")
-    return "\n".join(lines)
+    return "\n".join(untrusted.with_notice(lines))
 
 
 def case_markdown(case: dict, history: Optional[list] = None) -> str:
     tags = ", ".join(str(t) for t in case.get("tags") or []) or "-"
     lines = [
         f"## {short_id(case.get('id'))} — {_cell(case.get('title'))}",
-        f"- **Status:** {_cell(case.get('status'))} (version {_cell(case.get('version'))}) · "
-        f"**Priority:** {_cell(case.get('priority'))} · **Type:** {_cell(case.get('test_type'))} · "
+        f"- **Status:** {_fixed_cell(case.get('status'))} (version {_fixed_cell(case.get('version'))}) · "
+        f"**Priority:** {_fixed_cell(case.get('priority'))} · **Type:** {_cell(case.get('test_type'))} · "
         f"**Severity:** {_cell(case.get('severity'))}",
         f"- **Suite:** {_cell(case.get('suite_name'))} · **Owner:** {_cell(case.get('owner'))} · "
-        f"**Automated:** {'yes' if case.get('is_automated') else 'no'} ({_cell(case.get('automation_status'))})",
+        f"**Automated:** {'yes' if case.get('is_automated') else 'no'} ({_fixed_cell(case.get('automation_status'))})",
         f"- **Tags:** {_cell(tags)}",
         f"- **ID:** `{case.get('id')}`",
     ]
     for label, key in (("Objective", "objective"), ("Preconditions", "preconditions")):
         if case.get(key):
-            lines.append(f"\n**{label}:** {case.get(key)}")
+            lines += [f"\n**{label}:**", *untrusted.block(case.get(key))]
     steps = [s for s in case.get("steps") or [] if isinstance(s, dict)]
     if steps:
         lines += ["\n### Steps", "| # | Action | Expected |", "|---|--------|----------|"]
-        lines += [f"| {_cell(s.get('step_number'))} | {_cell(s.get('action'))} | {_cell(s.get('expected_result'))} |"
+        lines += [f"| {_fixed_cell(s.get('step_number'))} | {_cell(s.get('action'))} | {_cell(s.get('expected_result'))} |"
                   for s in steps]
     else:
         lines.append("\n### Steps\n(none recorded)")
     if case.get("expected_result"):
-        lines.append(f"\n**Expected result:** {case.get('expected_result')}")
+        lines += ["\n**Expected result:**", *untrusted.block(case.get("expected_result"))]
     if history is not None:
         versions = [v for v in history if isinstance(v, dict)]
         lines += [f"\n### History ({len(versions)} saved, newest first)",
                   "| Version | When | Change | By | Status | Fields |", "|---|---|---|---|---|---|"]
         lines += [
-            f"| {_cell(v.get('version'))} | {_cell(str(v.get('created_at') or '')[:16])} | {_cell(v.get('change_type'))} "
-            f"| {_cell(v.get('changed_by_name'))} | {_cell(v.get('status'))} | {_cell(', '.join(v.get('changed_fields') or []))} |"
+            f"| {_fixed_cell(v.get('version'))} | {_fixed_cell(str(v.get('created_at') or '')[:16])} | {_fixed_cell(v.get('change_type'))} "
+            f"| {_cell(v.get('changed_by_name'))} | {_fixed_cell(v.get('status'))} | {_cell(', '.join(v.get('changed_fields') or []))} |"
             for v in versions
         ]
-    return "\n".join(lines)
+    return "\n".join(untrusted.with_notice(lines))
 
 
 def register(mcp) -> None:  # noqa: ANN001
@@ -146,7 +155,9 @@ def register(mcp) -> None:  # noqa: ANN001
         try:
             pid = await release_resolver.resolve_project(project_id)
         except release_resolver.UnresolvedName as exc:
-            return release_resolver.unresolved_payload(exc)
+            payload = release_resolver.unresolved_payload(exc)
+            payload["content_notice"] = untrusted.DATA_NOTICE
+            return payload
         except Exception as exc:
             return api.error_payload(exc)
         page = max(1, int(page))
@@ -172,7 +183,8 @@ def register(mcp) -> None:  # noqa: ANN001
         items = [{k: c.get(k) for k in LIST_FIELDS} | {"short_id": short_id(c.get("id"))}
                  for c in body.get("items") or [] if isinstance(c, dict)]
         pages = body.get("pages", 0) or 0
-        return {"ok": True, "project_id": pid, "summary": list_markdown(body, page), "items": items,
+        return {"ok": True, "content_notice": untrusted.DATA_NOTICE,
+                "project_id": pid, "summary": list_markdown(body, page), "items": items,
                 "total": body.get("total", 0), "page": page, "pages": pages, "more": page < pages}
 
     @mcp.tool()
@@ -203,7 +215,8 @@ def register(mcp) -> None:  # noqa: ANN001
             return api.error_payload(exc)
         case = case if isinstance(case, dict) else {}
         versions = (history if isinstance(history, list) else []) if include_history else None
-        out: dict[str, Any] = {"ok": True, "summary": case_markdown(case, versions), "case": case}
+        out: dict[str, Any] = {"ok": True, "content_notice": untrusted.DATA_NOTICE,
+                              "summary": case_markdown(case, versions), "case": case}
         if versions is not None:
             out["history"] = versions
         return out

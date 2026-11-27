@@ -182,6 +182,98 @@ async def test_the_model_writes_the_narrative_but_never_the_ai_changes(monkeypat
     assert "## AI analysis changes" in report["markdown_report"]
 
 
+def _sided_payload():
+    """The whole-run sides of D-148: 65 tests, 4 failed, both runs."""
+    side = {"total_tests": 65, "passed_tests": 61, "failed_tests": 4, "broken_tests": 0,
+            "skipped_tests": 0, "pass_rate": 93.846}
+    return {**_payload(), "scope": "run", "suite_name": None, "left": dict(side), "right": dict(side),
+            "new_failures": 0, "still_failing": 4, "delta_failed": 0, "delta_broken": 0, "delta_pass_rate": 0.0}
+
+
+def _answer(summary: str) -> str:
+    return json.dumps({**json.loads(MODEL_ANSWER), "executive_summary": summary})
+
+
+@pytest.mark.asyncio
+async def test_a_summary_whose_figures_differ_from_the_payload_is_replaced_by_the_deterministic_report(
+    monkeypatch, gates,
+):
+    """D-148: "2 failed tests out of 10 ... 80.0%" on a run with 65 tests and
+    4 failures was shown as the AI narrative; nothing compared the numbers."""
+    wrong = "Both test runs had 2 failed tests out of 10, with a pass rate of 80.0%. The risk level is LOW."
+    _serve(monkeypatch, BudgetedLLM(FakeListChatModel(responses=[_answer(wrong)]), provider="ollama",
+                                    model="llama3.1"))
+    report = await RunCompareAgent().generate(_sided_payload())
+    assert gates["reserve"] == 1, "the call went through the budget wrapper"
+    assert report["fallback_used"] is True
+    assert "80.0%" not in report["executive_summary"]
+    assert report["executive_summary"].startswith("Comparison for the selected runs found")
+    assert report["ai_changes"] == AI_CHANGES
+
+
+@pytest.mark.asyncio
+async def test_a_summary_whose_figures_match_the_payload_is_kept(monkeypatch, gates):
+    right = ("Both runs had 4 failed tests out of 65 (a pass rate of 93.8%); all 4 tests are still failing, "
+             "0 new failures, and build 105 failed the same way.")
+    _serve(monkeypatch, BudgetedLLM(FakeListChatModel(responses=[_answer(right)]), provider="ollama",
+                                    model="llama3.1"))
+    report = await RunCompareAgent().generate(_sided_payload())
+    assert report["fallback_used"] is False
+    assert report["executive_summary"] == right
+
+
+def test_figure_check_reads_counts_totals_and_rates():
+    from app.agents.run_compare_agent import summary_figure_mismatches
+
+    payload = _sided_payload()
+    assert summary_figure_mismatches("2 of the 10 tests failed.", payload) == ["2 of the 10 tests failed"]
+    assert summary_figure_mismatches("4 of 65 tests failed, a 93.8% pass rate.", payload) == []
+    assert summary_figure_mismatches("The pass rate is 80.0%.", payload) == ["pass rate is 80.0%"]
+    assert summary_figure_mismatches("A failure rate of 6%.", payload) == []  # 100 - 93.846
+    # No sides in the payload: nothing to compare against, nothing rejected.
+    assert summary_figure_mismatches("2 failed tests out of 10", _payload()) == []
+
+
+#: Review findings 5-6: correct summaries the first checker rejected (left
+#: 48/50 at 96%, right 45/50 at 90%, 2 -> 5 failures).
+_REVIEW_PAYLOAD = {
+    "left": {"total_tests": 50, "passed_tests": 48, "failed_tests": 2, "broken_tests": 0, "pass_rate": 96.0},
+    "right": {"total_tests": 50, "passed_tests": 45, "failed_tests": 5, "broken_tests": 0, "pass_rate": 90.0},
+    "new_failures": 3, "delta_failed": 3, "delta_pass_rate": -6.0,
+}
+
+
+@pytest.mark.parametrize("summary", [
+    "The run took 40% longer than the baseline.",
+    "Failures rose by 150% (2 to 5).",
+    "All 3 new failures (100%) are in the checkout suite.",
+    "1 test ran over 30% slower.",
+    "The pass rate fell by 6.25% relative to the baseline.",
+    "PR 482 failed the gate with 3 new failures.",
+    "3 out of 5 failures are new.",
+    "A total of 7 failures across both runs.",
+    "1 failure is now classified as Product Bug.",
+    "7 failed tests out of 100 across both runs.",
+    "Build 105 failed 5 tests out of 50.",
+])
+def test_figures_that_belong_to_something_else_pass(summary):
+    from app.agents.run_compare_agent import summary_figure_mismatches
+
+    assert summary_figure_mismatches(summary, _REVIEW_PAYLOAD) == []
+
+
+@pytest.mark.parametrize("summary, wrong", [
+    ("Both runs had 2 failed tests out of 10.", "2 failed tests out of 10"),
+    ("The current run has 4 tests failed out of 50.", "4 tests failed out of 50"),
+    ("It finished with a pass rate of 80.0%.", "pass rate of 80.0%"),
+    ("An 85% pass rate.", "85% pass rate"),
+])
+def test_a_clear_contradiction_of_the_sides_is_caught(summary, wrong):
+    from app.agents.run_compare_agent import summary_figure_mismatches
+
+    assert summary_figure_mismatches(summary, _REVIEW_PAYLOAD) == [wrong]
+
+
 @pytest.mark.asyncio
 async def test_an_unreachable_model_falls_back_with_the_same_ai_changes(monkeypatch, gates):
     class _Down(FakeListChatModel):

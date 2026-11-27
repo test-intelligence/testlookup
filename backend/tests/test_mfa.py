@@ -25,6 +25,7 @@ import pytest
 pytest.importorskip("aiosqlite")
 pytest.importorskip("pyotp")
 
+import jwt  # noqa: E402
 import pyotp  # noqa: E402
 from httpx import ASGITransport, AsyncClient  # noqa: E402
 from sqlalchemy import select, types as sqltypes  # noqa: E402
@@ -33,6 +34,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine  # no
 from sqlalchemy.pool import StaticPool  # noqa: E402
 
 from app.core import security  # noqa: E402
+from app.core.config import settings  # noqa: E402
 from app.core.security import (  # noqa: E402
     AuthenticationAssurance,
     MFA_CHALLENGE_TOKEN_TYPE,
@@ -542,43 +544,26 @@ class TestSsoExemption:
         assert "access_token" not in resp.json()
         assert "refresh_token" not in resp.json()
 
-    async def test_password_session_cannot_refresh_through_sso_history(self, db, client):
+    @pytest.mark.parametrize("legacy", [False, True], ids=["password", "legacy"])
+    async def test_password_session_cannot_refresh_through_sso_history(self, db, client, legacy):
         user = await make_user(db, username="fed-refresh", role=UserRole.ADMIN)
         cfg = await self._sso_config(db)
         db.add(
             FederatedIdentity(user_id=user.id, sso_config_id=cfg.id, external_id="ext-refresh")
         )
         await db.commit()
-        password_session = (await login(client, user=user)).json()
+        refresh_token = (await login(client, user=user)).json()["refresh_token"]
+        if legacy:
+            claims = decode_token(refresh_token, expected_type="refresh")
+            del claims["auth_assurance"]
+            refresh_token = jwt.encode(
+                claims, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM
+            )
 
         await set_policy(db, require_mfa=True, required_for_role=None)
         resp = await client.post(
             "/api/v1/auth/refresh",
-            json={"refresh_token": password_session["refresh_token"]},
-        )
-
-        assert resp.status_code == 401
-        assert "access_token" not in resp.json()
-
-    async def test_legacy_linked_refresh_without_assurance_is_password_only(self, db, client):
-        user = await make_user(db, username="fed-legacy-refresh", role=UserRole.ADMIN)
-        cfg = await self._sso_config(db)
-        db.add(
-            FederatedIdentity(user_id=user.id, sso_config_id=cfg.id, external_id="ext-legacy")
-        )
-        refresh_token = await issue_refresh_token(db, user.id)
-        await db.commit()
-        claims = decode_token(refresh_token, expected_type="refresh")
-        claims.pop("auth_assurance")
-        legacy_token = security.jwt.encode(
-            claims,
-            security.settings.JWT_SECRET_KEY,
-            algorithm=security.settings.JWT_ALGORITHM,
-        )
-        await set_policy(db, require_mfa=True, required_for_role=None)
-
-        resp = await client.post(
-            "/api/v1/auth/refresh", json={"refresh_token": legacy_token}
+            json={"refresh_token": refresh_token},
         )
 
         assert resp.status_code == 401
@@ -591,7 +576,6 @@ class TestSsoExemption:
             FederatedIdentity(user_id=user.id, sso_config_id=cfg.id, external_id="ext-sso-refresh")
         )
         await set_policy(db, require_mfa=True, required_for_role=None)
-        await enroll(db, user)
         refresh_token = await issue_refresh_token(
             db,
             user.id,
@@ -606,10 +590,10 @@ class TestSsoExemption:
         assert resp.status_code == 200
         rotated = decode_token(resp.json()["refresh_token"], expected_type="refresh")
         assert rotated["auth_assurance"] == AuthenticationAssurance.SSO.value
-        replay = await client.post(
-            "/api/v1/auth/refresh", json={"refresh_token": refresh_token}
-        )
-        assert replay.status_code == 401
+
+        for token in (refresh_token, resp.json()["refresh_token"]):
+            rejected = await client.post("/api/v1/auth/refresh", json={"refresh_token": token})
+            assert rejected.status_code == 401
 
     async def test_sso_user_who_opts_in_is_still_challenged(self, db):
         """A linked account with local MFA still challenges on password login."""
@@ -624,52 +608,40 @@ class TestSsoExemption:
         req = await mfa_service.evaluate_login_requirement(db, user)
         assert req is mfa_service.LoginRequirement.CHALLENGE
 
-    async def test_linked_user_with_local_mfa_can_manage_recovery_codes(self, db, client):
+    async def test_linked_user_can_regenerate_recovery_codes_but_cannot_disable_required_mfa(
+        self, db, client
+    ):
         user = await make_user(db, username="fed-recovery", role=UserRole.ADMIN)
         cfg = await self._sso_config(db)
-        db.add(
-            FederatedIdentity(
-                user_id=user.id,
-                sso_config_id=cfg.id,
-                external_id="ext-recovery",
-            )
-        )
+        db.add(FederatedIdentity(user_id=user.id, sso_config_id=cfg.id, external_id="ext-recovery"))
         await set_policy(db, require_mfa=True, required_for_role=None)
+
         enrollment_token = (await login(client, user=user)).json()["enrollment_token"]
         started = await client.post(
-            "/api/v1/auth/mfa/enroll/start",
-            json={"enrollment_token": enrollment_token},
+            "/api/v1/auth/mfa/enroll/start", json={"enrollment_token": enrollment_token}
         )
-        secret = started.json()["secret"]
+        assert started.status_code == 200
         confirmed = await client.post(
             "/api/v1/auth/mfa/enroll/confirm",
             json={
                 "enrollment_token": enrollment_token,
-                "code": pyotp.TOTP(secret).now(),
+                "code": pyotp.TOTP(started.json()["secret"]).now(),
             },
         )
         assert confirmed.status_code == 200
-        tokens = confirmed.json()["tokens"]
-        headers = {"Authorization": f"Bearer {tokens['access_token']}"}
+        enrollment = confirmed.json()
+        headers = {"Authorization": f"Bearer {enrollment['tokens']['access_token']}"}
+        credentials = {"password": PASSWORD, "recovery_code": enrollment["recovery_codes"][0]}
 
         status_response = await client.get("/api/v1/auth/mfa/status", headers=headers)
         assert status_response.status_code == 200
-        assert status_response.json()["enabled"] is True
         assert status_response.json()["sso_managed"] is True
         assert status_response.json()["required_by_policy"] is True
 
-        await db.refresh(user)
-        next_code = pyotp.TOTP(secret).at((user.mfa_last_used_step + 1) * 30)
-        denied = await client.post(
-            "/api/v1/auth/mfa/recovery-codes",
-            headers=headers,
-            json={"password": "wrong-password", "code": next_code},
-        )
-        assert denied.status_code == 400
+        denied = await client.post("/api/v1/auth/mfa/disable", headers=headers, json=credentials)
+        assert denied.status_code == 403
         regenerated = await client.post(
-            "/api/v1/auth/mfa/recovery-codes",
-            headers=headers,
-            json={"password": PASSWORD, "code": next_code},
+            "/api/v1/auth/mfa/recovery-codes", headers=headers, json=credentials
         )
         assert regenerated.status_code == 200
         assert len(regenerated.json()["recovery_codes"]) == 10
@@ -775,6 +747,22 @@ class TestUnreadableSeed:
         )
         assert resp.status_code == 503
         assert resp.headers["X-Refresh-Retry-Safe"] == "1"
+
+    async def test_sso_refresh_does_not_depend_on_the_local_seed(self, db, client):
+        user = await make_user(db, username="sso-unreadable-local-seed")
+        await enroll(db, user)
+        await self._corrupt_seed(db, user)
+        refresh_token = await issue_refresh_token(
+            db, user.id, authentication_assurance=AuthenticationAssurance.SSO
+        )
+        await db.commit()
+
+        refreshed = await client.post(
+            "/api/v1/auth/refresh", json={"refresh_token": refresh_token}
+        )
+        assert refreshed.status_code == 200
+        rotated = decode_token(refreshed.json()["refresh_token"], expected_type="refresh")
+        assert rotated["auth_assurance"] == AuthenticationAssurance.SSO.value
 
     async def test_status_reports_the_break_instead_of_reporting_healthy(self, db, client):
         user = await make_user(db, username="broken4")
@@ -1213,8 +1201,9 @@ class TestPolicy:
         assert "access_token" in resp.json()
 
     async def test_forced_enrollment_completes_the_login(self, db, client):
-        await set_policy(db, require_mfa=True, required_for_role=None)
         user = await make_user(db, username="pol-forced")
+        pre_enrollment = (await login(client, user=user)).json()
+        await set_policy(db, require_mfa=True, required_for_role=None)
 
         body = (await login(client, user=user)).json()
         token = body["enrollment_token"]
@@ -1238,15 +1227,24 @@ class TestPolicy:
             payload["tokens"]["refresh_token"], expected_type="refresh"
         )
         assert refresh_claims["auth_assurance"] == AuthenticationAssurance.MFA.value
-        refreshed = await client.post(
+
+        records = (
+            await db.execute(
+                select(RefreshTokenRecord).where(RefreshTokenRecord.user_id == user.id)
+            )
+        ).scalars().all()
+        assert len([record for record in records if record.revoked_at is None]) == 1
+
+        replacement = await client.post(
             "/api/v1/auth/refresh",
             json={"refresh_token": payload["tokens"]["refresh_token"]},
         )
-        assert refreshed.status_code == 200
-        rotated_claims = decode_token(
-            refreshed.json()["refresh_token"], expected_type="refresh"
+        assert replacement.status_code == 200
+        stale = await client.post(
+            "/api/v1/auth/refresh",
+            json={"refresh_token": pre_enrollment["refresh_token"]},
         )
-        assert rotated_claims["auth_assurance"] == AuthenticationAssurance.MFA.value
+        assert stale.status_code == 401
 
         await db.refresh(user)
         assert user.mfa_enabled is True
@@ -1385,9 +1383,8 @@ class TestEnrollmentFlow:
 
     async def test_full_voluntary_enrollment_then_challenge_then_verify(self, db, client):
         user = await make_user(db, username="enr-full")
-        password_session = (await login(client, user=user)).json()
-        tok = password_session["access_token"]
-        headers = {"Authorization": f"Bearer {tok}"}
+        original = (await login(client, user=user)).json()
+        headers = {"Authorization": f"Bearer {original['access_token']}"}
 
         start = await client.post("/api/v1/auth/mfa/enroll/start", headers=headers, json={})
         secret = start.json()["secret"]
@@ -1398,24 +1395,23 @@ class TestEnrollmentFlow:
         )
         assert confirm.status_code == 200
         replacement = confirm.json()["tokens"]
-        claims = decode_token(replacement["refresh_token"], expected_type="refresh")
-        assert claims["auth_assurance"] == AuthenticationAssurance.MFA.value
-        old_jti = decode_token(
-            password_session["refresh_token"], expected_type="refresh"
-        )["jti"]
-        old_record = (
-            await db.execute(
-                select(RefreshTokenRecord).where(
-                    RefreshTokenRecord.jti_hash == security.hash_token(old_jti)
-                )
-            )
-        ).scalar_one()
-        assert old_record.revoked_at is not None
+        assert replacement["access_token"] != original["access_token"]
+        assert replacement["refresh_token"] != original["refresh_token"]
+
+        # The sole replacement remains a normal renewable session.  It is
+        # allowed through CHALLENGE because the enrollment code assured it.
         refreshed = await client.post(
             "/api/v1/auth/refresh",
             json={"refresh_token": replacement["refresh_token"]},
         )
         assert refreshed.status_code == 200
+
+        # A credential minted before the security boundary cannot cross it.
+        stale = await client.post(
+            "/api/v1/auth/refresh",
+            json={"refresh_token": original["refresh_token"]},
+        )
+        assert stale.status_code == 401
 
         # Next login is now two-legged.
         body = (await login(client, user=user)).json()

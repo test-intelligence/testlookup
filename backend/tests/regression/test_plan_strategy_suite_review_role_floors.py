@@ -109,8 +109,10 @@ ROUTES = [
     # tenant guard and before any model call.
     ("POST", f"{BASE}/plans/ai-create", {"project_id": str(P), "plan_name": "AI plan"}, "QA_ENGINEER",
      "plans_scope", 400),
+    # D-58: the async route now makes the same approved-cases check before it
+    # queues anything (it used to queue a task that could only fail).
     ("POST", f"{BASE}/plans/ai-create/async", {"project_id": str(P), "plan_name": "AI plan"}, "QA_ENGINEER",
-     "create_ai_test_plan_task", 200),
+     "plans_scope", 400),
     ("POST", f"{BASE}/strategies/ai-generate", {"project_id": str(P), "project_context": "A web shop"},
      "QA_ENGINEER", "generate_ai_strategy", 200),
     ("POST", f"{BASE}/strategies/ai-generate/async", {"project_id": str(P), "project_context": "A web shop"},

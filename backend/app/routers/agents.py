@@ -21,6 +21,7 @@ from app.services.pipeline_cancellation import request_cancel
 from app.services.pipeline_retry_config import decide_retry_mode
 from app.services.review_request_service import REVIEW_REJECTED_ERROR_PREFIX
 from app.services.workflow_run_state import (
+    DEGRADED,
     PUBLIC_STATUS,
     PipelineRunStatus,
     is_known_status,
@@ -221,6 +222,64 @@ async def _require_pipeline_access(
         )
 
 
+async def _attach_stage_quality(
+    db: AsyncSession, pipelines: list[AgentPipelineRun],
+) -> None:
+    """D-153: why each DEGRADED pipeline is degraded, in one query.
+
+    The row's tag had no explanation. Only pipelines whose metadata says
+    ``stage_quality == degraded`` are read; the latest attempt of each stage
+    counts. Nothing is queried when no listed pipeline is degraded.
+    """
+    degraded: list[uuid.UUID] = []
+    for pipeline in pipelines:
+        pipeline.stage_quality_detail = None  # type: ignore[attr-defined]
+        metadata = getattr(pipeline, "execution_metadata", None)
+        if isinstance(metadata, dict) and metadata.get("stage_quality") == DEGRADED:
+            degraded.append(pipeline.id)
+    if not degraded:
+        return
+    rows = (
+        await db.execute(
+            select(
+                AgentStageResult.pipeline_run_id,
+                AgentStageResult.stage_name,
+                AgentStageResult.status,
+                AgentStageResult.fallback_used,
+                AgentStageResult.fallback_reason,
+                AgentStageResult.error_category,
+            )
+            .where(AgentStageResult.pipeline_run_id.in_(degraded))
+            .order_by(
+                AgentStageResult.pipeline_run_id,
+                AgentStageResult.attempt,
+                AgentStageResult.started_at.asc().nulls_last(),
+                AgentStageResult.stage_name,
+            )
+        )
+    ).all()
+    latest: dict[uuid.UUID, dict[str, Any]] = {}
+    for row in rows:
+        latest.setdefault(row.pipeline_run_id, {})[row.stage_name] = row
+    for pipeline in pipelines:
+        if pipeline.id not in degraded:
+            continue
+        stages = list(latest.get(pipeline.id, {}).values())
+        pipeline.stage_quality_detail = {  # type: ignore[attr-defined]
+            "stages_run": sum(1 for s in stages if s.status in ("completed", "failed")),
+            "issues": [
+                {
+                    "stage_name": s.stage_name,
+                    "status": s.status,
+                    "fallback_reason": s.fallback_reason,
+                    "error_category": s.error_category,
+                }
+                for s in stages
+                if s.status == "failed" or s.fallback_used
+            ],
+        }
+
+
 @router.get("/catalog", response_model=list[agent_catalog.AgentCatalogEntry])
 async def list_agent_catalog(
     _: Any = Depends(get_current_active_user),
@@ -303,6 +362,7 @@ async def list_pipelines(
     _attach_public_status(pipelines)
     await _attach_run_context(db, pipelines)
     await _attach_review_summaries(db, pipelines)
+    await _attach_stage_quality(db, pipelines)
     return pipelines
 
 
@@ -348,6 +408,7 @@ async def get_pipeline(
     _attach_public_status([pipeline])
     await _attach_run_context(db, [pipeline])
     await _attach_review_summaries(db, [pipeline])
+    await _attach_stage_quality(db, [pipeline])
     return pipeline
 
 

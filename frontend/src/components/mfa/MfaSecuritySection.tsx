@@ -37,9 +37,9 @@ function formatEnrolledAt(iso: string | null): string | null {
  *
  * The two states that are easy to get wrong, and are handled explicitly here:
  *
- *  - `sso_managed` without local MFA — the identity provider owns the only
- *    second factor, so we render its guidance and no local controls. A linked
- *    account with `enabled` local MFA still sees recovery management.
+ *  - SSO-linked without local MFA — show identity provider guidance.
+ *    Showing an Enable button would be a lie; we render an explanation and no
+ *    controls at all.
  *  - `secret_unreadable` — MFA is ON but the stored seed will not decrypt. The
  *    user cannot log in with TOTP and cannot fix it themselves (disable and
  *    regenerate both 503). This is rendered as a loud broken state, never as
@@ -48,8 +48,8 @@ function formatEnrolledAt(iso: string | null): string | null {
  */
 export default function MfaSecuritySection() {
   const { data: status, error, isLoading, mutate } = useMfaStatus()
-  const user = useAuthStore((state) => state.user)
-  const setAuth = useAuthStore((state) => state.setAuth)
+  const user = useAuthStore(state => state.user)
+  const setAuth = useAuthStore(state => state.setAuth)
 
   const [panel, setPanel] = useState<Panel>('none')
   const [busy, setBusy] = useState(false)
@@ -170,7 +170,7 @@ export default function MfaSecuritySection() {
     )
   }
 
-  // ── SSO-only: the IdP owns the only second factor ─────────────────────────
+  // A linked account can also have an authenticator for password sign-in.
   if (status.sso_managed && !status.enabled) {
     return (
       <section className="card space-y-3" data-testid="mfa-sso-managed">
@@ -178,9 +178,9 @@ export default function MfaSecuritySection() {
         <div className="flex items-start gap-2">
           <Building2 className="mt-0.5 h-4 w-4 flex-shrink-0 text-[var(--color-text-muted)]" />
           <p className="text-sm text-[var(--color-text-secondary)]">
-            Your account signs in through your organisation&apos;s identity provider, and
-            your second factor is managed there. There is nothing to configure in
-            TestLookup — change your MFA settings with your identity provider instead.
+            For single sign-on, manage your second factor with your organisation&apos;s
+            identity provider. If workspace policy requires MFA when you sign in with a
+            password, TestLookup will prompt you to set up an authenticator.
           </p>
         </div>
       </section>
@@ -229,15 +229,17 @@ export default function MfaSecuritySection() {
         {panel === 'enroll' && enrollment ? (
           <MfaEnrollPanel
             enrollment={enrollment}
+            onSessionIssued={(tokens) => {
+              if (user) {
+                setAuth(tokens.access_token, tokens.refresh_token, user)
+              }
+            }}
             onCancel={resetForms}
             onAlreadyEnrolled={() => {
               resetForms()
               void mutate()
             }}
-            onComplete={(result) => {
-              if (user) {
-                setAuth(result.tokens.access_token, result.tokens.refresh_token, user)
-              }
+            onComplete={() => {
               toast.success('Two-factor authentication enabled')
               resetForms()
               void mutate()
@@ -305,20 +307,18 @@ export default function MfaSecuritySection() {
         )}
       </div>
 
+      {status.sso_managed && (
+        <p className="text-sm text-[var(--color-text-secondary)]">
+          This authenticator and its recovery codes apply to password sign-in.
+        </p>
+      )}
+
       <p
         className={`text-sm ${codesLow ? 'text-[var(--status-broken)]' : 'text-[var(--color-text-secondary)]'}`}
       >
         <strong>{status.recovery_codes_remaining}</strong> of 10 recovery codes remaining.
         {codesLow && ' Regenerate a fresh set before you run out.'}
       </p>
-
-      {status.sso_managed && (
-        <p className="flex items-start gap-2 text-xs text-[var(--color-text-muted)]">
-          <Building2 className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />
-          Your identity provider protects SSO sign-in. This local factor and its recovery
-          codes protect password sign-in, so you can manage them here.
-        </p>
-      )}
 
       {status.required_by_policy && (
         <p className="text-xs text-[var(--color-text-muted)]">
@@ -349,17 +349,19 @@ export default function MfaSecuritySection() {
             <RefreshCw className="h-3.5 w-3.5" />
             Regenerate recovery codes
           </button>
-          <button
-            type="button"
-            onClick={() => {
-              setPanel('disable')
-              setFormError(null)
-            }}
-            className="flex items-center gap-1.5 rounded border border-[var(--status-failed-bd)] px-3 py-1.5 text-sm text-[var(--status-failed)] transition-colors hover:bg-[var(--status-failed-bg-soft)]"
-          >
-            <ShieldOff className="h-3.5 w-3.5" />
-            Turn off two-factor authentication
-          </button>
+          {!status.sso_managed && (
+            <button
+              type="button"
+              onClick={() => {
+                setPanel('disable')
+                setFormError(null)
+              }}
+              className="flex items-center gap-1.5 rounded border border-[var(--status-failed-bd)] px-3 py-1.5 text-sm text-[var(--status-failed)] transition-colors hover:bg-[var(--status-failed-bg-soft)]"
+            >
+              <ShieldOff className="h-3.5 w-3.5" />
+              Turn off two-factor authentication
+            </button>
+          )}
         </div>
       )}
 

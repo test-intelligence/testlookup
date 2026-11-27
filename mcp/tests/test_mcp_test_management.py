@@ -88,21 +88,29 @@ def test_list_resolves_the_project_and_sends_the_routes_names(monkeypatch):
 
 
 def test_list_markdown_and_items(monkeypatch):
+    import untrusted
+
     _, tools = _tools(monkeypatch)
     out = asyncio.run(tools["list_managed_test_cases"](P1))
+    assert out["content_notice"] == untrusted.DATA_NOTICE
     assert out["total"] == 30 and out["pages"] == 2 and out["more"] is True
     assert "## Test cases — page 1/2 (30 total)" in out["summary"]
-    assert f"| TC-1A2B3C | Login \\| works | approved | high | functional | checkout | Dana | yes | `{C1}` |" in out["summary"]
+    marked_title = untrusted.inline(r"Login \| works")
+    assert (f"| TC-1A2B3C | {marked_title} | approved | high | {untrusted.inline('functional')} "
+            f"| {untrusted.inline('checkout')} | {untrusted.inline('Dana')} | yes | `{C1}` |") in out["summary"]
     assert "more — call again with page=2" in out["summary"]
     item = out["items"][0]
     assert item["short_id"] == "TC-1A2B3C" and item["suite_name"] == "checkout" and "description" not in item
 
 
 def test_the_case_carries_its_steps_and_history_on_request(monkeypatch):
+    import untrusted
+
     calls, tools = _tools(monkeypatch)
     out = asyncio.run(tools["get_managed_test_case"](C1))
+    assert out["content_notice"] == untrusted.DATA_NOTICE
     assert out["ok"] and out["case"]["id"] == C1 and "history" not in out
-    assert "| 1 | Open login | Form shows |" in out["summary"]
+    assert f"| 1 | {untrusted.inline('Open login')} | {untrusted.inline('Form shows')} |" in out["summary"]
     assert [p for p, _ in calls] == [f"{LIST}/{C1}"]
     out = asyncio.run(tools["get_managed_test_case"](C1, include_history=True))
     assert out["history"][0]["version"] == 3 and "### History (1 saved, newest first)" in out["summary"]
@@ -118,9 +126,13 @@ def test_a_refusal_is_an_error_payload(monkeypatch):
 
 
 def test_an_unresolved_project_never_reaches_the_list(monkeypatch):
+    import untrusted
+
     calls, tools = _tools(monkeypatch)
     out = asyncio.run(tools["list_managed_test_cases"]("Payment Servce"))
-    assert out["ok"] is False and out["code"] == "unresolved_name" and "Payment Service" in out["detail"]
+    assert out["ok"] is False and out["status_code"] == 400 and out["code"] == "unresolved_name"
+    assert "Payment Service" in out["detail"]
+    assert out["content_notice"] == untrusted.DATA_NOTICE
     assert [p for p, _ in calls] == ["/api/v1/projects"]
 
 

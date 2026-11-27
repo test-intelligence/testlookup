@@ -60,6 +60,7 @@ from app.services.workflow_run_state import public_status
 
 __all__ = [
     "ESTIMATE_DETERMINISTIC_NOTE",
+    "ESTIMATE_NO_MATCHING_RUN",
     "deep_estimate",
     "deep_history",
     "pre_scan",
@@ -69,6 +70,12 @@ __all__ = [
 PRESCAN_SUITES_CAP = 5
 #: The Root Cause stage's ``tier=deterministic`` calls no model: a measured $0.00.
 ESTIMATE_DETERMINISTIC_NOTE = "deterministic tier — the Root Cause stage calls no model"
+#: Completed deep runs exist, but none ran with this engine / model (D-152).
+#: Mirrored by ``frontend/src/components/deep/deepRunModel.ts``.
+ESTIMATE_NO_MATCHING_RUN = (
+    "No past run with this model: the earlier deep investigations in this project ran with a "
+    "different engine or model, so their time is no guide."
+)
 _FAILING_SQL = "tc.status IN (" + ", ".join(f"'{s}'" for s in FAILING_STATUSES) + ")"
 
 
@@ -257,21 +264,72 @@ async def deep_history(db: AsyncSession, project_id: uuid.UUID, *, page: int, si
 # ── estimate ─────────────────────────────────────────────────────────────────
 
 #: ONE statement: the sample (the project's latest completed / passed top-level
-#: deep pipelines), the p50 of their whole durations, and per stage the p50 of
-#: its duration and tokens -- raw, and per failure the ingestion stage counted.
+#: deep pipelines that ran like a run started now would, D-152: seven
+#: one-second rules runs once estimated a local model's run at "~0 min"), the
+#: p50 of their whole durations, and per stage the p50 of its duration and
+#: tokens -- raw, and per failure the ingestion stage counted.
+#:
+#: The key is read from what every deep run freezes, and compared with values
+#: the API reads WITHOUT a probe, so the API and the worker always agree:
+#: * the CONFIGURED analysis mode (``analysis_mode_resolution.requested``);
+#: * the global provider / model only when that mode can call a model
+#:   (``llm`` / ``auto``); a rules or ML run is keyed on the mode alone;
+#: * the Root Cause stage's tier and, for a model tier, that tier's endpoint
+#:   (``resolved_agent_configs -> <RCA> -> config -> model``): the endpoint
+#:   that drives the deep run's time, not the global model.
+#: The RESOLVED mode (auto -> ML / LLM / rules) depends on a worker-side probe
+#: the API cannot repeat, so it is taken from the latest keyed run: the sample
+#: is the keyed runs that resolved like it.
 #: The outer ``LEFT JOIN`` keeps one row when the sample has no timed stage.
 _ESTIMATE_SQL = """
-WITH sample AS (
-    SELECT p.id, p.started_at, p.completed_at
+WITH done AS (
+    SELECT p.id, p.started_at, p.completed_at, p.created_at,
+           p.execution_metadata -> 'analysis_mode_resolution' AS amr,
+           p.execution_metadata -> 'resolved_agent_configs' -> CAST(:rca_agent AS text) -> 'config' -> 'model'
+               AS rca
     FROM agent_pipeline_runs p JOIN test_runs tr ON tr.id = p.test_run_id
     WHERE tr.project_id = :project_id
       AND p.workflow_type = 'deep'
       AND p.parent_pipeline_run_id IS NULL
       AND p.status IN ('completed', 'passed')
-    ORDER BY p.completed_at DESC NULLS LAST, p.created_at DESC, p.id DESC
+), tiered AS (
+    SELECT d.*,
+           CASE WHEN d.rca ->> 'tier' = 'auto' THEN CAST(:default_tier AS text) ELSE d.rca ->> 'tier' END
+               AS rca_tier
+    FROM done d
+), keyed AS (
+    SELECT t.id, t.started_at, t.completed_at, t.created_at, t.amr ->> 'resolved' AS resolved
+    FROM tiered t
+    WHERE (t.amr ->> 'requested') IS NOT DISTINCT FROM CAST(:requested AS text)
+      AND t.rca_tier IS NOT DISTINCT FROM CAST(:rca_tier AS text)
+      AND (
+          t.rca_tier = 'deterministic'
+          OR (
+              LOWER(NULLIF(t.rca -> t.rca_tier ->> 'provider', ''))
+                  IS NOT DISTINCT FROM CAST(:rca_provider AS text)
+              AND NULLIF(t.rca -> t.rca_tier ->> 'model', '') IS NOT DISTINCT FROM CAST(:rca_model AS text)
+          )
+      )
+      AND (
+          NOT CAST(:uses_model AS boolean)
+          OR (
+              LOWER(NULLIF(t.amr ->> 'provider', '')) IS NOT DISTINCT FROM CAST(:provider AS text)
+              AND NULLIF(t.amr ->> 'model', '') IS NOT DISTINCT FROM CAST(:model AS text)
+          )
+      )
+), latest AS (
+    SELECT resolved FROM keyed
+    ORDER BY completed_at DESC NULLS LAST, created_at DESC, id DESC
+    LIMIT 1
+), sample AS (
+    SELECT k.id, k.started_at, k.completed_at
+    FROM keyed k
+    WHERE k.resolved IS NOT DISTINCT FROM (SELECT resolved FROM latest)
+    ORDER BY k.completed_at DESC NULLS LAST, k.created_at DESC, k.id DESC
     LIMIT :sample_size
 ), totals AS (
     SELECT COUNT(*) AS sample_pipelines,
+           (SELECT COUNT(*) FROM done) AS completed_pipelines,
            percentile_cont(0.5) WITHIN GROUP (
                ORDER BY EXTRACT(EPOCH FROM (completed_at - started_at))
            ) FILTER (WHERE started_at IS NOT NULL AND completed_at IS NOT NULL) AS pipeline_seconds_p50
@@ -301,7 +359,7 @@ WITH sample AS (
            percentile_cont(0.5) WITHIN GROUP (ORDER BY output_tokens::float / failed) AS out_pf_p50
     FROM timed GROUP BY stage_name
 )
-SELECT t.sample_pipelines, t.pipeline_seconds_p50, ps.*
+SELECT t.sample_pipelines, t.completed_pipelines, t.pipeline_seconds_p50, ps.*
 FROM totals t LEFT JOIN per_stage ps ON TRUE
 ORDER BY ps.stage_name
 """
@@ -388,6 +446,49 @@ def _cost(resolved: Any, *, measured: bool, input_tokens: int, output_tokens: in
     return {**out, "priced": True, "usd": round(float(usd), 6)}
 
 
+#: Analysis modes whose run can call the global model (failure analysis).
+_MODEL_MODES = frozenset({"llm", "auto"})
+
+
+def _clean(value: Any) -> Optional[str]:
+    return (str(value).strip() or None) if value is not None else None
+
+
+def _engine_params(configured_mode: Any, ai_config: Any, resolved: Any) -> dict[str, Any]:
+    """The key a deep run started now would freeze (see ``_ESTIMATE_SQL``).
+
+    ``configured_mode`` is the stored analysis mode (no probe); ``ai_config``
+    the effective global config; ``resolved`` the Root Cause agent's resolved
+    config for this estimate (the run configuration applied). Blank -> None,
+    providers lower-cased (the SQL normalises the stored side the same way).
+    """
+    from app.core.agent_ops_vocab import RUN_CONFIG_AGENT_ID  # noqa: PLC0415
+    from app.services.agent_capability_registry import DEFAULT_TIERS  # noqa: PLC0415 (read only)
+
+    cfg = ai_config if isinstance(ai_config, dict) else {}
+    mode = _clean(configured_mode)
+    provider = _clean(cfg.get("provider"))
+    default_tier = DEFAULT_TIERS.get("root_cause_analysis", "slm")
+    tier = _clean(getattr(getattr(getattr(resolved, "config", None), "model", None), "tier", None))
+    tier = default_tier if tier in (None, "auto") else tier
+    endpoint = None
+    if tier != "deterministic":
+        endpoints = getattr(resolved, "endpoints", None) or {}
+        endpoint = endpoints.get(tier) if isinstance(endpoints, dict) else None
+    rca_provider = _clean(getattr(endpoint, "provider", None))
+    return {
+        "requested": mode,
+        "uses_model": mode in _MODEL_MODES,
+        "provider": provider.lower() if provider else None,
+        "model": _clean(cfg.get("model")),
+        "rca_agent": RUN_CONFIG_AGENT_ID,
+        "default_tier": default_tier,
+        "rca_tier": tier,
+        "rca_provider": rca_provider.lower() if rca_provider else None,
+        "rca_model": _clean(getattr(endpoint, "model", None)),
+    }
+
+
 async def _failing_results(db: AsyncSession, run: TestRun) -> int:
     return int((await db.execute(
         select(func.count(TestCase.id)).where(
@@ -402,6 +503,7 @@ async def deep_estimate(db: AsyncSession, run: TestRun, *, configuration: DeepRu
 
     from app.core.agent_ops_vocab import ESTIMATE_SELECTED_TOO_MANY  # noqa: PLC0415
     from app.services.ai_config_resolver import get_effective_ai_config  # noqa: PLC0415
+    from app.services.analysis_router import resolve_configured_analysis_mode  # noqa: PLC0415
     from app.services.deep_investigation_gate import deep_investigation_gate  # noqa: PLC0415
 
     gate = await deep_investigation_gate(db)
@@ -425,10 +527,23 @@ async def deep_estimate(db: AsyncSession, run: TestRun, *, configuration: DeepRu
 
     rows = (await db.execute(
         text(_ESTIMATE_SQL),
-        {"project_id": run.project_id, "sample_size": ESTIMATE_SAMPLE_PIPELINES},
+        {
+            "project_id": run.project_id,
+            "sample_size": ESTIMATE_SAMPLE_PIPELINES,
+            **_engine_params(
+                (await resolve_configured_analysis_mode(db)).mode, global_ai_config, resolved,
+            ),
+        },
     )).mappings().all()
     sample_pipelines = int(rows[0]["sample_pipelines"]) if rows else 0
+    completed_pipelines = int(rows[0]["completed_pipelines"] or 0) if rows else 0
     measured = sample_pipelines > 0
+    if measured:
+        reason = None
+    elif completed_pipelines > 0:
+        reason = ESTIMATE_NO_MATCHING_RUN
+    else:
+        reason = ESTIMATE_UNMEASURED
     stages, scaling_delta = _stage_rows(list(rows), int(config_read["failures_analysed"]))
     input_tokens = sum(stage["input_tokens_p50"] or 0 for stage in stages)
     output_tokens = sum(stage["output_tokens_p50"] or 0 for stage in stages)
@@ -446,7 +561,7 @@ async def deep_estimate(db: AsyncSession, run: TestRun, *, configuration: DeepRu
         "gate": _gate_read(gate),
         "configuration": config_read,
         "measured": measured,
-        "reason": None if measured else ESTIMATE_UNMEASURED,
+        "reason": reason,
         "sample_pipelines": sample_pipelines,
         "minutes_p50": minutes,
         "tokens_p50": tokens,

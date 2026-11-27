@@ -24,7 +24,7 @@ The sections below follow the groups of the settings index.
 2. Enter the code the app shows, then **Verify and enable**.
 3. Save the ten recovery codes shown **once** (**Download .txt**); each works once if you lose the authenticator.
 
-Once enabled, the section shows how many recovery codes remain, with **Regenerate recovery codes** (which invalidates the old ones) and **Turn off two-factor authentication**; both ask for your password and a current code. If your organisation requires two-factor sign-in for your role, you cannot turn it off. An SSO-only account manages its factor with the identity provider; a linked account that also enrolled a local factor keeps its local recovery-code count and regeneration controls here.
+Once enabled, the section shows how many recovery codes remain. **Regenerate recovery codes** requires your password and a current code, and invalidates the previous set. Linked accounts with a local authenticator also have this option. Manage your SSO factor with your identity provider. Workspace MFA policy prevents turning off a required local authenticator.
 
 **Your data**, the last card: **Download my data** prepares a signed archive of what TestLookup holds about you (kept for 72 hours). Below it, **Ask to have your account erased** asks the administrators to erase your account; you confirm in the card (**Send request**), and nothing is erased yet. The card then reads *You asked on Sep 18, 2026. An administrator will review it.* and offers **Withdraw request**. An administrator either erases the account — you are signed out at once, it cannot be undone, and audit records are kept, as the law allows — or declines with a reason, which the card shows (*Declined on Sep 19, 2026: …*, plus a bell entry). After a decline or a withdrawal you may ask again. The only administrator cannot ask: make someone else an administrator first.
 
@@ -348,7 +348,7 @@ SSO also has to be enabled in the deployment's configuration; the operator guide
 
 ### MFA and lockout
 
-**MFA & lockout** (`/settings/mfa-policy`, administrators): **Require MFA to sign in**, for everyone or for a role and above; and account lockout after repeated failed sign-ins (10 attempts and 15 minutes by default). A session authenticated by SSO is exempt; account linkage alone does not exempt a local password sign-in.
+**MFA & lockout** (`/settings/mfa-policy`, administrators) can require MFA for everyone or for a role and above, and configure lockout after repeated failed sign-ins (10 attempts and 15 minutes by default). Sessions established through SSO are exempt from local MFA. Linked accounts using a password must satisfy the local policy.
 
 ### Audit
 

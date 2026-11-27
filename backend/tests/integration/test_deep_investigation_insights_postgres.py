@@ -10,7 +10,10 @@
   ``cost_usd`` None when no stage reported one; ``clusters`` None without a
   snapshot (the CURRENT snapshot counted, not an older one); ``total`` across
   pages;
-* estimate: no sample -> ``measured: false`` / ``minutes_p50 None``; three
+* estimate: no sample -> ``measured: false`` / ``minutes_p50 None``; runs of
+  another engine are no sample (D-152: configured mode, the global model only
+  for a model mode, the Root Cause tier endpoint; in auto, the resolved mode of
+  the latest keyed run); three
   pipelines -> their p50s with the Root Cause stage scaled per failure; an
   ``ollama`` endpoint -> ``local_model`` / ``usd 0.0``; an unpriced model ->
   ``priced: false`` with ``llm_unpriced_calls_total`` unchanged; the sample is
@@ -126,13 +129,14 @@ async def world():
         return run_id
 
     async def add_pipeline(run_id, *, status="completed", workflow_type="deep", started=None,
-                           seconds=None, parent=None, created_at=None, stages=()):
+                           seconds=None, parent=None, created_at=None, stages=(), metadata=None):
         pid = uuid.uuid4()
         async with sessions() as db:
             db.add(AgentPipelineRun(
                 id=pid, test_run_id=run_id, workflow_type=workflow_type, status=status,
                 started_at=started, completed_at=(started + timedelta(seconds=seconds)) if started and seconds else None,
                 parent_pipeline_run_id=parent, created_at=created_at or started or now,
+                execution_metadata=metadata,
             ))
             await db.flush()
             for stage in stages:
@@ -409,10 +413,11 @@ async def test_history_needs_a_project_the_caller_can_read(world):
 def estimate_env(monkeypatch, world):
     """A fixed global AI config and gate (the gate has its own test file), and
     the project's Root Cause endpoint set per test."""
-    from app.services import ai_config_resolver, deep_investigation_gate
+    from app.services import ai_config_resolver, analysis_router, deep_investigation_gate
     from app.services.agent_config_service import AgentConfigV1, default_config, put_config
 
     ai = {"provider": "ollama", "model": "qwen2.5:7b", "offline_mode": False}
+    mode = {"configured": "llm"}
 
     async def _config(**_kwargs):
         return dict(ai)
@@ -420,18 +425,23 @@ def estimate_env(monkeypatch, world):
     async def _gate(_db):
         return deep_investigation_gate.DeepGateDecision(True, None, None, "llm", True, "ai_config")
 
+    async def _configured(_db=None):
+        return SimpleNamespace(mode=mode["configured"], source="ai_config")
+
     monkeypatch.setattr(ai_config_resolver, "get_effective_ai_config", _config)
     monkeypatch.setattr(deep_investigation_gate, "deep_investigation_gate", _gate)
+    monkeypatch.setattr(analysis_router, "resolve_configured_analysis_mode", _configured)
 
-    async def endpoint(provider: str, model: str) -> None:
+    async def endpoint(provider: str, model: str, *, tier: str = "slm") -> None:
         doc = default_config(RCA).model_dump()
-        doc["model"]["tier"] = "slm"
+        doc["model"]["tier"] = tier
         doc["model"]["slm"] = {"provider": provider, "model": model}
         async with world.sessions() as db:
             await put_config(db, world.p, AgentConfigV1.model_validate(doc), updated_by=None)
             await db.commit()
 
     endpoint.ai = ai  # type: ignore[attr-defined]  # the global config a test may change
+    endpoint.mode = mode  # type: ignore[attr-defined]  # the configured analysis mode a test may change
     return endpoint
 
 
@@ -440,12 +450,28 @@ def _timed(stage: str, start: datetime, seconds: float, **extra) -> dict:
             "completed_at": start + timedelta(seconds=seconds), **extra}
 
 
-async def _sample(world, k: int, *, status: str = "completed", workflow_type: str = "deep") -> uuid.UUID:
-    """Pipeline k: 60k s long; ingestion saw k failures; Root Cause 10 s per failure."""
+#: The engine ``estimate_env`` configures (configured ``llm``, global ``ollama`` / ``qwen2.5:7b``).
+LLM_OLLAMA = {"requested": "llm", "resolved": "llm", "provider": "ollama", "model": "qwen2.5:7b"}
+
+
+def _rca(provider: str = "ollama", model: str = "qwen2.5:7b", *, tier: str = "slm") -> dict:
+    """The Root Cause model block a run freezes in ``resolved_agent_configs``."""
+    return {"tier": tier, "slm": {"provider": provider, "model": model}, "llm": None}
+
+
+async def _sample(world, k: int, *, status: str = "completed", workflow_type: str = "deep",
+                  engine: dict | None = None, rca: dict | None = None) -> uuid.UUID:
+    """Pipeline k: 60k s long; ingestion saw k failures; Root Cause 10 s per failure.
+    It froze ``engine`` as its mode resolution and ``rca`` as its Root Cause model
+    (defaults: what ``estimate_env`` configures). A smaller k is a later run."""
     run_id = await world.add_run(at=world.now - timedelta(days=1, hours=k), cases=_cases()[:1])
     start = world.now - timedelta(days=1, hours=k)
+    metadata = {
+        "analysis_mode_resolution": engine if engine is not None else dict(LLM_OLLAMA),
+        "resolved_agent_configs": {RCA: {"config": {"model": rca if rca is not None else _rca()}}},
+    }
     return await world.add_pipeline(run_id, status=status, workflow_type=workflow_type,
-                                    started=start, seconds=60 * k, stages=[
+                                    started=start, seconds=60 * k, metadata=metadata, stages=[
         _timed("ingestion", start, 1, result_data={"total_tests": 9, "failed_count": k}),
         _timed("root_cause_analysis", start, 10 * k, input_tokens=100 * k, output_tokens=10 * k),
         _timed("summary", start, 4 + k, input_tokens=50 + 10 * k, output_tokens=5 + k),
@@ -511,6 +537,80 @@ async def test_three_pipelines_give_their_p50s_scaled_per_failure(world, estimat
     assert {s["stage_name"]: s for s in narrowed["stages"]}["root_cause_analysis"]["duration_seconds_p50"] == 20.0
 
 
+async def test_runs_of_another_engine_are_no_sample(world, estimate_env):
+    """D-152: seven one-second rules runs estimated a local model's run at "~0 min".
+    Only runs keyed like a run started now count: configured mode, global model
+    (a model mode), the Root Cause tier endpoint."""
+    from app.services.deep_investigation_insights_service import ESTIMATE_NO_MATCHING_RUN
+
+    await estimate_env("ollama", "qwen2.5:7b")
+    target = await world.add_run(at=world.now, cases=_cases())
+    rules = {"requested": "rules", "resolved": "rules", "provider": "ollama", "model": "qwen2.5:7b"}
+    for k in range(1, 8):
+        await _sample(world, k, engine=rules)
+    await _sample(world, 8, engine={**LLM_OLLAMA, "model": "llama3.1:8b"})   # another global model
+    await _sample(world, 9, engine={})                                      # a row with no snapshot
+    await _sample(world, 11, rca=_rca(model="qwen2.5:3b"))                  # another Root Cause endpoint
+
+    body, _ = await _estimate(world, target)
+
+    assert (body["measured"], body["reason"], body["sample_pipelines"]) == (False, ESTIMATE_NO_MATCHING_RUN, 0)
+    assert body["minutes_p50"] is None and body["stages"] == []
+
+    await _sample(world, 10, engine={**LLM_OLLAMA, "provider": "Ollama"},   # case of the provider ignored
+                  rca=_rca(provider="OLLAMA"))
+    matched, _ = await _estimate(world, target)
+    assert (matched["measured"], matched["sample_pipelines"], matched["reason"]) == (True, 1, None)
+    assert matched["minutes_p50"] == round((600 + (10 * 9 - 100)) / 60, 1)
+
+
+async def test_a_rules_install_is_keyed_on_the_mode_alone(world, estimate_env):
+    """Review finding 7b: a rules run calls no global model; changing that model keeps the sample."""
+    await estimate_env("ollama", "qwen2.5:7b")
+    estimate_env.mode["configured"] = "rules"
+    target = await world.add_run(at=world.now, cases=_cases())
+    for k in (1, 2):
+        await _sample(world, k, engine={"requested": "rules", "resolved": "rules",
+                                        "provider": "ollama", "model": "llama3.1:8b"})
+
+    body, _ = await _estimate(world, target)
+
+    assert (body["measured"], body["sample_pipelines"]) == (True, 2)
+
+
+async def test_auto_follows_how_the_latest_keyed_run_resolved(world, estimate_env):
+    """Review finding 7a: the API cannot repeat the worker's probe, so in auto the sample is the
+    keyed runs that resolved like the latest one (here llm), never the older one-second rules runs."""
+    await estimate_env("ollama", "qwen2.5:7b")
+    estimate_env.mode["configured"] = "auto"
+    target = await world.add_run(at=world.now, cases=_cases())
+    await _sample(world, 1, engine={**LLM_OLLAMA, "requested": "auto"})                    # the latest
+    for k in (2, 3, 4):
+        await _sample(world, k, engine={**LLM_OLLAMA, "requested": "auto", "resolved": "rules"})
+
+    body, _ = await _estimate(world, target)
+
+    assert (body["measured"], body["sample_pipelines"]) == (True, 1)
+    assert body["minutes_p50"] == round((60 + (10 * 9 - 10)) / 60, 1)
+
+
+async def test_the_root_cause_tier_is_the_key(world, estimate_env):
+    """Review finding 7c: the Root Cause tier endpoint drives the time, not the global model.
+    A deterministic Root Cause stage calls no model, so its endpoint block is not compared."""
+    from app.services.deep_investigation_insights_service import ESTIMATE_NO_MATCHING_RUN
+
+    await estimate_env("ollama", "qwen2.5:3b")                              # the stage moved to a smaller model
+    target = await world.add_run(at=world.now, cases=_cases())
+    await _sample(world, 1)                                                 # froze slm qwen2.5:7b
+    moved, _ = await _estimate(world, target)
+    assert (moved["measured"], moved["reason"]) == (False, ESTIMATE_NO_MATCHING_RUN)
+
+    await estimate_env("ollama", "qwen2.5:3b", tier="deterministic")
+    await _sample(world, 2, rca=_rca(model="anything", tier="deterministic"))
+    deterministic, _ = await _estimate(world, target)
+    assert (deterministic["measured"], deterministic["sample_pipelines"]) == (True, 1)
+
+
 async def test_an_unpriced_model_is_never_priced_and_never_counted(world, estimate_env, monkeypatch):
     from app.core.agent_ops_vocab import ESTIMATE_UNPRICED
     from app.core.metrics import llm_unpriced_calls_total
@@ -521,7 +621,7 @@ async def test_an_unpriced_model_is_never_priced_and_never_counted(world, estima
     monkeypatch.setattr(settings, "AI_LLM_PROVIDER_ALLOWLIST", "")
     await estimate_env("openai", "gpt-w14-unpriced")
     target = await world.add_run(at=world.now, cases=_cases())
-    await _sample(world, 1)
+    await _sample(world, 1, rca=_rca("openai", "gpt-w14-unpriced"))
     counter = llm_unpriced_calls_total.labels(provider="openai", model="gpt-w14-unpriced")
     before = counter._value.get()
 

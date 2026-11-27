@@ -1,10 +1,9 @@
 """
 Refresh token issuance, rotation, and replay detection.
 
-Every refresh token carries a random ``jti`` and a signed authentication-
-assurance claim. Only the SHA-256 hex digest of the jti is persisted
-(``RefreshTokenRecord.jti_hash``); assurance survives in the signed token. On
-refresh:
+Every refresh token carries a random ``jti`` and signed authentication assurance.
+Only the SHA-256 hex digest of the jti is persisted
+(``RefreshTokenRecord.jti_hash``). On refresh:
 
   1. Look up the presented jti's hash.
   2. If the record is missing, expired, or revoked → 401.
@@ -18,8 +17,6 @@ refresh:
 This gives us:
   - **Hashed at rest** — raw jti is never stored.
   - **Rotation** — old tokens invalidate on use.
-  - **Assurance continuity** — rotation preserves the method that established
-    the session so policy cannot confuse password and IdP authentication.
   - **Replay detection** — stolen tokens used after the legitimate client
     refreshes trigger family-wide revocation.
   - **Revocation** — ``revoked_at`` lets us invalidate specific records.
@@ -102,8 +99,6 @@ async def rotate_refresh_token(
     if record.expires_at <= now:
         raise RefreshTokenError("Refresh token expired")
 
-    # Checked before ``revoked_at``: rotation sets both fields, so the other
-    # order sent every replay down the "revoked" branch and this one never ran.
     if record.rotated_to_id is not None:
         # Replay of a rotated token — the legitimate client already moved
         # on. Treat as compromise and revoke everything for this user.

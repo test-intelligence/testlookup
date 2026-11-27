@@ -11,9 +11,9 @@ The rules:
   again is refused, but it is not a replay: it must not end a session the user
   has opened since.
 * The default access-token lifetime is 30 minutes.
-* Every refresh token is single-use. Browser tabs coordinate before refresh;
-  presenting a spent token to the server is always a replay and never creates
-  an independent refresh root.
+* A refresh token is single-use. Reusing it at any time is a replay and must
+  never mint a second successor; browser refreshes are single-flighted so
+  legitimate concurrent requests converge on the first rotated pair.
 
 The harness is SQLite, which has no durable revocation table, so the handler's
 ``revoke_all_user_tokens(user_id, db)`` call is forwarded to the real function
@@ -35,6 +35,7 @@ from tests.test_mfa import (  # noqa: F401 - fixtures are used by name
     db,
     login,
     make_user,
+    session_factory,
 )
 
 pytestmark = pytest.mark.regression
@@ -165,3 +166,42 @@ def test_the_default_access_token_lifetime_is_thirty_minutes():
     from app.core.config import Settings
 
     assert Settings.model_fields["JWT_ACCESS_TOKEN_EXPIRE_MINUTES"].default == 30
+
+
+# ── immediate duplicate redemption ──────────────────────────────────────────
+
+
+def test_refresh_token_reuse_leeway_is_not_configurable():
+    from app.core.config import Settings
+
+    assert "JWT_REFRESH_REUSE_LEEWAY_SECONDS" not in Settings.model_fields
+
+
+async def test_immediate_reuse_cannot_create_a_second_renewable_branch(
+    db, client, cutoff_calls,
+):
+    user = await make_user(db, username="twotabs")
+    first = (await login(client, user=user)).json()
+    tab_a = await _refresh(client, first["refresh_token"])
+    assert tab_a.status_code == 200
+    assert cutoff_calls == []
+    assert await _me(client, tab_a.json()["access_token"]) == 200
+
+    tab_b = await _refresh(client, first["refresh_token"])
+
+    assert tab_b.status_code == 401
+    assert [uid for uid, _db in cutoff_calls] == [user.id]
+    assert await _me(client, tab_a.json()["access_token"]) == 401
+    assert (await _refresh(client, tab_a.json()["refresh_token"])).status_code == 401
+
+
+async def test_reuse_does_not_revive_a_session_that_was_ended(db, client, cutoff_calls):
+    """After a logout the rotated token must not mint a new pair."""
+    user = await make_user(db, username="ended")
+    first = (await login(client, user=user)).json()
+    rotated = (await _refresh(client, first["refresh_token"])).json()
+    assert (await client.post("/api/v1/auth/logout", headers=_bearer(rotated["access_token"]))).status_code == 204
+
+    again = await _refresh(client, first["refresh_token"])
+
+    assert again.status_code == 401

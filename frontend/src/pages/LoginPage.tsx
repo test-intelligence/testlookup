@@ -388,9 +388,16 @@ export default function LoginPage() {
                   )
                 }
                 onComplete={(result) => {
-                  // Enrollment completes this sign-in with an MFA-assured
-                  // replacement session, without asking for the password again.
-                  void completeSignIn(result.tokens);
+                  // Unlike voluntary enrollment, the forced path deliberately
+                  // waits to install its replacement session until the user
+                  // acknowledges the one-time recovery codes.
+                  if (result.tokens) {
+                    void completeSignIn(result.tokens);
+                  } else {
+                    backToPassword(
+                      'Two-factor authentication is enabled. Sign in again to continue.',
+                    );
+                  }
                 }}
               />
               </Suspense>

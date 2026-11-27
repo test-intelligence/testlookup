@@ -269,7 +269,10 @@ async def test_a_tier_one_answer_is_still_recorded_as_an_llm_engine(monkeypatch,
     assert analysis["_audit"]["analysis_mode"] == "llm"
     assert analysis["_audit"]["fallback_from"] == "react_agent"
     assert analysis["_audit"]["fallback_reason"] == (
-        "react_timeout: full investigation timed out after 5 s"
+        # D-144: the answer came from a further call after the limit, so the
+        # reason says how much more time that call was allowed.
+        "react_timeout: full investigation timed out after 5 s; "
+        "a quick classification then answered (allowed 2 s more)"
     )
     assert [d["chosen"] for d in _fallback_decisions(agent)] == ["llm"]
 

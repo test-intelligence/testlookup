@@ -215,3 +215,11 @@ async def test_a_failed_turn_is_an_http_error_not_an_apology(monkeypatch):
     assert exc.value.detail == {
         "code": "timeout", "message": "The AI provider took too long to answer.", "retryable": True,
     }
+
+
+def test_a_too_long_or_content_refused_turn_is_a_422_not_a_503():
+    # D-143 review: the request is the problem (too long, or refused by the provider's content filter),
+    # so the plain JSON endpoint answers 422 like the other request errors, not 503 "service unavailable".
+    assert chat_router._turn_error_status("too_long") == 422
+    assert chat_router._turn_error_status("content_refused") == 422
+    assert chat_router._turn_error_status("provider_error") == 503

@@ -39,7 +39,6 @@ import pytest
 from app.core import security
 from app.core.config import settings
 from app.core.security import (
-    AuthenticationAssurance,
     MFA_CHALLENGE_TOKEN_TYPE,
     MFA_ENROLLMENT_TOKEN_TYPE,
     ExpiredSignatureError,
@@ -143,7 +142,6 @@ def test_a_refresh_token_round_trips_with_its_jti() -> None:
     claims = decode_token(token, expected_type="refresh")
     assert claims["sub"] == "user-1" and claims["jti"] == jti
     assert claims["exp"] == int(expires_at.timestamp())
-    assert claims["auth_assurance"] == AuthenticationAssurance.PASSWORD.value
 
 
 @pytest.mark.parametrize("token_type", [MFA_CHALLENGE_TOKEN_TYPE, MFA_ENROLLMENT_TOKEN_TYPE])
@@ -163,7 +161,6 @@ def test_tokens_python_jose_minted_before_the_upgrade_still_decode(monkeypatch) 
     )
     refresh = decode_token(JOSE_REFRESH, expected_type="refresh")
     assert refresh["jti"] == "q2w3e4r5t6y7u8i9o0p1a2s3d4f5g6h7"
-    assert "auth_assurance" not in refresh  # refresh treats this legacy shape as password-only
 
 
 # ── claim rules ─────────────────────────────────────────────────────────────

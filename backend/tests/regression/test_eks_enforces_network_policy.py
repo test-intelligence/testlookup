@@ -1,28 +1,29 @@
-"""The shipped AWS Terraform can enforce NetworkPolicy and lock down node metadata.
+"""The shipped AWS Terraform can enforce NetworkPolicy and locks down node metadata.
 
-Both are switches on the EKS module, off by default, because neither can be
-turned on for a running cluster without preparation:
+NetworkPolicy remains an opt-in switch because it cannot be turned on for a
+running cluster without preparation:
 
 * ``enable_network_policy`` sets ``enableNetworkPolicy = "true"`` on the
   ``vpc-cni`` addon. The AWS VPC CNI accepts every NetworkPolicy object and
   enforces none of them until that setting is on. Once it is on,
   ``default-deny-all`` really applies, so the policies must first admit the
   load balancer to the frontend and backend pods.
-* ``require_imdsv2`` starts the nodes from a launch template that requires
-  IMDSv2 with a hop limit of 1, so a pod off the host network cannot ask the
-  instance metadata service for the node role's credentials. A node group
-  cannot adopt a launch template in place: turning it on replaces the group.
+Node metadata hardening is mandatory. ``require_imdsv2`` remains as a
+compatibility input fixed to true and starts nodes from a launch template that
+requires IMDSv2 with a hop limit of 1, so a pod off the host network cannot ask
+the instance metadata service for the node role's credentials. A node group
+cannot adopt a launch template in place: applying the hardening replaces the
+group.
 
 The rules pinned here:
 
-* With both switches off the module is what it was: no launch template
-  resource, no ``configuration_values`` on any addon, the same four addons.
-* Each switch, when on, produces exactly its setting and nothing else; the
-  launch template never takes over what the node group sets.
-* The root module exposes both switches with the same default.
+* The launch template is always present and never takes over what the node
+  group sets.
+* The root and EKS modules default metadata hardening to true and reject false.
+* Every shipped environment explicitly keeps metadata hardening enabled.
+* The optional NetworkPolicy switch changes only the VPC CNI setting.
 * The two deployment guides say that the cluster must enforce NetworkPolicy,
-  name the switch for EKS, AKS and GKE, and say the EKS switches are off by
-  default.
+  name the switch for EKS, AKS and GKE, and document mandatory node hardening.
 
 Read from the files, not from a plan: nothing here needs AWS or Terraform.
 """
@@ -38,7 +39,7 @@ pytestmark = pytest.mark.regression
 ROOT = Path(__file__).resolve().parents[3]
 TERRAFORM = ROOT / "infra" / "aws" / "terraform"
 EKS_MODULE = TERRAFORM / "modules" / "eks" / "main.tf"
-SWITCHES = ("enable_network_policy", "require_imdsv2")
+CONFIGURATION_INPUTS = ("enable_network_policy", "require_imdsv2")
 GUIDES = (
     ROOT / "docs" / "operations" / "deploy-kubernetes.md",
     ROOT / "docs" / "operations" / "deploy-cloud.md",
@@ -77,17 +78,26 @@ def _variables(path: Path) -> dict[str, str]:
 
 
 @pytest.mark.parametrize("where", ["modules/eks/variables.tf", "variables.tf"])
-@pytest.mark.parametrize("switch", SWITCHES)
-def test_both_switches_exist_and_are_off_by_default(where, switch):
+def test_network_policy_switch_is_off_by_default(where):
     declared = _variables(TERRAFORM / where)
-    assert switch in declared, f"{where} does not declare {switch}"
-    assert _setting(declared[switch], "type") == "bool"
-    assert _setting(declared[switch], "default") == "false", (
-        f"{switch} must stay opt-in: turning it on changes a running cluster"
+    switch = declared["enable_network_policy"]
+    assert _setting(switch, "type") == "bool"
+    assert _setting(switch, "default") == "false", (
+        "enable_network_policy must stay opt-in: turning it on changes a running cluster"
     )
 
 
-@pytest.mark.parametrize("switch", SWITCHES)
+@pytest.mark.parametrize("where", ["modules/eks/variables.tf", "variables.tf"])
+def test_imdsv2_is_mandatory(where):
+    declared = _variables(TERRAFORM / where)
+    control = declared["require_imdsv2"]
+    assert _setting(control, "type") == "bool"
+    assert _setting(control, "default") == "true"
+    validation = _block(control, r"validation")
+    assert _setting(validation, "condition") == "var.require_imdsv2"
+
+
+@pytest.mark.parametrize("switch", CONFIGURATION_INPUTS)
 def test_the_root_module_passes_each_switch_to_the_eks_module(switch):
     root = _without_comments((TERRAFORM / "main.tf").read_text(encoding="utf-8"))
     assert _setting(_block(root, r'module\s+"eks"'), switch) == f"var.{switch}"
@@ -117,8 +127,8 @@ def test_the_other_addons_are_still_installed(module):
 
 def test_nodes_require_imdsv2_with_a_hop_limit_of_one(module):
     template = _block(module, r'resource\s+"aws_launch_template"\s+"\w+"')
-    assert _setting(template, "count") == "var.require_imdsv2 ? 1 : 0", (
-        "the launch template must not exist unless require_imdsv2 is on"
+    assert _setting(template, "count") == "1", (
+        "the hardened launch template must always exist"
     )
     options = _block(template, r"metadata_options")
     assert _setting(options, "http_tokens") == '"required"'
@@ -132,8 +142,8 @@ def test_the_node_group_uses_that_launch_template_and_keeps_its_settings(module)
     name = re.search(r'resource\s+"aws_launch_template"\s+"(\w+)"', module)
     assert name, "no launch template in the EKS module"
     group = _block(module, r'resource\s+"aws_eks_node_group"\s+"this"')
-    # A dynamic block over the counted resource: no template, no block, and the
-    # node group is then exactly what it was before the switch existed.
+    # A dynamic block over the single counted resource retains the state address
+    # used by clusters that had already enabled metadata hardening.
     reference = _block(group, r'dynamic\s+"launch_template"')
     assert _setting(reference, "for_each") == f"aws_launch_template.{name.group(1)}"
     content = _block(reference, r"content")
@@ -171,8 +181,16 @@ def test_the_guides_say_the_cluster_must_enforce_network_policy(guide):
         assert switch in text, f"{guide.name} does not name the switch {switch!r}"
 
 
-def test_the_cloud_guide_says_the_eks_switches_are_off_by_default():
+def test_all_shipped_environments_require_imdsv2():
+    for path in sorted((TERRAFORM / "environments").glob("*.tfvars")):
+        text = _without_comments(path.read_text(encoding="utf-8"))
+        assert _setting(text, "require_imdsv2") == "true", (
+            f"{path.name} disables node hardening"
+        )
+
+
+def test_the_cloud_guide_documents_mandatory_imdsv2():
     text = GUIDES[1].read_text(encoding="utf-8")
-    for switch in SWITCHES:
+    for switch in CONFIGURATION_INPUTS:
         assert f"`{switch}`" in text, f"deploy-cloud.md does not name the Terraform variable {switch}"
-    assert "off by default" in text
+    assert "cannot be set to `false`" in text

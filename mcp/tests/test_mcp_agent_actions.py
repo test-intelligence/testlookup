@@ -59,12 +59,16 @@ def _row(**extra):
 
 
 def test_list_agent_actions_reads_the_pending_queue_with_a_clamped_limit(monkeypatch):
+    import untrusted
+
     payload = {"items": [_row()], "count": 1, "total": 3}
     tool, calls = _tool(monkeypatch, payload)
     text = asyncio.run(tool("44444444-4444-4444-8444-444444444444", limit=999))
     assert calls == [("/api/v1/projects/44444444-4444-4444-8444-444444444444/agent-actions", {"view": "pending", "limit": 200})]
     assert "| Action | Type | Target | Status | Outcome |" in text
-    assert "| Quarantine checkout-retry | quarantine.apply | checkout retry | pending_review " in text
+    assert (f"| {untrusted.inline('Quarantine checkout-retry')} "
+            f"| {untrusted.inline('quarantine.apply')} | {untrusted.inline('checkout retry')} "
+            f"| {untrusted.inline('pending_review')} ") in text
     assert "(1 of 3)" in text
     assert "Approving, rejecting or undoing an agent action is not available through MCP." in text
 
@@ -87,12 +91,15 @@ def test_an_empty_queue_says_so(monkeypatch):
 
 
 def test_a_cell_cannot_break_the_table(monkeypatch):
+    import untrusted
+
     row = _row(title="Quarantine a | b\n| injected | row |", outcome_text=None)
     tool, _ = _tool(monkeypatch, {"items": [row], "count": 1, "total": 1})
     text = asyncio.run(tool("44444444-4444-4444-8444-444444444444"))
-    table_rows = [line for line in text.splitlines() if line.startswith("| Quarantine")]
-    assert table_rows == ["| Quarantine a / b / injected / row / | quarantine.apply | checkout retry "
-                          "| pending_review | - |"]
+    table_rows = [line for line in text.splitlines() if line.startswith("| <test-output>Quarantine")]
+    assert table_rows == [f"| {untrusted.inline('Quarantine a / b / injected / row /')} "
+                          f"| {untrusted.inline('quarantine.apply')} | {untrusted.inline('checkout retry')} "
+                          f"| {untrusted.inline('pending_review')} | - |"]
 
 
 def test_the_agent_actions_module_is_registered_in_the_server():

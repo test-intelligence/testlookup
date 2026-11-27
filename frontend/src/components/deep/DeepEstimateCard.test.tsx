@@ -8,7 +8,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { ESTIMATE_FIXTURE } from '@/test/agentOpsMocks'
 import type { DeepEstimate } from '@/types/agentOps'
 import DeepEstimateCard from './DeepEstimateCard'
-import { ESTIMATE_LOAD_ERROR, ESTIMATE_NOT_MEASURED } from './deepRunModel'
+import { ESTIMATE_LOAD_ERROR, ESTIMATE_NO_MATCHING_RUN, ESTIMATE_NOT_MEASURED, ESTIMATE_NOT_MEASURED_MODEL } from './deepRunModel'
 
 const UNPRICED = 'No price is known for openai / gpt-9: the cost cannot be estimated.'
 
@@ -57,6 +57,19 @@ describe('DeepEstimateCard', () => {
     expect(card()).not.toHaveTextContent('0 min')
     expect(card()).toHaveTextContent(ESTIMATE_NOT_MEASURED)
     expect(card().querySelector('[data-estimate-stages]')).toBeNull()
+  })
+
+  it('a measured time under a minute reads "< 1 min", never "~0 min" (D-152)', () => {
+    renderCard({ ...ESTIMATE_FIXTURE, minutes_p50: 0 })
+    expect(card().querySelector('[data-estimate-minutes]')).toHaveTextContent('< 1 min')
+    expect(card()).not.toHaveTextContent('~0 min')
+  })
+
+  it('past runs of another engine: "no past run with this model", no minutes (D-152)', () => {
+    renderCard({ ...ESTIMATE_FIXTURE, measured: false, reason: ESTIMATE_NO_MATCHING_RUN, sample_pipelines: 0, minutes_p50: null, tokens_p50: null, stages: [] })
+    expect(card().querySelector('[data-estimate-minutes]')).toBeNull()
+    expect(card()).toHaveTextContent(ESTIMATE_NOT_MEASURED_MODEL)
+    expect(card()).not.toHaveTextContent(ESTIMATE_NOT_MEASURED)
   })
 
   it('an unpriced model is "—" with the server\'s sentence, never $0.00', () => {

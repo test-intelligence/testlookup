@@ -2674,6 +2674,25 @@ function LinkSuiteModal({ planId, projectId, onClose, onLinked }: LinkSuiteModal
 
 interface TestPlansTabProps { projectId: string | null }
 
+/**
+ * D-58: how often, and for how long, an AI plan task is followed. The worst case is two 300 s attempts and the
+ * 30 s retry wait, plus the wait behind pipelines on the shared queue, so the follow lasts 15 min; after that the
+ * page says the plan is still being built, never that it failed. A few failed status reads in a row are
+ * tolerated before the follow gives up.
+ */
+const AI_PLAN_POLL_MS = 3000
+const AI_PLAN_POLL_LIMIT_MS = 15 * 60 * 1000
+const AI_PLAN_STATUS_TRIES = 3
+const AI_PLAN_STILL_BUILDING = 'The test plan is still being built. Refresh the list in a moment.'
+const AI_PLAN_FAILED = 'The plan could not be built. Try again later.'
+
+/** Resolves after `ms`, or at once when `signal` aborts. */
+const pause = (ms: number, signal: AbortSignal) =>
+  new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, ms)
+    signal.addEventListener('abort', () => { clearTimeout(timer); resolve() }, { once: true })
+  })
+
 function TestPlansTab({ projectId }: TestPlansTabProps) {
   const [page, setPage] = useState(1)
   const [showCreate, setShowCreate] = useState(false)
@@ -2688,18 +2707,64 @@ function TestPlansTab({ projectId }: TestPlansTabProps) {
   const canWritePlans = hasRole('TESTER')
   const canUseAi = hasRole('QA_ENGINEER')
 
+  // D-58: the server refuses up front (no approved case, no model that can answer) and the shared API
+  // interceptor toasts its sentence. An accepted request is followed on the task status route until the
+  // worker says it built the plan or why it did not; "building" is never reported as done.
+  // The follow stops when the tab unmounts or the project changes (review finding 8): no status reads, toasts or
+  // list reloads for a page that is gone.
+  const aiFollow = useRef<AbortController | null>(null)
+  useEffect(() => () => { aiFollow.current?.abort() }, [projectId])
+
+  const followAiPlanTask = async (taskId: string, signal: AbortSignal) => {
+    const toastId = `ai-plan-${taskId}`
+    toast.loading('AI is building the test plan…', { id: toastId })
+    const deadline = Date.now() + AI_PLAN_POLL_LIMIT_MS
+    let failedReads = 0
+    while (Date.now() < deadline) {
+      await pause(AI_PLAN_POLL_MS, signal)
+      if (signal.aborted) break
+      let task: { status: string; error?: string | null }
+      try {
+        task = await testManagementService.aiTaskStatus(taskId)
+      } catch {
+        if (signal.aborted) break
+        failedReads += 1
+        if (failedReads < AI_PLAN_STATUS_TRIES) continue
+        toast.error('Could not check on the test plan. Refresh the list in a moment.', { id: toastId })
+        return
+      }
+      if (signal.aborted) break
+      failedReads = 0
+      if (task.status === 'success') {
+        toast.success('AI built the test plan.', { id: toastId })
+        void mutate()
+        return
+      }
+      if (task.status === 'failure') {
+        // The server passes on only the task's own plain sentence; anything else arrives without text.
+        toast.error(task.error || AI_PLAN_FAILED, { id: toastId })
+        return
+      }
+    }
+    toast(AI_PLAN_STILL_BUILDING, { id: toastId })
+  }
+
   const handleAiCreatePlan = async () => {
+    if (!projectId) return
+    aiFollow.current?.abort()
+    const follow = new AbortController()
+    aiFollow.current = follow
     setAiLoading(true)
     try {
-      await testManagementService.aiCreatePlanAsync({ project_id: projectId ?? '' })
-      toast.success(
-        'AI is building the test plan in the background — refresh the list in a moment.',
-        { duration: 7000 }
-      )
-    } catch {
-      toast.error('AI plan creation failed')
+      const { task_id } = await testManagementService.aiCreatePlanAsync({ project_id: projectId })
+      if (!follow.signal.aborted) await followAiPlanTask(task_id, follow.signal)
+    } catch (err: unknown) {
+      // A refusal with a sentence was already toasted by the API interceptor; say something only when
+      // the request never got an answer.
+      if (!(err as { response?: unknown })?.response) toast.error('Could not start the test plan. Try again.')
     } finally {
-      setAiLoading(false)
+      // Not when a newer click owns the button now.
+      if (aiFollow.current === follow) setAiLoading(false)
     }
   }
 

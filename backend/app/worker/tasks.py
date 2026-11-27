@@ -4265,6 +4265,43 @@ def generate_ai_test_cases_task(self, requirements: str, project_id: str, author
         raise self.retry(exc=exc, countdown=30)
 
 
+class AIPlanNotBuilt(RuntimeError):
+    """D-58: the AI test plan task settled without a plan.
+
+    Its message is a fixed, plain sentence: the ONLY failure text the status
+    route passes to the page (any other failure is a generic sentence there,
+    since raw exception text can carry hosts or URLs).
+    """
+
+
+class AIPlanModelBusy(RuntimeError):
+    """The model call failed in a way a later attempt may not (timeout, 429, 5xx, connection).
+
+    Raised inside the task only; it goes through the task's Celery retry, and
+    when the retries run out the task settles as ``AIPlanNotBuilt(AI_PLAN_BUSY)``.
+    """
+
+
+AI_PLAN_NO_CASES = "No approved test cases found for this project"
+AI_PLAN_NO_ANSWER = "The model did not answer, so no test plan was built. Check Settings › AI and try again."
+AI_PLAN_BUSY = "The model was busy or did not answer in time, so no test plan was built. Try again later."
+
+#: Words in the tool's ``{"error": ...}`` text that mark a definite refusal: a
+#: policy or credentials answer, or a model the server does not have. Anything
+#: else (a timeout, a rate limit, a 5xx, a dropped connection, an open circuit,
+#: an error no one classified) gets the task's retry.
+_AI_PLAN_REFUSAL_MARKERS = (
+    "401", "403", "unauthorized", "forbidden", "api key", "api_key", "permission",
+    "offline", "not allowed", "refusing to", "policy", "allowlist", "not found", "404",
+    "does not exist", "invalid model", "unknown provider", "unsupported",
+)
+
+
+def _plan_model_error_is_refusal(error: object) -> bool:
+    text = str(error or "").lower()
+    return any(marker in text for marker in _AI_PLAN_REFUSAL_MARKERS)
+
+
 @celery_app.task(
     name="app.worker.tasks.create_ai_test_plan_task",
     bind=True,
@@ -4311,7 +4348,9 @@ def create_ai_test_plan_task(
                 for c in result.scalars().all()
             ]
         if not cases:
-            return {"error": "No approved test cases found for this project"}
+            # D-58: a failure, not an error dict returned as a success (the
+            # status route then said "success" and the page "done").
+            raise AIPlanNotBuilt(AI_PLAN_NO_CASES)
 
         tc_json = json.dumps([{k: v for k, v in c.items() if k != "id"} for c in cases], indent=2)
         constraints_text = constraints or "No specific constraints. Optimize for maximum risk coverage."
@@ -4320,7 +4359,20 @@ def create_ai_test_plan_task(
             "test_cases_json": tc_json,
             "constraints": constraints_text,
         }, project_id)
-        optimization = json.loads(raw) if isinstance(raw, str) else raw
+        try:
+            optimization = json.loads(raw) if isinstance(raw, str) else raw
+        except json.JSONDecodeError:
+            optimization = None
+        if not isinstance(optimization, dict):
+            # An answer that is not a JSON object: the model answered, badly.
+            raise AIPlanNotBuilt(AI_PLAN_NO_ANSWER)
+        if optimization.get("error"):
+            # The tool answers {"error": ...} when the model call fails; that
+            # used to save a plan with no order at all and report success. A
+            # definite refusal settles now; anything else may pass on retry.
+            if _plan_model_error_is_refusal(optimization["error"]):
+                raise AIPlanNotBuilt(AI_PLAN_NO_ANSWER)
+            raise AIPlanModelBusy(str(optimization["error"]))
 
         async with AsyncSessionLocal() as db:
             plan = TestPlan(
@@ -4353,6 +4405,15 @@ def create_ai_test_plan_task(
         result = cast(dict[str, Any], _run_async(_build_and_save()))
         logger.info("[Task %s] AI plan creation complete: %s", self.request.id, result)
         return result
+    except AIPlanNotBuilt as exc:
+        # Settled: a retry 30 s later meets the same cases and the same refusal.
+        logger.warning("[Task %s] AI plan not built: %s", self.request.id, exc)
+        raise
+    except AIPlanModelBusy as exc:
+        # The raw text stays in this log; the page only ever sees AI_PLAN_BUSY,
+        # raised by retry() once the retries are spent.
+        logger.warning("[Task %s] AI plan model call failed, retrying: %s", self.request.id, exc)
+        raise self.retry(exc=AIPlanNotBuilt(AI_PLAN_BUSY), countdown=30)
     except Exception as exc:
         logger.error("[Task %s] AI plan creation failed: %s", self.request.id, exc, exc_info=True)
         raise self.retry(exc=exc, countdown=30)

@@ -8,8 +8,8 @@
 ## 1. Identity & tokens
 
 - **JWT access + refresh** — the SPA holds a short-lived access token and
-  refreshes it through a single-flight refresh flow (one refresh even when
-  many requests 401 together). API clients use **API keys** (Bearer / 
+  refreshes it through a single-flight refresh flow within and across browser
+  tabs (one rotation even when many requests 401 together). API clients use **API keys** (Bearer /
   `X-API-Key`), created per user under Settings → API Keys; streaming SDKs use
   project-scoped keys plus per-session tokens.
 - **Revocation** — `core/token_revocation.py`: token validation consults a
@@ -91,12 +91,6 @@ two account-management signals, because
 `if sso_config_id and external_id` — a SCIM user provisioned without either
 looks purely local. The unconditional `SCIM_USER_CREATED` identity event on
 that same code path is the second signal.
-
-The legacy-token default deliberately causes a one-time sign-in after this
-change for a policy-covered session whose refresh token predates the claim.
-There is no safe way to infer whether that old session came from SSO or MFA;
-the next SSO callback or completed local challenge records the assurance and
-normal single-use rotation then keeps it.
 
 **Breakglass is a script, not an endpoint.** `backend/scripts/mfa_breakglass.py`
 clears MFA and lockout for one user. It is gated on `MFA_BREAKGLASS_ENABLED`
@@ -444,9 +438,8 @@ an auditor will ask about:
   refresh.** Turning the requirement on is enforced at `/auth/login` and
   re-evaluated against signed session assurance on every `/auth/refresh` — so
   a password-only session is bounced to enrollment within one access-token
-  lifetime, while sessions established by MFA or SSO continue rotating. A
-  pre-change refresh token has no assurance claim and therefore causes one
-  new sign-in for a policy-covered user. It is not enforced per request.
+  lifetime, while sessions established by MFA or SSO continue rotating. It is
+  not enforced per request.
 - **Lockout is per account, not per source.** An attacker who knows a username
   can lock its owner out for the cooldown by failing enough times. The window
   is bounded (default 15 minutes), failures while already locked do not extend

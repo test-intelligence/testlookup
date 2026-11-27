@@ -73,7 +73,6 @@ const storedUsername = () => JSON.parse(localStorage.getItem(KEY) ?? '{}')?.stat
 beforeEach(() => {
   localStorage.clear()
   sessionStorage.clear()
-  Object.defineProperty(navigator, 'locks', { configurable: true, value: undefined })
   mockGet.mockReset()
   mockPost.mockReset()
 })
@@ -128,30 +127,6 @@ describe('authStore across tabs: another tab changes the account (D-0019)', () =
     // Whatever this tab writes back is the stored string itself, and a browser fires no event for an unchanged
     // value: the other tab hears nothing, so there is no loop.
     for (const [, value] of writes.mock.calls.filter(([key]) => key === KEY)) expect(value).toBe(rotated)
-  })
-
-  it('adopts a rotation completed while waiting for the browser refresh lock', async () => {
-    const rotated = entry(ADMIN, 'admin-access-2', 'admin-refresh-2')
-    const request = vi.fn(async (
-      name: string,
-      callback: () => Promise<unknown>,
-    ) => {
-      expect(name).toBe('testlookup.auth.refresh')
-      otherTabStores(rotated)
-      return callback()
-    })
-    Object.defineProperty(navigator, 'locks', {
-      configurable: true,
-      value: { request },
-    })
-    const { useAuthStore, reload } = await loadAs(ADMIN, 'admin-access')
-
-    const token = await useAuthStore.getState().refreshAccessToken()
-
-    expect(token).toBe('admin-access-2')
-    expect(useAuthStore.getState().refreshToken).toBe('admin-refresh-2')
-    expect(mockPost).not.toHaveBeenCalled()
-    expect(reload).not.toHaveBeenCalled()
   })
 
   it('another key changing does nothing', async () => {

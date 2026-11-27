@@ -399,7 +399,8 @@ async def test_the_narrative_reads_only_a_v2_row_and_labels_its_source():
     db = _DB([("FROM run_comparison_reports", _Res(value=llm_row))])
     ready = await reads.narrative_for(db, project_id=PROJECT, baseline_id=BASELINE, run_id=RUN,
                                       suite_name="Checkout ", diff=diff)
-    assert (ready["status"], ready["source"], ready["label"]) == ("ready", "llm", "AI narrative")
+    # D-148: the report is suite-scoped; the label says so.
+    assert (ready["status"], ready["source"], ready["label"]) == ("ready", "llm", "AI narrative (Checkout suite only)")
     assert ready["ai_changes"] == ["Verdict GO -> NO_GO (risk 35 -> 72)"] and ready["model_name"] == "llama3.1"
     compiled = db.statements[0].compile()
     assert "run_compare_v2" in compiled.params.values(), "a v1 row must never be served as v2"
@@ -417,6 +418,34 @@ async def test_the_narrative_reads_only_a_v2_row_and_labels_its_source():
     assert (q["status"], q["report_status"], q["label"]) == ("deterministic", "queued", "deterministic summary")
     assert q["ai_changes"] == core.build_ai_changes(diff)
     assert q["executive_summary"].startswith("Compared with the baseline run: verdict GO -> NO_GO")
+
+
+@pytest.mark.asyncio
+async def test_a_suite_scoped_narrative_names_its_suite_on_the_whole_run_tab():
+    """D-148: the cached report is keyed by the run's primary suite and quotes
+    that suite's figures ("2 failed tests out of 10 ... 80.0%") on the Analysis
+    tab of a 65-test run, with no scope label."""
+    diff = _diff_with_changes()
+    row = SimpleNamespace(status="ready", fallback_used=False, model_name="llama3.1", suite_name="checkout",
+                          updated_at=None, created_at=None,
+                          ai_report={"executive_summary": "Both test runs had 2 failed tests out of 10.",
+                                     "fallback_used": False})
+    narrative = await reads.narrative_for(_DB([("FROM run_comparison_reports", _Res(value=row))]),
+                                          project_id=PROJECT, baseline_id=BASELINE, run_id=RUN,
+                                          suite_name="checkout", diff=diff)
+    assert narrative["label"] == "AI narrative (checkout suite only)"
+
+    named = SimpleNamespace(**{**row.__dict__, "suite_name": "Checkout Suite", "fallback_used": True})
+    narrative = await reads.narrative_for(_DB([("FROM run_comparison_reports", _Res(value=named))]),
+                                          project_id=PROJECT, baseline_id=BASELINE, run_id=RUN,
+                                          suite_name="checkout suite", diff=diff)
+    assert narrative["label"] == "deterministic summary (Checkout Suite only)"
+
+    whole = SimpleNamespace(**{**row.__dict__, "suite_name": None})
+    narrative = await reads.narrative_for(_DB([("FROM run_comparison_reports", _Res(value=whole))]),
+                                          project_id=PROJECT, baseline_id=BASELINE, run_id=RUN,
+                                          suite_name=None, diff=diff)
+    assert narrative["label"] == "AI narrative"
 
     absent = await reads.narrative_for(_DB([("FROM run_comparison_reports", _Res(value=None))]),
                                        project_id=PROJECT, baseline_id=BASELINE, run_id=RUN, suite_name=None,

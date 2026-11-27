@@ -121,8 +121,9 @@ Members below QA_LEAD see a webhook's target URL as `https://host/...`.
 - The web app, the CLI and the MCP server renew on their own. The Python, JS
   and Go SDKs do not refresh a password sign-in: a run longer than the token
   lifetime should use an API key.
-- Refresh tokens are single-use. Reusing one after rotation signs the user out
-  of every device; the web app coordinates tabs so only one presents it.
+- A refresh token used again after it was rotated signs the user out of every
+  device. The web app serializes refreshes within and across tabs so ordinary
+  concurrent requests share the first rotated pair.
 - The SSE and WebSocket live streams refuse a logged-out token, a refresh
   token and an account on a temporary password, and an SSE stream ends when
   its token expires. Clients reconnect with a fresh access token.
@@ -189,6 +190,22 @@ Existing usernames that contain `@` keep working for sign-in.
 |---|---|---|
 | `POST /deep-investigate/{run_id}` in Rules mode | accepted | 422 "requires LLM or Auto mode" |
 | `POST /analyze` for a test with a human correction | returns the correction | the engine's answer, replacing the correction |
+
+### The local model path (batch 7)
+
+- **`AI_TIMEOUT_SECONDS` in `.env.example` is now 300** (the code default). An
+  install that copied the old example keeps 120 s until it changes the value.
+- **A local provider analyses one failure at a time** unless
+  `LLM_MAX_CONCURRENT_ANALYSES` is set; set it on a GPU host to keep parallel
+  calls (at most 3 is used).
+- **`POST /api/v1/test-management/plans/ai-create/async`** now answers 400 when
+  the project has no approved cases and 409 when no model can answer, instead of
+  queueing a task that cannot succeed; the task itself ends as `failure` with a
+  sentence rather than `success` with an error object.
+- **Agent pipelines** (`GET /api/v1/agents/pipelines...`) gain an optional
+  `stage_quality_detail` for degraded pipelines.
+- **The CLI's `ci-verdict` table** no longer prints `Class Name`; use `-o json`
+  for it.
 
 ### Follow-ups to batches 5 and 6
 

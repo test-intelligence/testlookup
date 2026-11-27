@@ -928,11 +928,8 @@ async def refresh_tokens(
     if user is None or not user.is_active:
         raise credentials_exception
 
-    # Re-evaluate the MFA policy on every rotation. Without this, turning the
-    # requirement on would only take effect as sessions expired — up to
-    # JWT_REFRESH_TOKEN_EXPIRE_DAYS (7 days) of grandfathered sessions that
-    # never present a second factor. Rejecting here sends the SPA back to
-    # /login, which then returns the enrollment challenge.
+    # Re-evaluate MFA on every refresh. A password-only session that now needs a
+    # second factor must return to sign-in to enroll or verify its authenticator.
     policy = await mfa_service.load_policy(db)
     requirement = await mfa_service.evaluate_login_requirement(
         db,

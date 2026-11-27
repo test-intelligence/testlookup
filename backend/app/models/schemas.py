@@ -610,8 +610,10 @@ class MfaEnrollConfirmResponse(BaseModel):
     enabled: Literal[True] = True
     # Shown exactly once. Only digests are stored server-side.
     recovery_codes: List[str]
-    # Enrollment replaces the browser's password-only refresh session with an MFA-assured one.
-    tokens: TokenResponse
+    # Successful confirmation invalidates every older session, so both the
+    # voluntary and forced paths return the single MFA-assured replacement.
+    # Optional remains for wire compatibility with older pre-fix servers.
+    tokens: Optional[TokenResponse] = None
 
 
 class MfaVerifyRequest(BaseModel):
@@ -645,11 +647,9 @@ class MfaStatusResponse(BaseModel):
     enabled: bool
     enrolled_at: Optional[datetime] = None
     recovery_codes_remaining: int = 0
-    # Does workspace policy require this user to hold a second factor when
-    # signing in locally? SSO session assurance is evaluated separately.
+    # Does workspace policy require MFA for this user's local password sign-in?
     required_by_policy: bool = False
-    # True when an external IdP owns this account. A linked account may also
-    # have a local factor for password sign-in.
+    # True when the account is IdP-linked. It may also have a local factor.
     sso_managed: bool = False
     # True when the account is flagged as enrolled but the stored seed cannot
     # be read — MFA is broken, not off, and login is denied until it is fixed.
@@ -3378,6 +3378,27 @@ class AgentPipelineReviewSummary(BaseModel):
     settled_at: Optional[datetime] = None
 
 
+class AgentPipelineStageIssue(BaseModel):
+    """One stage of a degraded pipeline that failed or fell back (D-153)."""
+
+    stage_name: str
+    status: str
+    fallback_reason: Optional[str] = None
+    error_category: Optional[str] = None
+
+
+class AgentPipelineStageQuality(BaseModel):
+    """Why a pipeline is DEGRADED, for the tag's title (D-153).
+
+    ``stages_run`` counts the stages that started (completed or failed, the
+    latest attempt of each); ``issues`` are the failed ones and the ones that
+    used their fallback, in run order.
+    """
+
+    stages_run: int
+    issues: List[AgentPipelineStageIssue]
+
+
 class AgentPipelineResponse(BaseModel):
     id: uuid.UUID
     test_run_id: uuid.UUID
@@ -3414,6 +3435,8 @@ class AgentPipelineResponse(BaseModel):
     # pipeline has no report review (for example a deterministic non-report
     # invocation); it must not be presented as human-reviewed.
     review_summary: Optional[AgentPipelineReviewSummary] = None
+    # D-153: set only for a degraded pipeline (``stage_quality == degraded``).
+    stage_quality_detail: Optional[AgentPipelineStageQuality] = None
 
     model_config = ConfigDict(from_attributes=True)
 

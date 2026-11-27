@@ -291,6 +291,16 @@ export interface AgentPipelineRun {
     state: 'pending_review' | 'accepted' | 'rejected'
     settled_at: string | null
   } | null
+  // D-153: why a degraded pipeline is degraded (null for any other row).
+  stage_quality_detail?: {
+    stages_run: number
+    issues: Array<{
+      stage_name: string
+      status: string
+      fallback_reason: string | null
+      error_category: string | null
+    }>
+  } | null
 }
 
 export interface RunSummary extends ReviewEnvelopeFields {

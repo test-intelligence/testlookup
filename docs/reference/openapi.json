@@ -5300,6 +5300,16 @@
             ],
             "title": "Run Seq"
           },
+          "stage_quality_detail": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AgentPipelineStageQuality"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "started_at": {
             "anyOf": [
               {},
@@ -5373,6 +5383,69 @@
           "state"
         ],
         "title": "AgentPipelineReviewSummary",
+        "type": "object"
+      },
+      "AgentPipelineStageIssue": {
+        "description": "One stage of a degraded pipeline that failed or fell back (D-153).",
+        "properties": {
+          "error_category": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Category"
+          },
+          "fallback_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fallback Reason"
+          },
+          "stage_name": {
+            "title": "Stage Name",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "stage_name",
+          "status"
+        ],
+        "title": "AgentPipelineStageIssue",
+        "type": "object"
+      },
+      "AgentPipelineStageQuality": {
+        "description": "Why a pipeline is DEGRADED, for the tag's title (D-153).\n\n``stages_run`` counts the stages that started (completed or failed, the\nlatest attempt of each); ``issues`` are the failed ones and the ones that\nused their fallback, in run order.",
+        "properties": {
+          "issues": {
+            "items": {
+              "$ref": "#/components/schemas/AgentPipelineStageIssue"
+            },
+            "title": "Issues",
+            "type": "array"
+          },
+          "stages_run": {
+            "title": "Stages Run",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "stages_run",
+          "issues"
+        ],
+        "title": "AgentPipelineStageQuality",
         "type": "object"
       },
       "AgentRunSummaryResponse": {
@@ -63440,7 +63513,7 @@
     },
     "/api/v1/auth/mfa/enroll/confirm": {
       "post": {
-        "description": "Verify a code against the staged seed, then enable MFA.\n\nRecovery codes are minted in the same unit of work as the flag flip — an\naccount must never reach ``mfa_enabled=True`` without a way back in. They\nare returned once and only digests are kept.",
+        "description": "Verify a code against the staged seed, then enable MFA.\n\nRecovery codes are minted in the same unit of work as the flag flip — an\naccount must never reach ``mfa_enabled=True`` without a way back in. They\nare returned once and only digests are kept. Every older session is ended\nin that unit of work and one MFA-assured replacement is returned.",
         "operationId": "confirm_enrollment_api_v1_auth_mfa_enroll_confirm_post",
         "requestBody": {
           "content": {
