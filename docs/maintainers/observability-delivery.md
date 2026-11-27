@@ -36,9 +36,9 @@ Status meanings: **Open** is planned; **In progress** has partial implementation
 | OBS-E01-S07 | Preserve correlation and sanitized logs for every unexpected API error | Verification |
 | OBS-E02-S01 | Bound dependency collection and expose freshness | Verification |
 | OBS-E02-S02 | Monitor every routed queue including agent children | In progress |
-| OBS-E02-S03 | Emit real SQLAlchemy pool saturation measurements | Open |
-| OBS-E02-S04 | Wire dependency and host exporters by deployment profile | Open |
-| OBS-E02-S05 | Make authenticated scrapes work in reference profiles | Open |
+| OBS-E02-S03 | Emit real SQLAlchemy pool saturation measurements | Verification |
+| OBS-E02-S04 | Wire dependency and host exporters by deployment profile | In progress |
+| OBS-E02-S05 | Make authenticated scrapes work in reference profiles | Verification |
 | OBS-E02-S06 | Detect durable downstream failure independently of Celery success | In progress |
 | OBS-E03-S01 | Make weekly digest alerts reflect actual due work and delivery | Open |
 | OBS-E03-S02 | Detect low-volume terminal webhook failures correctly | Verification |
@@ -125,3 +125,18 @@ Fixtures live in `infra/monitoring/tests/`, outside the production `rules/*.yml`
 5. Complete all-role signal/security/rollback gates before declaring production readiness.
 
 No production deployment or claim of enterprise readiness is represented by this iteration. Data retention, receivers, SLO targets and platform ownership must be explicit for each supported production profile.
+
+## Iteration 2: reliable metric collection
+
+This iteration builds on `30edfba5` and advances four stories in OBS-E02.
+
+| Story | Change | Remaining acceptance |
+|---|---|---|
+| OBS-E02-S02 | The API scrape and ingest health use the Celery routing inventory and the configured broker connection. Counts sum all Redis transport priority lists for each logical queue. A failed list produces an unknown depth. | Measure queue age and processing throughput. Verify the backlog and recovery with a stopped child consumer in a disposable fleet. |
+| OBS-E02-S03 | API and worker engines emit checked-out connections, pool capacity including overflow, in-flight acquisitions and acquisition outcomes. The alert and dashboard surface the most saturated live process. The Celery parent cleans up live gauges left by hard child exits. See [database pool metrics](../operations/db-pool-metrics.md). | Verify exact fleet counts and pressure against PostgreSQL in a deployment using the candidate image. |
+| OBS-E02-S04 | The bounded API collector reads application and broker memory through their actual Redis/Valkey clients. Alerts and dashboards use fresh observations, distinct roles and a separate unlimited-memory signal. | Verify host and datastore exporters for each production profile and provider. See [dependency metrics](../operations/dependency-metrics.md). |
+| OBS-E02-S05 | An optional Compose overlay mounts separate backend and Prometheus credential files. The Kubernetes component and PodMonitor use a namespace-local Secret. Rejected requests bypass dependency collection. | Exercise rotation and recovery in a deployed reference profile with the production selector, secret manager and network policy. See [Compose](../operations/deploy-compose.md#authenticate-the-api-scrape) and [Kubernetes](../operations/deploy-kubernetes.md#authenticate-the-api-scrape). |
+
+Prometheus 3.16 scraped actual samples from an isolated candidate API, received 401 on a token mismatch and resumed scraping after rotation. The source and release Compose configurations and the K3s and OpenShift manifests rendered with the expected targets and mounts. The existing backend CI job checks the two mounted Prometheus configurations and runs all semantic rule fixtures using its checksum-verified binary.
+
+The focused suite passed 354 tests with the repository-pinned metrics dependencies. Two PostgreSQL cases require a disposable database and run in the existing integration job. Promtool validated 39 rules and 19 semantic fixture groups. In a separate Linux process test, removing the gauge from a killed child preserved the live child's gauge and both counters.

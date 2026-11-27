@@ -882,3 +882,93 @@ downstream_outbox_overdue_seconds = Gauge(
     ["operation", "status"],
     multiprocess_mode="mostrecent",
 )
+
+# Redis/Valkey INFO memory is server-wide, even when logical databases differ.
+# Roles identify configured endpoint authority, never URLs or credentials.
+# Keep each role separate and max (never sum) redundant API observations.
+redis_memory_used_bytes = Gauge(
+    "redis_memory_used_bytes",
+    "Allocator bytes reported by INFO memory for the configured Redis role",
+    ["store_role"], multiprocess_mode="mostrecent",
+)
+redis_memory_max_bytes = Gauge(
+    "redis_memory_max_bytes",
+    "Configured Redis maxmemory bytes; zero explicitly means no dataset limit",
+    ["store_role"], multiprocess_mode="mostrecent",
+)
+redis_memory_rss_bytes = Gauge(
+    "testlookup_redis_memory_rss_bytes",
+    "Process resident memory reported by Redis; not a container capacity limit",
+    ["store_role"], multiprocess_mode="mostrecent",
+)
+redis_memory_not_counted_for_evict_bytes = Gauge(
+    "testlookup_redis_memory_not_counted_for_evict_bytes",
+    "Redis memory excluded from the maxmemory eviction calculation",
+    ["store_role"], multiprocess_mode="mostrecent",
+)
+redis_memory_counted_for_evict_bytes = Gauge(
+    "testlookup_redis_memory_counted_for_evict_bytes",
+    "Allocator memory minus excluded eviction buffers, bounded at zero",
+    ["store_role"], multiprocess_mode="mostrecent",
+)
+redis_memory_limit_configured = Gauge(
+    "testlookup_redis_memory_limit_configured",
+    "Whether the configured Redis role reports a positive maxmemory limit",
+    ["store_role"], multiprocess_mode="mostrecent",
+)
+
+# SQLAlchemy pools are private to each API/prefork process. Sum their current
+# absolute values, but retain the worst live process's utilization: dividing
+# fleet totals would hide an exhausted child behind idle siblings. Only the
+# bounded PG_PROCESS_ROLE (api/worker/operation) is exported as a label.
+sqlalchemy_pool_checked_out = Gauge(
+    "sqlalchemy_pool_checked_out",
+    "Connections checked out from initialized process-local pools",
+    ["role"], multiprocess_mode="livesum",
+)
+sqlalchemy_pool_size = Gauge(
+    "sqlalchemy_pool_size",
+    "Configured persistent size of initialized process-local pools",
+    ["role"], multiprocess_mode="livesum",
+)
+sqlalchemy_pool_max_overflow = Gauge(
+    "sqlalchemy_pool_max_overflow",
+    "Configured finite overflow allowance, zero if unbounded",
+    ["role"], multiprocess_mode="livesum",
+)
+sqlalchemy_pool_capacity = Gauge(
+    "sqlalchemy_pool_capacity",
+    "Configured finite pool size plus overflow, zero if unbounded",
+    ["role"], multiprocess_mode="livesum",
+)
+sqlalchemy_pool_capacity_limited = Gauge(
+    "sqlalchemy_pool_capacity_limited",
+    "Initialized pools with a finite configured capacity",
+    ["role"], multiprocess_mode="livesum",
+)
+sqlalchemy_pool_overflow = Gauge(
+    "sqlalchemy_pool_overflow",
+    "Open connections above persistent pool size, never negative",
+    ["role"], multiprocess_mode="livesum",
+)
+sqlalchemy_pool_utilization_ratio = Gauge(
+    "sqlalchemy_pool_utilization_ratio",
+    "Maximum live process pool checked-out / finite capacity, zero if unbounded",
+    ["role"], multiprocess_mode="livemax",
+)
+sqlalchemy_pool_acquiring = Gauge(
+    "sqlalchemy_pool_acquiring",
+    "Pool acquisition attempts in progress, including queue wait/connect/pre-ping",
+    ["role"], multiprocess_mode="livesum",
+)
+sqlalchemy_pool_acquire_seconds = Histogram(
+    "sqlalchemy_pool_acquire_seconds",
+    "One pool acquisition duration including wait/connect/pre-ping; errors include cancellation",
+    ["role", "outcome"],  # success | timeout | error
+    buckets=(0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60),
+)
+sqlalchemy_pool_timeouts_total = Counter(
+    "sqlalchemy_pool_timeouts_total",
+    "Pool queue acquisition timeouts (SQLAlchemy 3o7r), once per public attempt",
+    ["role"],
+)

@@ -1,0 +1,20 @@
+# Layer after docker-compose.monitoring.yml to authenticate the backend scrape.
+services:
+  backend:
+    environment:
+      METRICS_TOKEN_FILE: /run/secrets/testlookup-metrics-token
+    secrets:
+      - source: metrics-api
+        target: testlookup-metrics-token
+  prometheus:
+    volumes:
+      - ./infra/monitoring/backend-scrape-authenticated.yml:/etc/prometheus/backend-scrape.yml:ro
+    secrets:
+      - source: metrics-prometheus
+        target: /etc/prometheus/metrics-token
+
+secrets:
+  metrics-api:
+    file: ${METRICS_API_TOKEN_SOURCE:?Set the host path to the backend metrics token file}
+  metrics-prometheus:
+    file: ${METRICS_PROMETHEUS_TOKEN_SOURCE:?Set the host path to the Prometheus metrics token file}

@@ -1,11 +1,11 @@
 """Freshness and SQL business outcomes remain observable during dependency failure."""
 from datetime import datetime, timedelta, timezone
-from types import SimpleNamespace
 from unittest.mock import AsyncMock
 import asyncio
 
 import pytest
 import pytest_asyncio
+from tests.celery_queue_fakes import PipelineRedis
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -298,8 +298,10 @@ async def test_child_queue_is_observed_and_partial_failure_is_reported(monkeypat
         seen.append(queue)
         if queue == "critical":
             raise ConnectionError("fake-down")
-        return 7
-    monkeypatch.setattr(redis_client, "get_redis", lambda: SimpleNamespace(llen=length))
+        return 0 if "\x06\x16" in queue else 7
+    client = PipelineRedis()
+    client.llen = length
+    monkeypatch.setattr(redis_client, "get_broker_redis", lambda: client)
     assert await bootstrap._refresh_celery_queue_depths() is False
     assert "agent_children" in seen
     assert metrics.celery_queue_length.labels(queue_name="agent_children")._value.get() == 7

@@ -160,3 +160,136 @@ def test_worker_metric_files_have_a_bounded_container_lifecycle():
     assert 'WORKER_METRICS_FINAL_SCRAPE_GRACE_SECONDS", "65"' in src
     assert "worker_metrics_file_limit_reached" in src
     assert "signal.SIGTERM" in src
+
+
+def test_parent_reaps_only_confirmed_dead_live_gauges(tmp_path, monkeypatch):
+    """SIGKILL skips child shutdown; ambiguity must never erase a live gauge."""
+    import errno
+    import os
+
+    from prometheus_client import multiprocess
+
+    from app.worker import celery_app
+
+    dead_files = {
+        f"gauge_{mode}_100.db"
+        for mode in ("liveall", "livesum", "livemin", "livemax", "livemostrecent")
+    }
+    keep_files = {
+        "gauge_livemax_101.db",  # process exists
+        "gauge_livemax_102.db",  # permission denied
+        "gauge_livemax_103.db",  # unrelated OS failure
+        "gauge_livemax_104.db",  # PID is not representable on this platform
+        "counter_100.db",
+        "histogram_100.db",
+        "gauge_sum_100.db",
+        "gauge_mostrecent_100.db",
+        "gauge_livemax_0.db",
+        "gauge_livemax_-1.db",
+        "gauge_livemax_notpid.db",
+        "gauge_livemax_1.0.db",
+        "gauge_livemax_001.db",
+        "gauge_liveunknown_999.db",
+        "README",
+    }
+    for name in dead_files | keep_files:
+        (tmp_path / name).write_bytes(b"metric observation")
+    # A matching directory is not a process's gauge file either.
+    (tmp_path / "gauge_livemax_105.db").mkdir()
+    probes = []
+    reaped = []
+    real_mark_process_dead = multiprocess.mark_process_dead
+
+    def probe(pid, sig):
+        assert sig == 0
+        probes.append(pid)
+        if pid == 100:
+            raise ProcessLookupError(errno.ESRCH, "synthetic dead child")
+        if pid == 102:
+            raise PermissionError(errno.EPERM, "synthetic protected process")
+        if pid == 103:
+            raise OSError(errno.EIO, "synthetic unavailable process probe")
+        if pid == 104:
+            raise OverflowError("synthetic unrepresentable PID")
+        assert pid == 101
+
+    def mark_process_dead(pid, path=None):
+        reaped.append((pid, path))
+        real_mark_process_dead(pid, path=path)
+
+    # Scope os.name to this call so Windows can verify the POSIX branch without
+    # changing pathlib's platform selection during fixture/pytest operations.
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "name", "posix")
+        patch.setattr(os, "kill", probe)
+        patch.setattr(multiprocess, "mark_process_dead", mark_process_dead)
+        celery_app._reap_dead_child_metric_gauges(tmp_path)
+
+    assert sorted(probes) == [100, 101, 102, 103, 104]
+    assert reaped == [(100, str(tmp_path))]
+    assert all(not (tmp_path / name).exists() for name in dead_files)
+    assert all((tmp_path / name).read_bytes() == b"metric observation" for name in keep_files)
+    assert (tmp_path / "gauge_livemax_105.db").is_dir()
+
+
+def test_parent_gauge_reaper_is_disabled_off_posix(tmp_path, monkeypatch):
+    import os
+
+    from app.worker import celery_app
+
+    gauge = tmp_path / "gauge_livemax_100.db"
+    gauge.write_bytes(b"keep")
+
+    def unexpected_probe(*_args):
+        pytest.fail("non-POSIX platforms must not probe or signal processes")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "name", "nt")
+        patch.setattr(os, "kill", unexpected_probe)
+        celery_app._reap_dead_child_metric_gauges(tmp_path)
+    assert gauge.read_bytes() == b"keep"
+
+
+def test_periodic_guard_reaps_before_enforcing_the_file_limit(tmp_path, monkeypatch):
+    """A dead live gauge must not trigger a needless container recycle."""
+    import threading
+
+    from app.worker import celery_app
+
+    stale = tmp_path / "gauge_livemax_100.db"
+    stale.write_bytes(b"dead")
+    (tmp_path / "counter_100.db").write_bytes(b"retained")
+    monkeypatch.setenv("PROMETHEUS_MULTIPROC_DIR", str(tmp_path))
+    monkeypatch.setenv("WORKER_METRICS_MAX_FILES", "1")
+    monkeypatch.setenv("WORKER_METRICS_FILE_CHECK_SECONDS", "7")
+    monkeypatch.setenv("WORKER_METRICS_FINAL_SCRAPE_GRACE_SECONDS", "65")
+    calls = []
+
+    class StopGuard(Exception):
+        pass
+
+    def reap(metric_dir):
+        assert metric_dir == tmp_path
+        calls.append("reap")
+        stale.unlink()
+
+    class Event:
+        def wait(self, timeout):
+            calls.append(timeout)
+            raise StopGuard
+
+    class Thread:
+        def __init__(self, *, target, name, daemon):
+            assert name == "prometheus-multiproc-file-guard" and daemon is True
+            self.target = target
+
+        def start(self):
+            with pytest.raises(StopGuard):
+                self.target()
+
+    monkeypatch.setattr(celery_app, "_reap_dead_child_metric_gauges", reap)
+    monkeypatch.setattr(threading, "Event", Event)
+    monkeypatch.setattr(threading, "Thread", Thread)
+    celery_app._start_metrics_file_guard()
+    assert calls == ["reap", 7.0]
+    assert (tmp_path / "counter_100.db").read_bytes() == b"retained"

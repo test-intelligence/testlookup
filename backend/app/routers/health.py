@@ -451,20 +451,12 @@ async def health_ingestion() -> dict:
         redis_reachable = False
         reject_count = None
 
-    # Celery queue depths. Each queue lives as a Redis List under its
-    # routing key — ``LLEN`` is O(1). Falls back to None on error so
-    # the rest of the payload still renders. Phase 2.4 adds the
-    # ingestion shards; the base queues stay so monitoring tools that
-    # alert on the legacy names still work.
-    from app.worker.ingestion_routing import all_shard_queues
+    # Same logical queue inventory and priority-bin accounting as the scrape.
+    # The broker may use another Redis database/server. A failed queue read is
+    # None, never zero; counts exclude active and worker-reserved deliveries.
+    from app.services.celery_queue_metrics import read_celery_queue_depths
 
-    queue_depths: dict[str, int | None] = {}
-    base_queues = ("critical", "ingestion", "ai_analysis", "default")
-    for queue in (*base_queues, *all_shard_queues()):
-        try:
-            queue_depths[queue] = int(await redis.llen(queue))
-        except Exception:
-            queue_depths[queue] = None
+    queue_depths = await read_celery_queue_depths()
 
     # Active live sessions — count of state-key hashes. Same pattern as
     # the per-project scan; bounded by live-run count.

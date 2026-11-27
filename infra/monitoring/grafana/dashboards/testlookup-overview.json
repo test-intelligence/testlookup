@@ -990,6 +990,111 @@
       ],
       "title": "Live WebSocket sessions by outcome (5m)",
       "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 119 },
+      "id": 100,
+      "title": "Redis / Valkey resources",
+      "type": "row"
+    },
+    {
+      "datasource": "Prometheus",
+      "description": "Native INFO memory: used_memory minus mem_not_counted_for_evict, divided by positive maxmemory. Only fresh successful observations appear. Application and broker roles can name the same physical server; never sum them or API replicas. An unlimited or unreadable limit appears as no data, not zero utilization.",
+      "fieldConfig": {
+        "defaults": { "unit": "percentunit", "min": 0, "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 0.85 }] } },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 120 },
+      "id": 101,
+      "options": { "legend": { "displayMode": "list" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "expr": "max by (cluster, namespace, store_role) ((testlookup_redis_memory_counted_for_evict_bytes{job=\"testlookup-backend\"} / redis_memory_max_bytes{job=\"testlookup-backend\"}) and on (cluster, namespace, job, instance, store_role) (redis_memory_max_bytes{job=\"testlookup-backend\"} > 0) and on (cluster, namespace, job, instance) (testlookup_metric_collection_success{job=\"testlookup-backend\",collector=\"redis\"} == 1) and on (cluster, namespace, job, instance) ((time() - testlookup_metric_collection_last_success_timestamp_seconds{job=\"testlookup-backend\",collector=\"redis\"}) <= 120))",
+          "legendFormat": "{{cluster}} {{namespace}} {{store_role}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Redis eviction memory utilization",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "description": "Process RSS is separate from the dataset eviction ceiling. Host total RAM is not used as a container limit. Values come from the actual configured Redis role, filtered by collection freshness.",
+      "fieldConfig": { "defaults": { "unit": "bytes", "min": 0 }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 120 },
+      "id": 102,
+      "options": { "legend": { "displayMode": "list" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "expr": "max by (cluster, namespace, store_role) (testlookup_redis_memory_rss_bytes{job=\"testlookup-backend\"} and on (cluster, namespace, job, instance) (testlookup_metric_collection_success{job=\"testlookup-backend\",collector=\"redis\"} == 1) and on (cluster, namespace, job, instance) ((time() - testlookup_metric_collection_last_success_timestamp_seconds{job=\"testlookup-backend\",collector=\"redis\"}) <= 120))",
+          "legendFormat": "{{cluster}} {{namespace}} {{store_role}} RSS",
+          "refId": "A"
+        }
+      ],
+      "title": "Redis process resident memory",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "description": "1 means a positive maxmemory; 0 means the server explicitly reports no dataset limit. Missing or unreadable INFO fields suppress this panel and fail collector health instead of inventing a zero. Managed services may require their native exporter/explicit policy.",
+      "fieldConfig": { "defaults": { "unit": "bool", "min": 0, "max": 1 }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 120 },
+      "id": 103,
+      "options": { "legend": { "displayMode": "list" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "expr": "max by (cluster, namespace, store_role) (testlookup_redis_memory_limit_configured{job=\"testlookup-backend\"} and on (cluster, namespace, job, instance) (testlookup_metric_collection_success{job=\"testlookup-backend\",collector=\"redis\"} == 1) and on (cluster, namespace, job, instance) ((time() - testlookup_metric_collection_last_success_timestamp_seconds{job=\"testlookup-backend\",collector=\"redis\"}) <= 120))",
+          "legendFormat": "{{cluster}} {{namespace}} {{store_role}} bounded",
+          "refId": "A"
+        }
+      ],
+      "title": "Redis dataset limit configured",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 128 },
+      "id": 110,
+      "title": "PostgreSQL application pools",
+      "type": "row"
+    },
+    {
+      "datasource": "Prometheus",
+      "description": "Maximum live process utilization within each API or worker target, including configured overflow in capacity. This preserves a saturated child even if sibling pools are idle; dividing summed checkouts by summed capacity would hide it. Only initialized lazy pools contribute. Missing data does not prove a healthy pool.",
+      "fieldConfig": {
+        "defaults": { "unit": "percentunit", "min": 0, "thresholds": { "mode": "absolute", "steps": [{ "color": "green", "value": null }, { "color": "red", "value": 0.9 }] } },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 129 },
+      "id": 111,
+      "options": { "legend": { "displayMode": "list" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "expr": "max by (cluster, namespace, job, instance, role) (sqlalchemy_pool_utilization_ratio{job=~\"testlookup-backend|testlookup-worker\",role=~\"api|worker\"} and on (cluster, namespace, job, instance, role) (sqlalchemy_pool_capacity_limited{job=~\"testlookup-backend|testlookup-worker\"} > 0))",
+          "legendFormat": "{{cluster}} {{namespace}} {{job}} {{instance}} {{role}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Busiest live process pool utilization",
+      "type": "timeseries"
+    },
+    {
+      "datasource": "Prometheus",
+      "description": "Estimated five-minute increase of SQLAlchemy queue-capacity timeouts (3o7r), summed across API and worker targets per installation and process role. A public acquisition increments once even if checkout retries internally. Connection/query failures and cancellations do not count as pool-capacity timeouts.",
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0 }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 129 },
+      "id": 112,
+      "options": { "legend": { "displayMode": "list" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        {
+          "expr": "sum by (cluster, namespace, role) (increase(sqlalchemy_pool_timeouts_total{job=~\"testlookup-backend|testlookup-worker\",role=~\"api|worker\"}[5m]))",
+          "legendFormat": "{{cluster}} {{namespace}} {{role}} timeouts",
+          "refId": "A"
+        }
+      ],
+      "title": "Pool acquisition timeouts (5m)",
+      "type": "timeseries"
     }
   ],
   "refresh": "30s",

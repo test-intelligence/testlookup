@@ -9,7 +9,8 @@ from the other side (a declared metric nobody increments).
 
 Three ratchets:
 
-1. every ``testlookup_*`` series a panel expression -- or a dashboard
+1. every owned application series (``testlookup_*``, ``sqlalchemy_pool_*`` and
+   native ``redis_memory_*``) a panel expression -- or a dashboard
    annotation's expression (W25b: the "Deploys" annotation) -- names is one a
    metric declared in ``app.core.metrics`` actually exports -- with
    prometheus_client's suffixes: a Counter is declared WITHOUT ``_total`` and
@@ -44,7 +45,7 @@ _REL = Path("infra") / "monitoring" / "grafana" / "dashboards" / "testlookup-ove
 #: A series name in PromQL. The trailing lookahead keeps a longer identifier
 #: from matching as its prefix; label VALUES like ``job="testlookup-backend"``
 #: never match (a hyphen is not part of a name).
-_SERIES_RE = re.compile(r"\b(testlookup_[a-z0-9_]+)\b")
+_SERIES_RE = re.compile(r"\b((?:testlookup_|sqlalchemy_pool_|redis_memory_)[a-z0-9_]+)\b")
 
 #: What prometheus_client exports for each metric type, from the name it
 #: stores (a Counter's stored name has ``_total`` stripped already).

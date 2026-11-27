@@ -50,6 +50,7 @@ services:
       # /-/reload without authentication. Restart the container to reload.
     volumes:
       - ./infra/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./infra/monitoring/backend-scrape.yml:/etc/prometheus/backend-scrape.yml:ro
       - ./infra/monitoring/prometheus-rules:/etc/prometheus/rules:ro
       - prometheus-data:/prometheus
     ports:

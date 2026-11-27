@@ -199,28 +199,57 @@ groups:
     interval: 30s
     rules:
 
-      # PostgreSQL connection pool exhaustion
+      # livemax preserves one exhausted process even when other pools are idle.
+      # The producer includes configured overflow in each process's capacity.
       - alert: TestLookupDBPoolExhausted
         expr: |
-          sqlalchemy_pool_checked_out{job="testlookup-backend"}
-          /
-          sqlalchemy_pool_size{job="testlookup-backend"} > 0.9
+          sqlalchemy_pool_utilization_ratio{job=~"testlookup-backend|testlookup-worker"} > 0.9
         for: 2m
         labels:
           severity: critical
         annotations:
-          summary: "Database connection pool > 90% utilized"
-          description: "PostgreSQL pool is nearly exhausted. Increase pool_size or investigate long-running queries."
+          summary: "A database connection pool is > 90% utilized"
+          description: "At least one {{ $labels.role }} process has used over 90% of its PostgreSQL pool capacity, including configured overflow. Investigate held connections and slow transactions; check the fleet connection budget before increasing pool limits."
 
-      # Redis memory at capacity
+      # Native INFO memory observes configured application and broker roles.
+      # Excluded replication/AOF buffers are not part of the eviction budget.
+      # Never sum redundant API replicas or two roles sharing one Redis server.
       - alert: TestLookupRedisMemoryHigh
-        expr: redis_memory_used_bytes / redis_memory_max_bytes > 0.85
+        expr: |
+          max by (cluster, namespace, store_role) (
+            (
+              testlookup_redis_memory_counted_for_evict_bytes{job="testlookup-backend"}
+              / redis_memory_max_bytes{job="testlookup-backend"}
+            )
+            and on (cluster, namespace, job, instance, store_role)
+              (redis_memory_max_bytes{job="testlookup-backend"} > 0)
+            and on (cluster, namespace, job, instance)
+              (testlookup_metric_collection_success{job="testlookup-backend",collector="redis"} == 1)
+            and on (cluster, namespace, job, instance)
+              ((time() - testlookup_metric_collection_last_success_timestamp_seconds{job="testlookup-backend",collector="redis"}) <= 120)
+          ) > 0.85
         for: 5m
         labels:
           severity: warning
         annotations:
           summary: "Redis memory usage > 85%"
-          description: "Redis is approaching its memory limit. Volatile-LRU eviction may start dropping session tokens."
+          description: "Configured {{ $labels.store_role }} Redis/Valkey memory counted for eviction exceeds 85% of maxmemory. Inspect capacity and key eviction policy; application and broker roles may share one physical server."
+
+      - alert: TestLookupRedisMemoryLimitMissing
+        expr: |
+          max by (cluster, namespace, store_role) (
+            redis_memory_max_bytes{job="testlookup-backend"}
+            and on (cluster, namespace, job, instance)
+              (testlookup_metric_collection_success{job="testlookup-backend",collector="redis"} == 1)
+            and on (cluster, namespace, job, instance)
+              ((time() - testlookup_metric_collection_last_success_timestamp_seconds{job="testlookup-backend",collector="redis"}) <= 120)
+          ) == 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Redis has no configured dataset memory limit"
+          description: "Configured {{ $labels.store_role }} Redis/Valkey reports maxmemory=0. Percentage saturation is undefined; define a supported capacity policy with headroom for process/container overhead or an explicit managed-service exception."
 
       # Celery queue depth — tasks backing up
       - alert: TestLookupCeleryQueueBacklog

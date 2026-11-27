@@ -185,10 +185,10 @@ def test_no_health_response_is_built_from_exception_text():
 SCRAPE_TOKEN = "fake-scrape-token-for-tests"
 
 
-def _metrics_app() -> FastAPI:
+def _metrics_app(monkeypatch) -> FastAPI:
     app = FastAPI()
-    with patch.object(bootstrap, "_install_celery_queue_depth_collector", lambda app: None):
-        bootstrap.configure_metrics(app)
+    monkeypatch.setattr("app.services.metric_collection.collect_bounded", AsyncMock(return_value=True))
+    bootstrap.configure_metrics(app)
     return app
 
 
@@ -199,7 +199,7 @@ def _metrics_app() -> FastAPI:
 async def test_metrics_refuses_a_scrape_without_the_token(headers, monkeypatch):
     monkeypatch.setattr(settings, "METRICS_ENABLED", True)
     monkeypatch.setattr(settings, "METRICS_TOKEN", SCRAPE_TOKEN)
-    async with _client(_metrics_app()) as client:
+    async with _client(_metrics_app(monkeypatch)) as client:
         response = await client.get("/metrics", headers=headers)
     assert response.status_code == 401
     assert response.headers["WWW-Authenticate"] == "Bearer"
@@ -209,7 +209,7 @@ async def test_metrics_refuses_a_scrape_without_the_token(headers, monkeypatch):
 async def test_metrics_answers_a_scrape_with_the_token(monkeypatch):
     monkeypatch.setattr(settings, "METRICS_ENABLED", True)
     monkeypatch.setattr(settings, "METRICS_TOKEN", SCRAPE_TOKEN)
-    async with _client(_metrics_app()) as client:
+    async with _client(_metrics_app(monkeypatch)) as client:
         response = await client.get("/metrics", headers={"Authorization": "Bearer " + SCRAPE_TOKEN})
     assert response.status_code == 200
     assert "# HELP" in response.text
@@ -218,7 +218,7 @@ async def test_metrics_answers_a_scrape_with_the_token(monkeypatch):
 async def test_metrics_stays_open_when_no_token_is_set(monkeypatch):
     monkeypatch.setattr(settings, "METRICS_ENABLED", True)
     monkeypatch.setattr(settings, "METRICS_TOKEN", "")
-    async with _client(_metrics_app()) as client:
+    async with _client(_metrics_app(monkeypatch)) as client:
         response = await client.get("/metrics")
     assert response.status_code == 200
     assert "# HELP" in response.text
@@ -242,6 +242,45 @@ async def test_a_refused_scrape_does_not_refresh_the_queue_depths(monkeypatch):
         allowed = await client.get("/metrics", headers={"Authorization": "Bearer " + SCRAPE_TOKEN})
     assert allowed.status_code == 200
     refreshed.assert_awaited_once()
+
+
+async def test_mounted_metrics_token_rotates_on_api_restart(tmp_path, monkeypatch):
+    token_file = tmp_path / "metrics-token"
+    token_file.write_text(SCRAPE_TOKEN + "\n", encoding="ascii")
+    monkeypatch.setattr(settings, "METRICS_ENABLED", True)
+    monkeypatch.setattr(settings, "METRICS_TOKEN_FILE", str(token_file))
+    monkeypatch.setattr(settings, "METRICS_TOKEN", "legacy-token")
+
+    async def scrape(client, token):
+        return await client.get("/metrics", headers={"Authorization": "Bearer " + token})
+
+    async with _client(_metrics_app(monkeypatch)) as client:
+        assert (await client.get("/metrics")).status_code == 401
+        assert (await scrape(client, "legacy-token")).status_code == 401
+        allowed = await scrape(client, SCRAPE_TOKEN)
+        assert allowed.status_code == 200
+        assert "# HELP" in allowed.text
+        token_file.write_text("rotated-test-token", encoding="ascii")
+        assert (await scrape(client, SCRAPE_TOKEN)).status_code == 200
+        assert (await scrape(client, "rotated-test-token")).status_code == 401
+
+    async with _client(_metrics_app(monkeypatch)) as client:
+        assert (await scrape(client, SCRAPE_TOKEN)).status_code == 401
+        assert (await scrape(client, "rotated-test-token")).status_code == 200
+
+
+@pytest.mark.parametrize("contents", [None, b"\r\n", b"first\nsecond", b"x" * 4097])
+def test_invalid_metrics_token_file_cannot_fall_back(tmp_path, monkeypatch, contents):
+    token_file = tmp_path / "metrics-token"
+    if contents is not None:
+        token_file.write_bytes(contents)
+    monkeypatch.setattr(settings, "METRICS_ENABLED", True)
+    monkeypatch.setattr(settings, "METRICS_TOKEN_FILE", str(token_file))
+    monkeypatch.setattr(settings, "METRICS_TOKEN", "legacy-token")
+    with pytest.raises(RuntimeError, match="configured metrics credential file") as failure:
+        bootstrap.configure_metrics(FastAPI())
+    assert str(token_file) not in str(failure.value)
+    assert "legacy-token" not in str(failure.value)
 
 
 # ── The API reference ────────────────────────────────────────────────────────

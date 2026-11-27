@@ -155,7 +155,8 @@ def test_semantic_fixtures_execute_in_the_existing_backend_ci_job() -> None:
     commands = step["run"]
     assert commands.index("sha256sum --check --strict") < commands.index("tar -xzf")
     assert '"$tool" check rules ../prometheus-rules/testlookup-alerts.yml' in commands
-    assert '"$tool" test rules operational-alerts.yml' in commands
+    assert '"$tool" test rules ./*.yml' in commands
+    assert '"$tool" check config "$scratch/config/prometheus.yml"' in commands
     fixture = REPO_ROOT / step["working-directory"] / "operational-alerts.yml"
     assert not fixture.is_relative_to(ALERTS.parent), "fixture would be loaded as a production rule file"
     data = yaml.safe_load(fixture.read_text(encoding="utf-8"))

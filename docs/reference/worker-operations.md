@@ -9,7 +9,7 @@ Static declarations, not observations of running consumers. Deployment profiles 
 ## task_routes
 
 ```python
-{'app.worker.tasks.run_live_test_analysis': {'queue': 'critical'}, 'app.worker.tasks.ingest_test_run': {'queue': 'ingestion'}, 'app.worker.tasks.run_ai_analysis': {'queue': 'ai_analysis'}, 'app.worker.tasks.run_agent_pipeline': {'queue': 'ai_analysis'}, 'app.worker.tasks.run_agent_child_investigation': {'queue': 'agent_children'}, 'app.worker.tasks.generate_run_compare_report': {'queue': 'ai_analysis'}, 'app.worker.tasks.precompute_suite_comparisons_for_run': {'queue': 'ai_analysis'}, 'app.worker.tasks.generate_ai_test_cases_task': {'queue': 'ai_analysis'}, 'app.worker.tasks.create_ai_test_plan_task': {'queue': 'ai_analysis'}, 'app.worker.tasks.generate_ai_strategy_task': {'queue': 'ai_analysis'}, 'app.worker.tasks.run_fixer_run_task': {'queue': 'ai_analysis'}, 'app.worker.training_tasks.export_training_data': {'queue': 'default'}, 'app.worker.training_tasks.check_finetune_trigger': {'queue': 'default'}, 'app.worker.training_tasks.run_finetune_pipeline': {'queue': 'default'}, 'app.worker.tasks.reindex_search': {'queue': 'default'}, 'app.worker.tasks.rebuild_embedding_generation': {'queue': 'ai_analysis'}, 'app.worker.tasks.run_retention_purges': {'queue': 'default'}, 'app.worker.tasks.rebuild_run_snapshot': {'queue': 'default'}, 'app.worker.tasks.watch_drop_folders': {'queue': 'default'}, 'app.worker.tasks.*': {'queue': 'default'}}
+{'app.worker.tasks.run_live_test_analysis': {'queue': CRITICAL_QUEUE}, 'app.worker.tasks.ingest_test_run': {'queue': INGESTION_QUEUE}, 'app.worker.tasks.run_ai_analysis': {'queue': AI_ANALYSIS_QUEUE}, 'app.worker.tasks.run_agent_pipeline': {'queue': AI_ANALYSIS_QUEUE}, 'app.worker.tasks.run_agent_child_investigation': {'queue': AGENT_CHILDREN_QUEUE}, 'app.worker.tasks.generate_run_compare_report': {'queue': AI_ANALYSIS_QUEUE}, 'app.worker.tasks.precompute_suite_comparisons_for_run': {'queue': AI_ANALYSIS_QUEUE}, 'app.worker.tasks.generate_ai_test_cases_task': {'queue': AI_ANALYSIS_QUEUE}, 'app.worker.tasks.create_ai_test_plan_task': {'queue': AI_ANALYSIS_QUEUE}, 'app.worker.tasks.generate_ai_strategy_task': {'queue': AI_ANALYSIS_QUEUE}, 'app.worker.tasks.run_fixer_run_task': {'queue': AI_ANALYSIS_QUEUE}, 'app.worker.training_tasks.export_training_data': {'queue': DEFAULT_QUEUE}, 'app.worker.training_tasks.check_finetune_trigger': {'queue': DEFAULT_QUEUE}, 'app.worker.training_tasks.run_finetune_pipeline': {'queue': DEFAULT_QUEUE}, 'app.worker.tasks.reindex_search': {'queue': DEFAULT_QUEUE}, 'app.worker.tasks.rebuild_embedding_generation': {'queue': AI_ANALYSIS_QUEUE}, 'app.worker.tasks.run_retention_purges': {'queue': DEFAULT_QUEUE}, 'app.worker.tasks.rebuild_run_snapshot': {'queue': DEFAULT_QUEUE}, 'app.worker.tasks.watch_drop_folders': {'queue': DEFAULT_QUEUE}, 'app.worker.tasks.*': {'queue': DEFAULT_QUEUE}}
 ```
 
 ## broker_transport_options
@@ -50,7 +50,7 @@ True
 
 ## queue_delivery_probe
 
-[backend/app/worker/celery_app.py:54](../../backend/app/worker/celery_app.py#L54)
+[backend/app/worker/celery_app.py:58](../../backend/app/worker/celery_app.py#L58)
 
 Return transport attribution for the release queue-consumption proof.
 

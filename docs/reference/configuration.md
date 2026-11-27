@@ -288,6 +288,7 @@ Source declarations only; no `.env` or running secrets are read. Compose/Helm/Ku
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `Optional[str]` | `None` |
 | `METRICS_ENABLED` | `bool` | `True` |
 | `METRICS_TOKEN` | `str` | `''` |
+| `METRICS_TOKEN_FILE` | `str` | `''` |
 | `API_DOCS_ENABLED` | `bool` | `True` |
 | `LOG_LEVEL` | `str` | `'INFO'` |
 | `LOG_FORMAT` | `Literal['json', 'text']` | `'json'` |

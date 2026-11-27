@@ -4,6 +4,7 @@ import hmac
 import inspect
 
 from collections.abc import Sequence
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -419,8 +420,6 @@ def configure_metrics(app: FastAPI) -> None:
         should_ignore_untemplated=True,
         excluded_handlers=["/metrics", "/health/live", "/health/ready"],
     ).instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
-    _require_metrics_token(app)
-
     # W17b ADM-06: budgeted routes are also timed in-app (Settings > Performance reads them back
     # without a Prometheus server). Cheap: one dict lookup per request, nothing for other routes.
     from app.services.observed_performance import ObservedLatencyMiddleware
@@ -457,28 +456,19 @@ def register_routers(app: FastAPI) -> None:
 async def _refresh_celery_queue_depths() -> bool:
     """Read pending task counts straight off the Redis broker.
 
-    Celery queues are Redis lists keyed by queue name, so LLEN is the depth.
+    Logical Redis queues may span several priority lists; sum every bin.
     Best-effort: metrics collection must never break the scrape or the app —
     a failed read leaves the previous sample rather than raising.
     """
     try:
         from app.core.metrics import celery_queue_length
-        from app.db.redis_client import get_redis
-        from app.worker.ingestion_routing import LEGACY_INGESTION_QUEUE, all_shard_queues
+        from app.services.celery_queue_metrics import read_celery_queue_depths
 
-        queues = ["critical", "ai_analysis", "default", "agent_children", LEGACY_INGESTION_QUEUE]
-        queues += list(all_shard_queues())
-
-        redis = get_redis()
-        async def refresh_queue(name: str) -> bool:
-            try:
-                depth = await redis.llen(name)
-            except Exception:  # noqa: BLE001 — one bad queue must not hide the rest
-                return False
-            celery_queue_length.labels(queue_name=name).set(float(depth or 0))
-            return True
-
-        return all(await asyncio.gather(*(refresh_queue(name) for name in queues)))
+        depths = await read_celery_queue_depths()
+        for name, depth in depths.items():
+            if depth is not None:
+                celery_queue_length.labels(queue_name=name).set(float(depth))
+        return all(depth is not None for depth in depths.values())
     except Exception as exc:  # noqa: BLE001
         import structlog
 
@@ -488,53 +478,43 @@ async def _refresh_celery_queue_depths() -> bool:
         return False
 
 
-def _metrics_scrape_refusal(request):
-    """A 401 for a scrape without the configured token, else ``None``.
+def _load_metrics_token() -> bytes:
+    """Load a mounted credential once, including Kubernetes projected files."""
+    if not settings.METRICS_TOKEN_FILE:
+        return settings.METRICS_TOKEN.encode("utf-8")
+    path = Path(settings.METRICS_TOKEN_FILE)
+    try:
+        if not path.is_file():
+            raise OSError
+        with path.open("rb") as handle:
+            data = handle.read(4097)
+    except (OSError, ValueError):
+        raise RuntimeError("The configured metrics credential file cannot be read") from None
+    token = data.strip()
+    if len(data) > 4096 or not token or any(not 33 <= byte <= 126 for byte in token):
+        raise RuntimeError("The configured metrics credential file must contain one nonempty ASCII token")
+    return token
 
-    ``METRICS_TOKEN`` is optional: empty leaves ``/metrics`` open, as it always
-    was (the shipped proxies do not route it). When it is set, the scrape must
-    send ``Authorization: Bearer <token>``. Read per request, so the setting is
-    the only switch.
-    """
-    expected = settings.METRICS_TOKEN
+
+def _metrics_scrape_refusal(request, expected: bytes):
+    """Check bearer authentication before running any metrics collectors."""
     if not expected:
         return None
     scheme, _, presented = request.headers.get("authorization", "").partition(" ")
     if scheme.lower() == "bearer" and hmac.compare_digest(
-        presented.strip().encode("utf-8"), expected.encode("utf-8")
+        presented.strip().encode("utf-8"), expected
     ):
         return None
     return PlainTextResponse(
-        "The metrics scrape needs the bearer token set in METRICS_TOKEN. "
-        "Send it as: Authorization: Bearer <token>\n",
+        "The metrics scrape requires Authorization: Bearer <token>\n",
         status_code=401,
         headers={"WWW-Authenticate": "Bearer"},
     )
 
 
-def _require_metrics_token(app) -> None:
-    """Put the token check in front of the instrumentator's /metrics route."""
-    for route in app.routes:
-        if getattr(route, "path", None) != "/metrics":
-            continue
-        original = route.endpoint
-
-        async def _endpoint(request, __orig=original):
-            refusal = _metrics_scrape_refusal(request)
-            if refusal is not None:
-                return refusal
-            result = __orig(request)
-            if inspect.isawaitable(result):
-                result = await result
-            return result
-
-        route.endpoint = _endpoint
-        route.app = request_response(_endpoint)
-        return
-
-
 def _install_celery_queue_depth_collector(app) -> None:
-    """Wrap the instrumentator's /metrics route so depths refresh per scrape."""
+    """Authorize the scrape, then refresh operational metrics."""
+    expected = _load_metrics_token()
     for route in app.routes:
         if getattr(route, "path", None) != "/metrics":
             continue
@@ -544,7 +524,7 @@ def _install_celery_queue_depth_collector(app) -> None:
             # A refused scrape must not cost a Redis round trip: answer it
             # before refreshing anything.
             request = args[0] if args else kwargs.get("request")
-            refusal = _metrics_scrape_refusal(request) if request is not None else None
+            refusal = _metrics_scrape_refusal(request, expected) if request is not None else None
             if refusal is not None:
                 return refusal
             from app.services.agent_operational_metrics import (
@@ -554,11 +534,13 @@ def _install_celery_queue_depth_collector(app) -> None:
                 refresh_downstream_operational_metrics,
             )
             from app.services.metric_collection import collect_bounded
+            from app.services.redis_resource_metrics import refresh_redis_resource_metrics
 
             await asyncio.gather(
                 collect_bounded("queues", _refresh_celery_queue_depths),
                 collect_bounded("agents", refresh_agent_operational_metrics),
                 collect_bounded("downstream", refresh_downstream_operational_metrics),
+                collect_bounded("redis", refresh_redis_resource_metrics),
             )
             result = __orig(*args, **kwargs)
             if inspect.isawaitable(result):

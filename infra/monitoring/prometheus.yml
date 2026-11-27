@@ -10,15 +10,10 @@ global:
 rule_files:
   - "rules/*.yml"
 
+scrape_config_files:
+  - backend-scrape.yml
+
 scrape_configs:
-
-  # ── FastAPI backend ──────────────────────────────────────────────────────────
-  - job_name: 'testlookup-backend'
-    static_configs:
-      - targets: ['backend:8000']
-    metrics_path: /metrics
-    scrape_interval: 15s
-
   # ── Celery worker (via prometheus-client multiprocess) ───────────────────────
   # Each prefork worker container aggregates its children on port 9100.
   - job_name: 'testlookup-worker'

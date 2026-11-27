@@ -9,12 +9,14 @@ contain breaking changes; [UPGRADING.md](UPGRADING.md) lists them).
 
 ### Added
 
+- Operational metrics report SQLAlchemy pool pressure and acquisition timeouts for API and worker processes, plus Redis and Valkey memory for the application and broker. Optional Compose and Kubernetes profiles support file-backed authentication for API scrapes.
 - Operational metrics expose collector freshness and durable downstream-outbox failure/overdue state, including alerts that avoid counting the same SQL rows across API replicas.
 
 - Release verification: journey **TL-AUTH-003** (one account per browser profile, P1, disposable stack) checks the D-0019 fix on the live stack. In two tabs of one browser, a sign-in as a viewer moves the admin's tab onto the viewer with the note, a new tab opens as the viewer, and the viewer's sign-out signs the other tab out (`frontend/tests/release/session.spec.ts`, `e2e-runner/catalogue.yaml`).
 
 ### Changed
 
+- Celery queue depth reads all configured broker priority lists, including child work, and reports unknown counts when a list cannot be read.
 - Upload publication uses bounded background threads; uncertain queue confirmation retains the payload and returns polling identifiers so callers can check before resubmitting.
 - Trace exporters sanitize exception events and custom text as well as URL attributes. Browser error batches use UTF-8 byte limits; unexpected core API errors return a correlated request identifier. Worker task context and startup readiness markers are reset between executions.
 - Image publication and release authorization require trusted successful secret-scan evidence for the exact main commit. Main pushes scan the full tracked candidate tree as well as added history, so an unchanged secret from an earlier failed push still blocks publication. Webhook failure alerts detect failures at low traffic volumes.

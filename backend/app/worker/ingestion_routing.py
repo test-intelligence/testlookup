@@ -31,13 +31,14 @@ from __future__ import annotations
 import hashlib
 
 from app.core.config import settings
+from app.worker.queue_inventory import INGESTION_QUEUE
 
 
 # Base queue name — kept stable so existing Celery beat / monitoring
 # tooling that watches ``ingestion`` still has something to watch even
 # when shard routing is enabled. New shardable tasks use the
 # ``ingestion.shard.<i>`` namespace.
-LEGACY_INGESTION_QUEUE = "ingestion"
+LEGACY_INGESTION_QUEUE = INGESTION_QUEUE
 SHARD_QUEUE_PREFIX = "ingestion.shard."
 
 

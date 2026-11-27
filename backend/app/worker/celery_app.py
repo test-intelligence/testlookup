@@ -19,6 +19,10 @@ from celery.schedules import crontab
 from kombu import Exchange, Queue
 
 from app.core.config import settings
+from app.worker.queue_inventory import (
+    AGENT_CHILDREN_QUEUE, AI_ANALYSIS_QUEUE, CRITICAL_QUEUE, DEFAULT_QUEUE,
+    INGESTION_QUEUE, all_task_queue_names,
+)
 
 
 class TimeLimitedTask(Task):
@@ -76,19 +80,10 @@ _default_exchange = Exchange("default", type="direct")
 # tuple imperatively so the shard count is read from settings at startup,
 # not frozen at module-import time.
 def _build_task_queues() -> tuple[Queue, ...]:
-    base = [
-        Queue("critical",    _default_exchange, routing_key="critical",    queue_arguments={"x-max-priority": 10}),
-        Queue("ingestion",   _default_exchange, routing_key="ingestion",   queue_arguments={"x-max-priority": 10}),
-        Queue("ai_analysis", _default_exchange, routing_key="ai_analysis", queue_arguments={"x-max-priority": 10}),
-        Queue("agent_children", _default_exchange, routing_key="agent_children", queue_arguments={"x-max-priority": 10}),
-        Queue("default",     _default_exchange, routing_key="default",     queue_arguments={"x-max-priority": 10}),
-    ]
-    # Lazy import to avoid the ``app.core.config`` → ``Celery`` import
-    # cycle that bites if we put this at module top.
-    from app.worker.ingestion_routing import all_shard_queues
-    for q in all_shard_queues():
-        base.append(Queue(q, _default_exchange, routing_key=q, queue_arguments={"x-max-priority": 10}))
-    return tuple(base)
+    return tuple(
+        Queue(name, _default_exchange, routing_key=name, queue_arguments={"x-max-priority": 10})
+        for name in all_task_queue_names()
+    )
 
 
 celery_app.conf.task_queues = _build_task_queues()
@@ -99,34 +94,34 @@ celery_app.conf.update(
     result_serializer="json",
     timezone="UTC",
     enable_utc=True,
-    task_default_queue="default",
+    task_default_queue=DEFAULT_QUEUE,
     task_default_exchange="default",
-    task_default_routing_key="default",
+    task_default_routing_key=DEFAULT_QUEUE,
     task_routes={
-        "app.worker.tasks.run_live_test_analysis":          {"queue": "critical"},
-        "app.worker.tasks.ingest_test_run":                 {"queue": "ingestion"},
-        "app.worker.tasks.run_ai_analysis":                 {"queue": "ai_analysis"},
-        "app.worker.tasks.run_agent_pipeline":              {"queue": "ai_analysis"},
-        "app.worker.tasks.run_agent_child_investigation":   {"queue": "agent_children"},
-        "app.worker.tasks.generate_run_compare_report":     {"queue": "ai_analysis"},
-        "app.worker.tasks.precompute_suite_comparisons_for_run": {"queue": "ai_analysis"},
-        "app.worker.tasks.generate_ai_test_cases_task":     {"queue": "ai_analysis"},
-        "app.worker.tasks.create_ai_test_plan_task":         {"queue": "ai_analysis"},
-        "app.worker.tasks.generate_ai_strategy_task":        {"queue": "ai_analysis"},
-        "app.worker.tasks.run_fixer_run_task":               {"queue": "ai_analysis"},
-        "app.worker.training_tasks.export_training_data":   {"queue": "default"},
-        "app.worker.training_tasks.check_finetune_trigger": {"queue": "default"},
-        "app.worker.training_tasks.run_finetune_pipeline":  {"queue": "default"},
-        "app.worker.tasks.reindex_search":                    {"queue": "default"},
+        "app.worker.tasks.run_live_test_analysis":          {"queue": CRITICAL_QUEUE},
+        "app.worker.tasks.ingest_test_run":                 {"queue": INGESTION_QUEUE},
+        "app.worker.tasks.run_ai_analysis":                 {"queue": AI_ANALYSIS_QUEUE},
+        "app.worker.tasks.run_agent_pipeline":              {"queue": AI_ANALYSIS_QUEUE},
+        "app.worker.tasks.run_agent_child_investigation":   {"queue": AGENT_CHILDREN_QUEUE},
+        "app.worker.tasks.generate_run_compare_report":     {"queue": AI_ANALYSIS_QUEUE},
+        "app.worker.tasks.precompute_suite_comparisons_for_run": {"queue": AI_ANALYSIS_QUEUE},
+        "app.worker.tasks.generate_ai_test_cases_task":     {"queue": AI_ANALYSIS_QUEUE},
+        "app.worker.tasks.create_ai_test_plan_task":         {"queue": AI_ANALYSIS_QUEUE},
+        "app.worker.tasks.generate_ai_strategy_task":        {"queue": AI_ANALYSIS_QUEUE},
+        "app.worker.tasks.run_fixer_run_task":               {"queue": AI_ANALYSIS_QUEUE},
+        "app.worker.training_tasks.export_training_data":   {"queue": DEFAULT_QUEUE},
+        "app.worker.training_tasks.check_finetune_trigger": {"queue": DEFAULT_QUEUE},
+        "app.worker.training_tasks.run_finetune_pipeline":  {"queue": DEFAULT_QUEUE},
+        "app.worker.tasks.reindex_search":                    {"queue": DEFAULT_QUEUE},
         # W12 SRCH-02: a re-embed into a new generation runs on the AI worker,
         # one <= 480 s slice per invocation (never in the API process).
-        "app.worker.tasks.rebuild_embedding_generation":    {"queue": "ai_analysis"},
-        "app.worker.tasks.run_retention_purges":            {"queue": "default"},
+        "app.worker.tasks.rebuild_embedding_generation":    {"queue": AI_ANALYSIS_QUEUE},
+        "app.worker.tasks.run_retention_purges":            {"queue": DEFAULT_QUEUE},
         # W07 FAIL-04: may wait minutes for a defect-candidate build; kept off ai_analysis.
-        "app.worker.tasks.rebuild_run_snapshot":            {"queue": "default"},
+        "app.worker.tasks.rebuild_run_snapshot":            {"queue": DEFAULT_QUEUE},
         # W34 STRAT-13: the every-minute drop-folder sweep (it queues ingest_test_run on "ingestion").
-        "app.worker.tasks.watch_drop_folders":              {"queue": "default"},
-        "app.worker.tasks.*":                               {"queue": "default"},
+        "app.worker.tasks.watch_drop_folders":              {"queue": DEFAULT_QUEUE},
+        "app.worker.tasks.*":                               {"queue": DEFAULT_QUEUE},
     },
     # Redis keeps late-acked deliveries in ``unacked`` until this timeout.
     # Keep it above the 31-minute hard task limit so a healthy long-running
@@ -1006,6 +1001,54 @@ def _start_metrics_server(**_kwargs: object) -> None:
         )
 
 
+def _reap_dead_child_metric_gauges(metric_dir: Path) -> None:
+    """Remove only live gauges whose process is confirmed absent on POSIX.
+
+    A killed/OOM child cannot run ``worker_process_shutdown``. This directory
+    belongs to one worker parent and its children; a successful or denied
+    existence probe must preserve that process's observations. Counters,
+    histograms and non-live gauges retain their existing lifecycle.
+    """
+    import os
+
+    if os.name != "posix":
+        return
+
+    from prometheus_client import multiprocess
+
+    try:
+        files = tuple(metric_dir.glob("gauge_live*_*.db"))
+    except OSError:
+        return
+    pids: set[int] = set()
+    for metric_file in files:
+        match = re.fullmatch(
+            r"gauge_live(?:all|sum|min|max|mostrecent)_([1-9][0-9]*)\.db",
+            metric_file.name,
+        )
+        if match is None:
+            continue
+        try:
+            if metric_file.is_symlink() or not metric_file.is_file():
+                continue
+            pids.add(int(match.group(1)))
+        except (OSError, ValueError):
+            continue
+
+    for pid in pids:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            try:
+                multiprocess.mark_process_dead(pid, path=str(metric_dir))
+            except OSError:
+                # Child shutdown may have removed the same gauge already.
+                pass
+        except (OSError, OverflowError):
+            # Permission denied or an unrepresentable PID is not proof of death.
+            continue
+
+
 def _start_metrics_file_guard() -> None:
     """Recycle the worker before dead-child metric files become unbounded.
 
@@ -1030,6 +1073,7 @@ def _start_metrics_file_guard() -> None:
 
         logger = structlog.get_logger(__name__)
         while True:
+            _reap_dead_child_metric_gauges(metric_dir)
             if len(list(metric_dir.glob("*.db"))) > max_files:
                 logger.warning(
                     "worker_metrics_file_limit_reached",

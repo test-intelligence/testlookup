@@ -536,7 +536,16 @@ jobs:
           tar -xzf "$archive" -C "$scratch" "prometheus-${PROMETHEUS_VERSION}.linux-amd64/promtool"
           tool="$scratch/prometheus-${PROMETHEUS_VERSION}.linux-amd64/promtool"
           "$tool" check rules ../prometheus-rules/testlookup-alerts.yml
-          "$tool" test rules operational-alerts.yml
+          "$tool" test rules ./*.yml
+          # Mirror the Compose mounts and validate included scrape jobs and rules.
+          mkdir "$scratch/config"
+          cp ../prometheus.yml "$scratch/config/"
+          cp -R ../prometheus-rules "$scratch/config/rules"
+          for backend_job in ../backend-scrape.yml ../backend-scrape-authenticated.yml; do
+            cp "$backend_job" "$scratch/config/backend-scrape.yml"
+            printf '%s\n' 'synthetic-test-token' > "$scratch/config/metrics-token"
+            "$tool" check config "$scratch/config/prometheus.yml"
+          done
 
       # Blocking, as a ratchet (re-audit M24). mypy reports 391 pre-existing
       # errors in 117 files; backend/mypy-baseline.txt holds the per-file
@@ -1075,6 +1084,7 @@ jobs:
           tests/integration/test_workflow_definition_races_postgres.py
           tests/integration/test_test_case_lifecycle_postgres.py
           tests/integration/test_db_connection_budget_postgres.py
+          tests/integration/test_db_pool_metrics_postgres.py
           tests/integration/test_engine_hides_parameters_postgres.py
           tests/integration/test_decision_report_supersession_postgres_mongo.py
           tests/integration/test_http_exchanges_postgres_mongo.py

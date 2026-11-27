@@ -5,7 +5,7 @@ container or pod. Each exporter aggregates its local processes, and Prometheus
 scrapes every API pod and both Compose worker services.
 """
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import subprocess
 import sys
 
@@ -23,6 +23,9 @@ RELEASE_COMPOSE = yaml.safe_load(
 MONITORING_COMPOSE = yaml.safe_load(
     (REPO_ROOT / "docker-compose.monitoring.yml").read_text(encoding="utf-8")
 )
+MONITORING_AUTH = yaml.safe_load(
+    (REPO_ROOT / "docker-compose.monitoring-auth.yml").read_text(encoding="utf-8")
+)
 PROMETHEUS = yaml.safe_load(
     (REPO_ROOT / "infra" / "monitoring" / "prometheus.yml").read_text(encoding="utf-8")
 )
@@ -38,14 +41,27 @@ MULTIPROC_DIR = "/tmp/prometheus-multiproc"
 WORKER_SERVICES = ("worker", "worker-children")
 
 
-def _scrape_targets(job_name: str) -> set[str]:
-    jobs = {
-        job["job_name"]: job
-        for job in PROMETHEUS["scrape_configs"]
-    }
+def _scrape_jobs(authenticated: bool) -> dict:
+    directory = PurePosixPath("/etc/prometheus")
+    overlays = (MONITORING_COMPOSE, MONITORING_AUTH) if authenticated else (MONITORING_COMPOSE,)
+    mounts = {}
+    for overlay in overlays:
+        for volume in overlay["services"]["prometheus"]["volumes"]:
+            source, target, *_ = volume.split(":")
+            mounts[PurePosixPath(target)] = REPO_ROOT / source
+    configs = list(PROMETHEUS["scrape_configs"])
+    for include in PROMETHEUS["scrape_config_files"]:
+        included = yaml.safe_load(mounts[directory / include].read_text(encoding="utf-8"))
+        configs.extend(included["scrape_configs"])
+    jobs = {job["job_name"]: job for job in configs}
+    assert len(jobs) == len(configs), "multiple mounted jobs use the same name"
+    return jobs
+
+
+def _scrape_targets(job: dict) -> set[str]:
     return {
         target
-        for config in jobs[job_name]["static_configs"]
+        for config in job["static_configs"]
         for target in config["targets"]
     }
 
@@ -104,12 +120,23 @@ def test_compose_worker_has_isolated_writable_multiprocess_storage(
     ), f"{service_name} has no private writable tmpfs at {MULTIPROC_DIR}"
 
 
-def test_prometheus_scrapes_every_compose_executor_on_the_bound_port():
-    assert _scrape_targets("testlookup-backend") == {"backend:8000"}
-    assert _scrape_targets("testlookup-worker") == {
+@pytest.mark.parametrize("authenticated", (False, True))
+def test_prometheus_scrapes_every_compose_executor_on_the_bound_port(authenticated):
+    jobs = _scrape_jobs(authenticated)
+    backend = jobs["testlookup-backend"]
+    worker = jobs["testlookup-worker"]
+    assert _scrape_targets(backend) == {"backend:8000"}
+    assert _scrape_targets(worker) == {
         "worker:9100",
         "worker-children:9100",
     }
+    assert "authorization" not in worker
+    assert ("authorization" in backend) == authenticated
+    if authenticated:
+        secret = MONITORING_AUTH["services"]["prometheus"]["secrets"][0]
+        assert PurePosixPath(secret["target"]) == (
+            PurePosixPath("/etc/prometheus") / backend["authorization"]["credentials_file"]
+        )
 
 
 def test_monitoring_overlay_does_not_require_a_precreated_network():

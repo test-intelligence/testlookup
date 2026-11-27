@@ -976,6 +976,9 @@ class Settings(BaseSettings):
     # scrape open, as before: the shipped proxies do not route /metrics. When
     # set, a scrape must send "Authorization: Bearer <token>" or it gets 401.
     METRICS_TOKEN: str = ""
+    # Mounted bearer credential, loaded when the API process starts. A
+    # configured file takes precedence and must contain a nonempty token.
+    METRICS_TOKEN_FILE: str = ""
     # The API reference (/api-docs, /api-docs/redoc, /api-docs/openapi.json).
     # false turns all three routes off.
     API_DOCS_ENABLED: bool = True

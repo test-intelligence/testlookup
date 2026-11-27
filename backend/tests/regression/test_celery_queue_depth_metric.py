@@ -30,6 +30,7 @@ import re
 from pathlib import Path
 
 import pytest
+from tests.celery_queue_fakes import PipelineRedis
 
 pytest.importorskip("app.core.metrics")
 
@@ -75,10 +76,10 @@ class TestItIsCollectedAtScrapeTime:
     def test_refresh_reads_every_queue_including_shards(self, monkeypatch):
         seen: list[str] = []
 
-        class FakeRedis:
+        class FakeRedis(PipelineRedis):
             async def llen(self, name):
                 seen.append(name)
-                return 7
+                return 0 if "\x06\x16" in name else 7
 
         monkeypatch.setattr("app.db.redis_client.get_redis", lambda: FakeRedis(), raising=False)
         asyncio.run(bootstrap._refresh_celery_queue_depths())
@@ -94,7 +95,7 @@ class TestItIsCollectedAtScrapeTime:
     def test_a_broken_redis_never_breaks_the_scrape(self, monkeypatch):
         """Metrics collection must not take down /metrics — losing the scrape
         during an incident is worse than losing one gauge."""
-        class Exploding:
+        class Exploding(PipelineRedis):
             async def llen(self, name):
                 raise RuntimeError("redis is down")
 
@@ -102,11 +103,11 @@ class TestItIsCollectedAtScrapeTime:
         asyncio.run(bootstrap._refresh_celery_queue_depths())  # must not raise
 
     def test_one_bad_queue_does_not_hide_the_others(self, monkeypatch):
-        class Picky:
+        class Picky(PipelineRedis):
             async def llen(self, name):
                 if name == "critical":
                     raise RuntimeError("nope")
-                return 3
+                return 0 if "\x06\x16" in name else 3
 
         monkeypatch.setattr("app.db.redis_client.get_redis", lambda: Picky(), raising=False)
         asyncio.run(bootstrap._refresh_celery_queue_depths())
