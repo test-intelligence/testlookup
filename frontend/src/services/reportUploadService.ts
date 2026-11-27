@@ -7,6 +7,8 @@ export interface UploadReportResponse {
   task_id: string
   /** Always 0 here — the real count is known only after async parsing. */
   total_results: number
+  /** False when the server supplied an original receipt after losing publish confirmation. */
+  publication_confirmed?: boolean
 }
 
 export type UploadState = 'pending' | 'parsing' | 'ingesting' | 'succeeded' | 'failed'
@@ -68,6 +70,32 @@ export interface UploadReportParams {
   runAi?: boolean
   /** 0–100 upload progress callback (multipart transfer, not parse progress). */
   onProgress?: (percent: number) => void
+  /** One logical invocation, retained across uncertain retries with identical input. */
+  idempotencyKey?: string
+}
+
+export function newUploadIdempotencyKey(): string {
+  // getRandomValues also works on the supported plain-HTTP development profile.
+  const bytes = crypto.getRandomValues(new Uint8Array(16))
+  bytes[6] = (bytes[6] & 0x0f) | 0x40
+  bytes[8] = (bytes[8] & 0x3f) | 0x80
+  const hex = Array.from(bytes, value => value.toString(16).padStart(2, '0')).join('')
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
+}
+
+export function unconfirmedUploadReceipt(error: unknown): UploadReportResponse | null {
+  const response = (error as { response?: { status?: number; headers?: unknown } } | null)?.response
+  if (response?.status !== 503 || !response.headers || typeof response.headers !== 'object') return null
+  const headers = Object.fromEntries(Object.entries(response.headers).map(([key, value]) => [key.toLowerCase(), value]))
+  const task = headers['x-upload-task-id'], run = headers['x-upload-run-id']
+  const marked = task !== undefined || run !== undefined || String(headers.location ?? '').includes('/api/v1/ingest/uploads/')
+  if (!marked) return null
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+  if (typeof task !== 'string' || !uuid.test(task) || typeof run !== 'string' || !uuid.test(run)) {
+    throw new Error('Upload confirmation is unavailable and its receipt is incomplete. Keep this attempt and check its status before starting another upload.')
+  }
+  // Always poll the application's configured API by ID. Location is never fetched.
+  return { task_id: task.toLowerCase(), run_id: run.toLowerCase(), total_results: 0, publication_confirmed: false }
 }
 
 export function defaultBuildLabel(): string {
@@ -89,6 +117,7 @@ export const reportUploadService = {
     releaseName,
     runAi = true,
     onProgress,
+    idempotencyKey = newUploadIdempotencyKey(),
   }: UploadReportParams): Promise<UploadReportResponse> => {
     const form = new FormData()
     form.append('file', file)
@@ -105,7 +134,8 @@ export const reportUploadService = {
         // The shared axios instance defaults Content-Type to application/json.
         // Null it so the browser sets multipart/form-data WITH the boundary —
         // otherwise FastAPI can't parse the parts.
-        headers: { 'Content-Type': undefined as unknown as string },
+        headers: { 'Content-Type': undefined as unknown as string, 'Idempotency-Key': idempotencyKey },
+        suppressToast: true,
         onUploadProgress: (e: AxiosProgressEvent) => {
           if (onProgress && e.total) {
             onProgress(Math.round((e.loaded / e.total) * 100))
@@ -113,9 +143,14 @@ export const reportUploadService = {
         },
       })
       .then(({ data }) => data)
+      .catch((error: unknown) => {
+        const receipt = unconfirmedUploadReceipt(error)
+        if (receipt) return receipt
+        throw error
+      })
   },
 
   /** Poll the async parse/ingest status of an upload (GET /ingest/uploads/{id}). */
   getStatus: (taskId: string): Promise<UploadStatus> =>
-    api.get<UploadStatus>(`/api/v1/ingest/uploads/${taskId}`).then(({ data }) => data),
+    api.get<UploadStatus>(`/api/v1/ingest/uploads/${taskId}`, { suppressToast: true }).then(({ data }) => data),
 }

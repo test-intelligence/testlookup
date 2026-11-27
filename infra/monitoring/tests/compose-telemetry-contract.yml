@@ -1,0 +1,58 @@
+# Synthetic absence semantics; fixtures are outside the runtime rules glob.
+rule_files:
+- ../prometheus-rules/testlookup-alerts.yml
+- ../prometheus-rules/compose-telemetry-contract.yml
+evaluation_interval: 30s
+tests:
+- name: "actual Compose inventory loads three roles and accepts quiet baseline targets"
+  interval: 30s
+  input_series:
+  - series: "up{telemetry_profile=\"compose\",job=\"testlookup-backend\",telemetry_role=\"backend\",instance=\"backend:8000\"}"
+    values: "1x50"
+  - series: "testlookup_metric_collection_success{telemetry_profile=\"compose\",job=\"testlookup-backend\",telemetry_role=\"backend\",instance=\"backend:8000\",collector=\"queues\"}"
+    values: "1x50"
+  - series: "testlookup_metric_collection_last_success_timestamp_seconds{telemetry_profile=\"compose\",job=\"testlookup-backend\",telemetry_role=\"backend\",instance=\"backend:8000\",collector=\"queues\"}"
+    values: "0+30x50"
+  - series: "testlookup_metric_collection_success{telemetry_profile=\"compose\",job=\"testlookup-backend\",telemetry_role=\"backend\",instance=\"backend:8000\",collector=\"agents\"}"
+    values: "1x50"
+  - series: "testlookup_metric_collection_last_success_timestamp_seconds{telemetry_profile=\"compose\",job=\"testlookup-backend\",telemetry_role=\"backend\",instance=\"backend:8000\",collector=\"agents\"}"
+    values: "0+30x50"
+  - series: "testlookup_metric_collection_success{telemetry_profile=\"compose\",job=\"testlookup-backend\",telemetry_role=\"backend\",instance=\"backend:8000\",collector=\"downstream\"}"
+    values: "1x50"
+  - series: "testlookup_metric_collection_last_success_timestamp_seconds{telemetry_profile=\"compose\",job=\"testlookup-backend\",telemetry_role=\"backend\",instance=\"backend:8000\",collector=\"downstream\"}"
+    values: "0+30x50"
+  - series: "testlookup_metric_collection_success{telemetry_profile=\"compose\",job=\"testlookup-backend\",telemetry_role=\"backend\",instance=\"backend:8000\",collector=\"redis\"}"
+    values: "1x50"
+  - series: "testlookup_metric_collection_last_success_timestamp_seconds{telemetry_profile=\"compose\",job=\"testlookup-backend\",telemetry_role=\"backend\",instance=\"backend:8000\",collector=\"redis\"}"
+    values: "0+30x50"
+  - series: "testlookup_finalize_step_failures_total{telemetry_profile=\"compose\",job=\"testlookup-backend\",telemetry_role=\"backend\",instance=\"backend:8000\",step=\"suite_sync\"}"
+    values: "0x50"
+  - series: "up{job=\"testlookup-worker\",telemetry_profile=\"compose\",telemetry_role=\"worker\",instance=\"worker:9100\"}"
+    values: "1x50"
+  - series: "up{job=\"testlookup-worker\",telemetry_profile=\"compose\",telemetry_role=\"worker-children\",instance=\"worker-children:9100\"}"
+    values: "1x50"
+  - series: "testlookup_finalize_step_failures_total{job=\"testlookup-worker\",telemetry_profile=\"compose\",telemetry_role=\"worker\",instance=\"worker:9100\",step=\"suite_sync\"}"
+    values: "0x50"
+  - series: "testlookup_finalize_step_failures_total{job=\"testlookup-worker\",telemetry_profile=\"compose\",telemetry_role=\"worker-children\",instance=\"worker-children:9100\",step=\"suite_sync\"}"
+    values: "0x50"
+  promql_expr_test:
+  - expr: "count(testlookup:telemetry_expected_role)"
+    eval_time: 1m
+    exp_samples:
+    - labels: "{}"
+      value: 3
+  - expr: "count(ALERTS{alertname=\"TestLookupExpectedRoleUnavailable\",alertstate=\"firing\"}) or vector(0)"
+    eval_time: 10m
+    exp_samples:
+    - labels: "{}"
+      value: 0
+  - expr: "count(ALERTS{alertname=\"TestLookupRequiredTelemetryMissing\",alertstate=\"firing\"}) or vector(0)"
+    eval_time: 10m
+    exp_samples:
+    - labels: "{}"
+      value: 0
+  - expr: "count(ALERTS{alertname=\"TestLookupTelemetryContractMissing\",alertstate=\"firing\"}) or vector(0)"
+    eval_time: 10m
+    exp_samples:
+    - labels: "{}"
+      value: 0

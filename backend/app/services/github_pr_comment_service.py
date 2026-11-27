@@ -66,7 +66,7 @@ import structlog
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.http_client import http_verify
+from app.core.http_client import create_integration_http_client
 from app.db.postgres import AsyncSessionLocal
 from app.models.postgres import (
     FlakyCoachResult,
@@ -124,7 +124,7 @@ async def _request(
     json_body: Optional[dict[str, Any]] = None,
     params: Optional[dict[str, Any]] = None,
 ) -> httpx.Response:
-    async with httpx.AsyncClient(verify=http_verify(), timeout=_HTTP_TIMEOUT) as client:
+    async with create_integration_http_client(timeout=_HTTP_TIMEOUT) as client:
         return await client.request(
             method, url, headers=headers, json=json_body, params=params,
         )

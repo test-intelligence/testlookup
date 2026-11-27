@@ -25,7 +25,7 @@ from app.services import tool_call_idempotency as tci
 from tests.fakes.fake_integrations import adf_problems
 
 PID = uuid.UUID("36a00000-0000-4000-8000-000000000003")
-KEY = "0123456789abcdef0123456789abcdef"
+KEY = "0123456789abcdef0123456789abcdef" # gitleaks:allow -- synthetic test credential, never production authority
 CFG = {"enabled": True, "domain": "example.atlassian.net", "email": "bot@example.com", "api_token": "t",
        "default_project_key": "DEF"}
 ACTOR = SimpleNamespace(id=uuid.uuid4(), username="qa.eng", full_name="Qa Eng", role="QA_ENGINEER")

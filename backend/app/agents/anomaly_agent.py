@@ -29,7 +29,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.base import BaseAgent
 from app.core.config import settings
-from app.db.postgres import AsyncSessionLocal
+from app.db.postgres import AsyncSessionLocal, release_read_connection
 from app.models.agent_contracts import (
     AnomalyDetectionAgentOutput,
     validate_agent_contract,
@@ -83,6 +83,11 @@ class AnomalyDetectionAgent(BaseAgent):
                 baseline_rate, prior_run_ids, baseline_run_id = await self._get_baseline_pass_rate(
                     db, project_id, test_run_id, branch
                 )
+                # Baseline facts are scalar values. Return this read connection
+                # before log_decision opens its independent SQL outbox session;
+                # a one-connection worker pool cannot hold both at once. The
+                # same session can start fresh reads for the checks below.
+                await release_read_connection(db)
 
                 if baseline_rate is None or not prior_run_ids:
                     # No baseline means every check below is skipped and the run

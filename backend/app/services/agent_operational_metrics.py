@@ -24,12 +24,14 @@ def _age_seconds(value: datetime | None, now: datetime) -> float:
     return max(0.0, (now - value).total_seconds())
 
 
-async def refresh_agent_operational_metrics(*, now: datetime | None = None) -> None:
+async def refresh_agent_operational_metrics(*, now: datetime | None = None) -> bool:
     """Refresh durable agent state without ever failing the metrics scrape."""
     from app.db.postgres import AsyncSessionLocal
     from app.models.postgres import AgentPipelineRun, ReviewRequest
 
     observed_at = now or datetime.now(timezone.utc)
+    db_ok = False
+    dlq_ok = False
     try:
         async with AsyncSessionLocal() as db:
             oldest_run = (
@@ -58,6 +60,7 @@ async def refresh_agent_operational_metrics(*, now: datetime | None = None) -> N
         pending_review_oldest_age_seconds.set(
             _age_seconds(oldest_review, observed_at)
         )
+        db_ok = True
     except Exception as exc:  # noqa: BLE001
         logger.debug("agent_operational_db_metrics_failed", error=str(exc))
 
@@ -68,5 +71,7 @@ async def refresh_agent_operational_metrics(*, now: datetime | None = None) -> N
         stream_depth = await get_stream_dlq_count()
         if persist_depth is not None and stream_depth is not None:
             agent_dlq_depth.set(float(persist_depth + stream_depth))
+            dlq_ok = True
     except Exception as exc:  # noqa: BLE001
         logger.debug("agent_operational_dlq_metric_failed", error=str(exc))
+    return db_ok and dlq_ok

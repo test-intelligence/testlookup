@@ -34,9 +34,18 @@ backup taken in step 2 together with the previous version's images.
 ## After 0.1.0 (the next release)
 
 Security fixes in this release change what some roles may do and what some API
-calls answer. There are two migrations (`0257`, a new column on SSO
-configurations; `0258`, a new column on test cases); the release's migration
-step runs them.
+calls answer. The release's migration step applies schema changes through
+`0265`, including SSO, test case, telemetry and upload receipt changes.
+
+### Upgrade ingestion workers before enabling uploads on the new API
+
+Apply `0265` and upgrade every worker that consumes the ingestion queue before
+opening the new API to uploads. Workers on the previous release can reject the
+new upload task argument. New workers continue to consume jobs queued by the
+previous API. If your rollout replaces API and worker roles together, pause
+uploads until all ingestion workers and the API report the candidate revision.
+Keep PostgreSQL connections in direct or session mode and allocate at least two
+connections per ingestion worker child. [Upload dispatch and recovery](docs/operations/upload-dispatch-recovery.md).
 
 ### Check `.env` if you installed the release images by hand
 

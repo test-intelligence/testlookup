@@ -30,9 +30,10 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from tests.celery_queue_fakes import PipelineRedis
 
 
-class _DeadRedis:
+class _DeadRedis(PipelineRedis):
     """Every access raises, as a refused connection would."""
 
     def _boom(self, *a, **kw):
@@ -159,7 +160,7 @@ async def test_a_healthy_redis_still_reports_ok():
     """The guard must not turn every healthy deployment into "unknown"."""
     from app.routers import health
 
-    class _LiveRedis:
+    class _LiveRedis(PipelineRedis):
         async def get(self, *a, **kw):
             return b"0"
 

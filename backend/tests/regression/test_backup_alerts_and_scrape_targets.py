@@ -16,6 +16,7 @@ and their values asserted.
 from __future__ import annotations
 
 import re
+import importlib.util
 import shutil
 import subprocess
 from pathlib import Path
@@ -452,7 +453,26 @@ def test_every_job_an_alert_selects_is_produced_by_a_monitor() -> None:
         job for rule in _rules().values() for job in re.findall(r'(?<![A-Za-z0-9_])job="([^"]+)"', rule["expr"])
     }
     assert selected, "no alert selects on job -- the check is vacuous"
-    assert selected <= produced, selected - produced
+    # The opt-in alerting profile owns the Alertmanager scrape. Operator
+    # installations use their platform's own AM monitor; the base application
+    # PodMonitors must not make that optional service a mandatory dependency.
+    optional_platform_jobs = {"alertmanager"}
+    # The opt-in infrastructure adapter configures site-owned exporters. Derive
+    # its bounded job labels from real generated scrapes, rather than inventing
+    # app PodMonitors for platform agents that TestLookup does not deploy.
+    generator_path = REPO_ROOT / "scripts/monitoring/configure_infrastructure_metrics.py"
+    spec = importlib.util.spec_from_file_location("infrastructure_job_contract", generator_path)
+    assert spec and spec.loader
+    generator = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(generator)
+    site = yaml.safe_load((REPO_ROOT / "infra/monitoring/infrastructure/site.example.yml").read_text(encoding="utf-8"))
+    scrapes = generator.render_scrapes({**site, "profile": "kubernetes"})["scrape_configs"]
+    infrastructure_jobs = {static["labels"]["job"] for job in scrapes for static in job["static_configs"]}
+    guide = (REPO_ROOT / "docs/operations/infrastructure-exporters.md").read_text(encoding="utf-8")
+    assert infrastructure_jobs and all(job in guide for job in infrastructure_jobs)
+    assert "site-owned" in guide
+    optional_platform_jobs |= infrastructure_jobs
+    assert selected <= produced | optional_platform_jobs, selected - produced - optional_platform_jobs
 
 
 #: Alert metrics served by an exporter the cluster runs, not by TestLookup.

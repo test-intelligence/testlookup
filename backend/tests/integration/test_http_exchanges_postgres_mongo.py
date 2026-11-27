@@ -55,7 +55,7 @@ def _dsn() -> str:
 def _samples() -> dict[str, str]:
     """The §2.1 P-2 REAL-LOOKING samples (non-hex, never a real secret), built here."""
     return {
-        "jwt": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ3MjNkLXNhbXBsZSJ9.c2lnbmF0dXJlLXNhbXBsZS12YWx1ZS0x",
+        "jwt": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ3MjNkLXNhbXBsZSJ9.c2lnbmF0dXJlLXNhbXBsZS12YWx1ZS0x", # gitleaks:allow -- synthetic test credential, never production authority
         "basic": "dzIzZDpzYW1wbGUtcGFzcw==",
         "cookie": "w23dSampleSessionValue",
         "csrf": "w23dcsrfSample",

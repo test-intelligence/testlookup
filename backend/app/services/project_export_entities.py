@@ -482,6 +482,8 @@ EXCLUDED: Mapping[str, str] = {
     "live_event_receipts": "ingest_machinery",              # X-5: per-event projection receipts; event_id globally unique
     "live_projection_checkpoints": "ingest_machinery",      # X-6: a consumer-group checkpoint of the source's stream
     "live_sessions": "ingest_machinery",                    # X-7: an ingest session with session_token_hash (a credential hash)
+    "pipeline_event_outbox": "ingest_machinery",            # pending source-deployment Mongo event publication
+    "upload_dispatch_receipts": "ingest_machinery",         # source upload identities, object keys and actor/key digests
     "agent_invocations": "ingest_machinery",                # X-8: an invocation REQUEST; the pipeline it started travels
     "agent_investigations": "ai_history",                   # X-9: budgeted working state reaped by reap_stale_investigations
     "agent_memory_entries": "artefact_or_index",            # X-10: backed by ChromaDB vectors that do not travel
@@ -587,6 +589,7 @@ NOT_PROJECT_SCOPED: Mapping[str, str] = {
     "instance_retention_policy": _INSTANCE,
     "compliance_signing_keys": "this deployment's signing keys",
     "model_versions": "the instance model registry",
+    "nightly_job_observations": "instance scheduler observations, recomputed by this deployment's jobs",
     "ai_eval_datasets": "instance eval datasets",
     "decision_report_eval_cycles": "instance eval cycles",
     "integration_health_checks": "project-KEYED cache (scope_key, no FK), recomputed by the next probe",

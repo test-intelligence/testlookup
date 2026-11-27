@@ -39,7 +39,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.http_client import http_verify
+from app.core.http_client import create_integration_http_client
 from app.models.postgres import Release
 from app.services.defect_jira_service import resolve_jira_config
 from app.services.github_checks_service import _ssrf_block_reason
@@ -122,7 +122,7 @@ async def _authorized_get(
     }
     # The deployment's TLS policy (HTTP_CA_BUNDLE / HTTP_VERIFY_TLS): an on-prem
     # Jira behind an internal CA is trusted here as it is for defect filing.
-    async with httpx.AsyncClient(timeout=_TIMEOUT, verify=http_verify()) as client:
+    async with create_integration_http_client(timeout=_TIMEOUT) as client:
         resp = await client.get(url, headers=headers, params=params or {})
     if resp.status_code != 200:
         raise JiraSyncUnavailable(f"Jira returned {resp.status_code} for {path}")

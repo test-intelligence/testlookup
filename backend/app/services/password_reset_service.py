@@ -117,7 +117,7 @@ async def stage_forgot_token(db: AsyncSession, email: str, request_ip: Optional[
         logger.info("forgot_password_skipped: reason=smtp_off")
         return None
     if not await _within_mailbox_limit(email):
-        logger.info("forgot_password_skipped: reason=rate_limited")
+        logger.info("forgot_password_skipped: reason=rate_limited") # gitleaks:allow -- field/event identifier, not credential material
         return None
     user = (
         await db.execute(select(User).where(func.lower(User.email) == email.lower()))

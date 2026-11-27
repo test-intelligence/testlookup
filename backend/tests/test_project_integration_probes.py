@@ -140,7 +140,7 @@ def world(monkeypatch):
         return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (PUBLIC_ADDRESS, 443))]
 
     monkeypatch.setattr(settings, "AI_OFFLINE_MODE", False)
-    monkeypatch.setattr(probes, "get_http_client", lambda: client)
+    monkeypatch.setattr(probes, "get_integration_http_client", lambda: client)
     monkeypatch.setattr(github_checks_service, "get_integration", github_integration)
     monkeypatch.setattr(gitlab_integration_service, "get_integration", gitlab_integration)
     monkeypatch.setattr(secret_service, "read_secret", read_secret)

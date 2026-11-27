@@ -127,7 +127,7 @@ class TestSecretPatterns:
         assert "eyJ" not in result
 
     def test_api_key(self):
-        result = redact_text("api_key=sk_live_abcdefghijklmnop")
+        result = redact_text("api_key=sk_live_abcdefghijklmnop") # gitleaks:allow -- synthetic test credential, never production authority
         assert "sk_live" not in result
 
     def test_password(self):

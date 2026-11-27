@@ -1,0 +1,26 @@
+# Inert proposal. Copy to a site-owned file; replace every scope/owner label and
+# set vector(1) only after the objective, response policy and owner are accepted.
+# Do not load both this file and its replacement. Empty cluster/namespace are valid
+# only for an installation whose local scrape labels are actually empty.
+groups:
+  - name: testlookup.api-objective-adoption
+    interval: 1m
+    rules:
+      - record: testlookup:api_objective_adopted
+        expr: vector(0)
+        labels:
+          installation: REPLACE_INSTALLATION
+          environment: production
+          cluster: ""
+          namespace: ""
+          objective: api_availability
+          owner: UNASSIGNED
+      - record: testlookup:api_objective_adopted
+        expr: vector(0)
+        labels:
+          installation: REPLACE_INSTALLATION
+          environment: production
+          cluster: ""
+          namespace: ""
+          objective: api_latency
+          owner: UNASSIGNED

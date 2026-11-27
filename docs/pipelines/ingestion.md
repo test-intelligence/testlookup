@@ -44,7 +44,7 @@ Source-aware identity combines project/build and available CI context. Re-delive
 
 ## Failure, status and observability
 
-File task state is `pending → parsing → ingesting → succeeded|failed`, updated atomically in Redis with immutable terminal states and a 24-hour TTL. Read it at `GET /api/v1/ingest/uploads/{task_id}` under project authorization. A missing/expired status is not proof the run never existed. The JSON batch path does not promise the file-status lifecycle; follow its run/task behavior separately.
+New JSON and file uploads persist task/run/object identity before storage or publication. Their state is `pending → parsing → ingesting → succeeded|failed`, stored durably with immutable terminal states. Read it at `GET /api/v1/ingest/uploads/{task_id}` under project authorization. Optional idempotency keys and an explicit retry endpoint preserve the original identity after an interrupted response. Legacy queued tasks keep their Redis status and 24-hour TTL. A missing or expired status is not proof the run never existed. See [upload publication and recovery](../operations/upload-dispatch-recovery.md) for admission, deployment order and cleanup.
 
 Parsing/storage/worker errors can happen after 202. Inspect upload error/progress, run rejection evidence, `run.received` activity, worker logs, task attempts, ingestion metrics and DLQ where applicable. A status write is best-effort and can fail independently. Run-level aggregates must reflect accepted durable cases rather than the submitted row count. Queued payloads may contain sensitive evidence, so object storage access and retention are part of the security boundary.
 

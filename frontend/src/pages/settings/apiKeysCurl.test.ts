@@ -6,7 +6,7 @@ describe('streamIngestCommand', () => {
 
   it('targets the streaming-ingest endpoint on the given base URL with the key', () => {
     expect(cmd).toContain('https://ci.example.com/api/v1/stream/ingest')
-    expect(cmd).toContain('-H "X-API-Key: tl_live_abc123"')
+    expect(cmd).toContain('-H "X-API-Key: tl_live_abc123"') // gitleaks:allow -- synthetic test credential, never production authority
   })
 
   it('leads the curl with -sS --fail-with-body so a rejected upload fails the CI step', () => {

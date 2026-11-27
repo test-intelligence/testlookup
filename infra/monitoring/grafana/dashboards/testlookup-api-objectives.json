@@ -1,0 +1,468 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "description": "Proposed scoped completed-attempt API objectives; opt-in paging, explicit unknown data and rolling coverage.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [
+    {
+      "title": "Existing route latency diagnostics",
+      "type": "link",
+      "url": "/d/testlookup-overview-v1"
+    }
+  ],
+  "panels": [
+    {
+      "id": 1,
+      "type": "text",
+      "title": "Proposed objectives — adoption and measurement limits",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 6
+      },
+      "options": {
+        "mode": "markdown",
+        "content": "**Proposals:** 99.9% availability and 95% within each eligible route's latency budget over 30 days. Paging stays disabled until one scoped owner adopts the policy. Select one exact installation/environment/cluster/namespace; empty cluster and namespace select only unlabeled Compose scope.\n\nThis measures **completed eligible API attempts**, excluding ordinary 4xx, health/metrics/admin/export routes and in-flight requests without a terminal observation. **No data is unknown; quiet traffic is not 100% success.** The baseline profile does not load these rules. Full 30-day history and retention are required for a budget. The slow windows evaluate every five minutes; inspect the as-of age. [Adoption and response runbook](https://github.com/test-intelligence/testlookup/blob/main/docs/operations/api-objectives.md)."
+      }
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Current measurement validity",
+      "description": "1 requires the complete good/bad pair and a healthy scrape on every currently observed configured API target. Vanished discovery and censored requests still require independent monitoring.",
+      "datasource": "Prometheus",
+      "gridPos": {
+        "x": 0,
+        "y": 6,
+        "w": 6,
+        "h": 5
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "Unknown / no eligible traffic",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "last"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "none"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "testlookup:api_sli_valid{installation=\"$installation\",environment=\"$environment\",cluster=\"$cluster\",namespace=\"$namespace\",objective=\"$objective\"}",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Observed success — 30d as of evaluation",
+      "description": "Unknown during warmup, gaps, missing data or no eligible traffic. Never substituted with zero or 100%.",
+      "datasource": "Prometheus",
+      "gridPos": {
+        "x": 6,
+        "y": 6,
+        "w": 6,
+        "h": 5
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "noValue": "Unknown / no eligible traffic",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "last"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "none"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "(1 - testlookup:api_sli_error_ratio{installation=\"$installation\",environment=\"$environment\",cluster=\"$cluster\",namespace=\"$namespace\",objective=\"$objective\",window=\"30d\"}) and on (installation,environment,cluster,namespace,objective) testlookup:api_sli_window_complete{installation=\"$installation\",environment=\"$environment\",cluster=\"$cluster\",namespace=\"$namespace\",objective=\"$objective\",window=\"30d\"} and on (installation,environment,cluster,namespace,objective) testlookup:api_sli_window_complete{installation=\"$installation\",environment=\"$environment\",cluster=\"$cluster\",namespace=\"$namespace\",objective=\"$objective\",window=\"5m\"}",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Remaining proposed error budget — 30d",
+      "description": "1 is all budget remaining; 0 exhausted; negative values are debt. This is the proposed objective until accepted by the site owner.",
+      "datasource": "Prometheus",
+      "gridPos": {
+        "x": 12,
+        "y": 6,
+        "w": 6,
+        "h": 5
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "noValue": "Unknown / no eligible traffic",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "last"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "none"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "testlookup:api_sli_remaining_error_budget_ratio{installation=\"$installation\",environment=\"$environment\",cluster=\"$cluster\",namespace=\"$namespace\",objective=\"$objective\"}",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Budget evaluation age",
+      "description": "The 3d/30d raw-counter queries run every five minutes. A stale or incomplete window is unknown.",
+      "datasource": "Prometheus",
+      "gridPos": {
+        "x": 18,
+        "y": 6,
+        "w": 6,
+        "h": 5
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "noValue": "Unknown / no eligible traffic",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "last"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "none"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "(time() - testlookup:api_sli_budget_observed_at_seconds{installation=\"$installation\",environment=\"$environment\",cluster=\"$cluster\",namespace=\"$namespace\",objective=\"$objective\"}) and on (installation,environment,cluster,namespace,objective) testlookup:api_sli_window_complete{installation=\"$installation\",environment=\"$environment\",cluster=\"$cluster\",namespace=\"$namespace\",objective=\"$objective\",window=\"30d\"} and on (installation,environment,cluster,namespace,objective) testlookup:api_sli_window_complete{installation=\"$installation\",environment=\"$environment\",cluster=\"$cluster\",namespace=\"$namespace\",objective=\"$objective\",window=\"5m\"}",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Burn rate by complete window",
+      "description": "Proposed page pairs: 1h+5m above 14.4x or 6h+30m above 6x; both require at least three estimated short-window bad attempts. A 3d+6h warning above 1x becomes a ticket only when the receiver implements that routing.",
+      "datasource": "Prometheus",
+      "gridPos": {
+        "x": 0,
+        "y": 11,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "Unknown",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "testlookup:api_sli_burn_rate{installation=\"$installation\",environment=\"$environment\",cluster=\"$cluster\",namespace=\"$namespace\",objective=\"$objective\"} and on (installation,environment,cluster,namespace,objective,window) testlookup:api_sli_window_complete{installation=\"$installation\",environment=\"$environment\",cluster=\"$cluster\",namespace=\"$namespace\",objective=\"$objective\"}",
+          "legendFormat": "{{window}}"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Observed complete-window coverage",
+      "description": "1 means all required observations are retained; lower values mean warmup or gaps. Thirty-day coverage uses complete five-minute checkpoints, each validated against every minute including its baseline. Coverage alone does not prove eligible traffic.",
+      "datasource": "Prometheus",
+      "gridPos": {
+        "x": 12,
+        "y": 11,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "noValue": "Unknown",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "testlookup:api_sli_window_coverage{installation=\"$installation\",environment=\"$environment\",cluster=\"$cluster\",namespace=\"$namespace\",objective=\"$objective\"}",
+          "legendFormat": "{{window}}"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Eligible attempts — estimated counter increase",
+      "description": "Reset-aware increases are summed across API replicas before division. Each line is a different time window; do not sum the lines.",
+      "datasource": "Prometheus",
+      "gridPos": {
+        "x": 0,
+        "y": 19,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "Unknown",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "testlookup:api_sli_eligible_events{installation=\"$installation\",environment=\"$environment\",cluster=\"$cluster\",namespace=\"$namespace\",objective=\"$objective\",window=~\"5m|1h|6h\"}",
+          "legendFormat": "{{window}}"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "timeseries",
+      "title": "Bad attempts — estimated counter increase",
+      "description": "Availability bad includes 429/5xx/unhandled failures. Latency bad also includes successful eligible responses whose final-body duration exceeded the route budget.",
+      "datasource": "Prometheus",
+      "gridPos": {
+        "x": 12,
+        "y": 19,
+        "w": 12,
+        "h": 8
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "noValue": "Unknown",
+          "color": {
+            "mode": "palette-classic"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "testlookup:api_sli_bad_events{installation=\"$installation\",environment=\"$environment\",cluster=\"$cluster\",namespace=\"$namespace\",objective=\"$objective\",window=~\"5m|30m|6h\"}",
+          "legendFormat": "{{window}}"
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "table",
+      "title": "Active adopted owner (empty means paging is not adopted)",
+      "description": "Exactly one active owner is required for the selected scope. The checked-in example is inert. Ambiguous policies disable objective pages.",
+      "datasource": "Prometheus",
+      "gridPos": {
+        "x": 0,
+        "y": 27,
+        "w": 24,
+        "h": 5
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "Not adopted"
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "testlookup:api_objective_active{installation=\"$installation\",environment=\"$environment\",cluster=\"$cluster\",namespace=\"$namespace\",objective=\"$objective\"}",
+          "instant": true,
+          "format": "table"
+        }
+      ]
+    }
+  ],
+  "refresh": "1m",
+  "schemaVersion": 38,
+  "tags": [
+    "testlookup",
+    "objectives",
+    "proposed"
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "installation",
+        "label": "Installation (exact)",
+        "type": "query",
+        "datasource": "Prometheus",
+        "query": "label_values(testlookup_api_sli_configured, installation)",
+        "refresh": 1,
+        "multi": false,
+        "includeAll": false
+      },
+      {
+        "name": "environment",
+        "label": "Environment (exact)",
+        "type": "query",
+        "datasource": "Prometheus",
+        "query": "label_values(testlookup_api_sli_configured{installation=\"$installation\"}, environment)",
+        "refresh": 1,
+        "multi": false,
+        "includeAll": false
+      },
+      {
+        "name": "cluster",
+        "label": "Cluster (exact; empty for Compose)",
+        "type": "textbox",
+        "query": "",
+        "current": {
+          "text": "",
+          "value": ""
+        }
+      },
+      {
+        "name": "namespace",
+        "label": "Namespace (exact; empty for Compose)",
+        "type": "textbox",
+        "query": "",
+        "current": {
+          "text": "",
+          "value": ""
+        }
+      },
+      {
+        "name": "objective",
+        "label": "Objective",
+        "type": "custom",
+        "query": "api_availability,api_latency",
+        "multi": false,
+        "includeAll": false,
+        "current": {
+          "text": "api_availability",
+          "value": "api_availability"
+        }
+      }
+    ]
+  },
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "TestLookup — API Objectives (Proposed)",
+  "uid": "testlookup-api-objectives-v1",
+  "version": 1
+}

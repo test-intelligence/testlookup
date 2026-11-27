@@ -1,0 +1,22 @@
+# Opt-in after docker-compose.monitoring.yml. This installs no host agent.
+# See docs/operations/infrastructure-exporters.md for private mTLS prerequisites.
+services:
+  prometheus:
+    volumes:
+      - ${INFRASTRUCTURE_SCRAPE_CONFIG_SOURCE:?Set the generated infrastructure scrape file}:/etc/prometheus/telemetry-scrape-infrastructure.yml:ro
+      - ${INFRASTRUCTURE_RULES_SOURCE:?Set the generated independent target contract}:/etc/prometheus/rules/infrastructure-contract.yml:ro
+    secrets:
+      - source: infrastructure-ca
+        target: /etc/prometheus/infrastructure/ca.crt
+      - source: infrastructure-client-cert
+        target: /etc/prometheus/infrastructure/client.crt
+      - source: infrastructure-client-key
+        target: /etc/prometheus/infrastructure/client.key
+
+secrets:
+  infrastructure-ca:
+    file: ${INFRASTRUCTURE_CA_SOURCE:?Set the private exporter CA file path}
+  infrastructure-client-cert:
+    file: ${INFRASTRUCTURE_CLIENT_CERT_SOURCE:?Set the monitoring client certificate file path}
+  infrastructure-client-key:
+    file: ${INFRASTRUCTURE_CLIENT_KEY_SOURCE:?Set the monitoring client key file path}

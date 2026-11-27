@@ -262,6 +262,23 @@
     "source": "frontend/src/store/authCrossTab.ts:1"
   },
   {
+    "id": "TL-SEC-001",
+    "title": "Isolated response protections and ordinary role denial",
+    "journey": "J01",
+    "priority": "P1",
+    "role": "viewer",
+    "use_case": "UC-001",
+    "area": "security",
+    "layer": "live journey",
+    "eligibility": "ephemeral-only",
+    "status": "implemented",
+    "preconditions": "Digest-bound disposable candidate with assigned synthetic VIEWER and ADMIN accounts",
+    "steps": "Read login document and response policies, resolve viewer identity, read the fixed users endpoint as viewer and admin",
+    "oracle": "Viewer identity matches, viewer receives403, admin receives200, and served header/meta controls satisfy the bounded response policy",
+    "control": "A synthetic omitted response header fails the same policy helper. TL-AUTH-001 separately proves real password sign-in and cleanup.",
+    "source": "frontend/tests/release/security-controls.spec.ts:1"
+  },
+  {
     "id": "TL-ROLE-002",
     "title": "Session resolves to its configured principal and role",
     "journey": "J01",

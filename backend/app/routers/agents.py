@@ -1228,7 +1228,7 @@ async def get_pipeline_timeline(
         .order_by(AgentStageResult.started_at, AgentStageResult.stage_name)
     )
     stages = stage_result.scalars().all()
-    events = await _resolve_maybe_awaitable(get_pipeline_events(str(pipeline_id)))
+    events = await _resolve_maybe_awaitable(get_pipeline_events(str(pipeline_id), db=db))
     from app.services.pipeline_replay_service import build_replay_integrity_summary
 
     replay_integrity = build_replay_integrity_summary(pipeline, list(stages), list(events))
@@ -1295,6 +1295,7 @@ async def get_pipeline_timeline(
         ],
         "events": [
             PipelineTimelineEventResponse(
+                event_id=event.get("event_id"),
                 event_type=event.get("event_type", "unknown"),
                 stage_name=event.get("stage_name"),
                 test_case_id=event.get("test_case_id"),
@@ -1426,17 +1427,45 @@ async def get_agentic_runtime(
 
 @router.get("/event-log/health", response_model=PipelineEventLogHealthResponse)
 async def get_pipeline_event_log_health(
-    _: Any = Depends(require_role(UserRole.QA_LEAD)),
+    project_id: uuid.UUID | None = Query(None),
+    db: AsyncSession = Depends(get_db),
+    current_user: Any = Depends(require_role(UserRole.QA_LEAD)),
 ):
-    """Return write-health details for the pipeline audit event log."""
-    from app.services.pipeline_event_log import get_event_log_health
+    """Read shared delivery health within the caller's accessible projects."""
+    from app.services.pipeline_event_operational_metrics import read_event_log_health
 
-    health = get_event_log_health()
-    status = "degraded" if health.get("write_failure_count", 0) else "healthy"
-    return {
-        "status": status,
-        **health,
-    }
+    selected, accessible = await resolve_project_scope(db, current_user, str(project_id) if project_id else None)
+    projects = {selected} if selected is not None else (None if accessible is None else set(accessible))
+    return await read_event_log_health(db, project_ids=projects)
+
+
+@router.post("/event-log/{event_id}/replay", status_code=202)
+async def replay_pipeline_event_delivery(
+    event_id: uuid.UUID,
+    project_id: uuid.UUID = Query(...),
+    db: AsyncSession = Depends(get_db),
+    current_user: Any = Depends(require_role(UserRole.QA_LEAD)),
+):
+    """Requeue one failed delivery; never re-execute pipeline business work."""
+    from app.services.pipeline_event_delivery import requeue_failed_event
+
+    await resolve_project_scope(db, current_user, str(project_id))
+    try:
+        result = await requeue_failed_event(db, event_id, project_id=project_id)
+    except ValueError:
+        raise HTTPException(409, detail="Only failed event deliveries may be requeued.") from None
+    except RuntimeError:
+        raise HTTPException(409, detail="Event history is busy; retry later.") from None
+    if result is None:
+        raise HTTPException(404, detail="Event delivery not found.")
+    await record_activity(
+        db, project_id=project_id, event_type="analysis.event_delivery_requeued",
+        actor=ActorRef.from_user(current_user), entity_id=project_id,
+        entity_label="Pipeline event delivery",
+        context={"event_id": str(event_id), "previous_attempts": result["previous_attempts"]},
+    )
+    await db.commit()
+    return result
 
 
 @router.get("/pipelines/{pipeline_id}/replay", response_model=PipelineReplayResponse)

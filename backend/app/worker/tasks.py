@@ -13,6 +13,7 @@ from celery.exceptions import Retry
 from structlog.contextvars import bind_contextvars, clear_contextvars
 
 from app.worker.celery_app import celery_app
+from app.worker.upload_receipts import UploadTrackedTask
 
 import typing as _typing
 
@@ -215,14 +216,13 @@ class DownstreamTrackedTask(Task):
 
 
 def _bind_task_context(task, **extra):
-    """Bind structured logging context for a Celery task (observability improvement)."""
+    """Enrich the current execution without discarding its canonical correlation."""
+    from app.worker.celery_app import _task_log_context
+
+    context = dict(extra)
+    context.update(_task_log_context(task=task))
     clear_contextvars()
-    bind_contextvars(
-        celery_task_id=task.request.id,
-        celery_task_name=task.name,
-        celery_retry=task.request.retries,
-        **extra,
-    )
+    bind_contextvars(**context)
 
 
 def _exponential_backoff(attempt: int, base: int = 30, cap: int = 600) -> int:
@@ -1321,6 +1321,7 @@ def ingest_test_run(
 
 @celery_app.task(
     name="app.worker.tasks.ingest_uploaded_results",
+    base=UploadTrackedTask,
     bind=True,
     max_retries=3,
     queue="ingestion",
@@ -1328,6 +1329,7 @@ def ingest_test_run(
 def ingest_uploaded_results(
     self, run_id: str, payload: dict = None, user_id: str = None,
     payload_storage_key: str = None,
+    upload_receipt_id: str | None = None,
 ):
     """
     Process a JSON batch of test results from POST /api/v1/ingest.
@@ -1442,7 +1444,6 @@ def ingest_uploaded_results(
             # Every row was refused: "succeeded, 0 tests" would read as a pass.
             await _fail_batch("ingest_error", "The batch arrived but no test results could be stored.")
             return
-        await _delete_queued_batch(payload_storage_key)
         await _set_status(
             upload_status.STATE_SUCCEEDED,
             result=_summarize_upload(
@@ -1453,6 +1454,7 @@ def ingest_uploaded_results(
                 commit_range=_commit_range_status(run),
             ),
         )
+        await _delete_queued_batch(payload_storage_key)
 
     async def _fail_batch(code: str, message: str) -> None:
         """The batch's terminal failure, where its sender and the project can see it."""
@@ -1529,6 +1531,10 @@ async def _delete_queued_batch(storage_key: str | None) -> None:
     """Remove a JSON batch's queued object once nothing will read it. Never raises."""
     if not storage_key:
         return
+    from app.worker.upload_receipts import active_receipt_id
+
+    if active_receipt_id() is not None:
+        return  # The receipt boundary deletes only after durable terminal state.
     try:
         from app.db.storage import get_storage_provider
         await get_storage_provider().delete_object(storage_key)
@@ -1538,6 +1544,7 @@ async def _delete_queued_batch(storage_key: str | None) -> None:
 
 @celery_app.task(
     name="app.worker.tasks.ingest_uploaded_file",
+    base=UploadTrackedTask,
     bind=True,
     max_retries=3,
     queue="ingestion",
@@ -1574,6 +1581,7 @@ def ingest_uploaded_file(
     # S-C-5: the router cut the supplied commit list to its cap. Sent only when
     # true; the upload status then reports ``commit_range: "truncated"``.
     commit_range_truncated: bool = False,
+    upload_receipt_id: str | None = None,
 ):
     """
     Parse an uploaded test result file and ingest.
@@ -1786,7 +1794,7 @@ def ingest_uploaded_file(
         )
         _m.uploads_total.labels(state="succeeded", format=file_format).inc()
         _m.upload_processing_seconds.observe(_time.monotonic() - _t0)
-        if file_storage_key:
+        if file_storage_key and upload_receipt_id is None:
             try:
                 from app.db.storage import get_storage_provider
                 await get_storage_provider().delete_object(file_storage_key)
@@ -3226,6 +3234,21 @@ def relay_run_downstream_outbox(self):
         raise RuntimeError(
             f"{type(exc).__name__}: run downstream outbox relay failed"
         ) from None
+
+
+@celery_app.task(
+    name="app.worker.tasks.relay_pipeline_event_outbox",
+    bind=True,
+    max_retries=0,
+    queue="default",
+    time_limit=40,
+)
+def relay_pipeline_event_outbox(self):
+    """Materialize accepted operational evidence in bounded retry batches."""
+    _bind_task_context(self)
+    from app.services.pipeline_event_delivery import relay_pipeline_events
+
+    return _run_async(relay_pipeline_events())
 
 
 @celery_app.task(
@@ -5142,7 +5165,10 @@ def refresh_perf_baselines(self) -> dict:
             )
             return out
 
-    return cast(dict, _run_async(_run()))
+    from app.services.nightly_job_observation import observe_nightly_job
+    from app.worker.nightly_schedule import PERF_BASELINE_REFRESH
+
+    return cast(dict, _run_async(observe_nightly_job(PERF_BASELINE_REFRESH, self.request.headers, _run)))
 
 
 # ── Outbound webhook delivery (Tier 2 item 6) ──────────────────────────────
@@ -5273,7 +5299,10 @@ def run_flaky_quarantine_maintenance(self) -> dict:
                 **outcomes,
             }
 
-    return cast(dict[str, Any], _run_async(_run()))
+    from app.services.nightly_job_observation import observe_nightly_job
+    from app.worker.nightly_schedule import QUARANTINE_MAINTENANCE
+
+    return cast(dict[str, Any], _run_async(observe_nightly_job(QUARANTINE_MAINTENANCE, self.request.headers, _run)))
 
 
 # ── FLK-P3: flaky-confidence model retraining ───────────────────────────────
@@ -5581,6 +5610,11 @@ def dispatch_scheduled_digests(self):
         from app.db.postgres import AsyncSessionLocal
         from app.models.postgres import DigestSubscription, NotificationLog, User
         from app.services.digest_content_service import generate_digest, render_digest_html
+        from app.services.digest_delivery_observation import (
+            digest_claim_observation,
+            digest_final_observation,
+            observe_digest_phase,
+        )
         from app.services.digest_scope_service import PROJECT_SCOPE, resolve_digest_scope
 
         now = datetime.now(timezone.utc)
@@ -5636,6 +5670,7 @@ def dispatch_scheduled_digests(self):
             saved_view_id,
             saved_view_name,
         ) in due:
+            observation_token = uuid.uuid4()
             delta = timedelta(days=1) if schedule == "DAILY" else timedelta(weeks=1)
             scheduled_next = now + delta
             period = "daily" if schedule == "DAILY" else "weekly"
@@ -5659,9 +5694,11 @@ def dispatch_scheduled_digests(self):
                         DigestSubscription.is_active.is_(True),
                         DigestSubscription.is_paused.is_(False),
                         DigestSubscription.next_delivery_at <= now,
+                        DigestSubscription.schedule == schedule,
                     )
                     .values(
                         next_delivery_at=scheduled_next,
+                        **digest_claim_observation(now=now, token=observation_token),
                     )
                     .returning(
                         DigestSubscription.user_id,
@@ -5677,9 +5714,8 @@ def dispatch_scheduled_digests(self):
                 continue
             user_id, project_id, channel = claimed
 
-            # Step 3: actually deliver. A failure here only affects the log
-            # row — the claim is already persisted so we will not retry at
-            # the next beat tick.
+            # Step 3: actually deliver. The pending-slot observation already
+            # committed with the claim; generation is not provider success.
             status = "sent"
             error_detail = None
             scope = PROJECT_SCOPE
@@ -5720,6 +5756,16 @@ def dispatch_scheduled_digests(self):
                             with_release_verdict=True,
                         )
 
+                    # Generation performs reads. Return that connection before
+                    # the independent short phase-observation transaction so
+                    # even a one-connection worker pool cannot deadlock itself.
+                    from app.db.postgres import release_read_connection
+
+                    if await release_read_connection(db):
+                        await observe_digest_phase(
+                            sub_id, observation_token, phase="generated",
+                        )
+
                     user_result = await db.execute(
                         select(User).where(User.id == user_id)
                     )
@@ -5729,6 +5775,15 @@ def dispatch_scheduled_digests(self):
                             "Claimed subscription %s references missing user %s",
                             sub_id, user_id,
                         )
+                        await db.execute(
+                            update(DigestSubscription)
+                            .where(
+                                DigestSubscription.id == sub_id,
+                                DigestSubscription.delivery_observation_token == observation_token,
+                            )
+                            .values(**digest_final_observation("skipped"))
+                        )
+                        await db.commit()
                         continue
 
                     # US-7.4: zero-change window + send_when_unchanged=False
@@ -5920,8 +5975,11 @@ def dispatch_scheduled_digests(self):
                                 error_detail = str(e)
                                 logger.warning(
                                     "Digest %s delivery failed for sub %s: %s",
-                                    channel, sub_id, e,
+                                    channel, sub_id, type(e).__name__,
                                 )
+                    else:
+                        status = "failed"
+                        error_detail = "Unsupported scheduled digest channel"
 
                     db.add(NotificationLog(
                         user_id=user_id,
@@ -5955,12 +6013,14 @@ def dispatch_scheduled_digests(self):
                         now=now,
                         scheduled_next=scheduled_next,
                     )
+                    outcome.update(digest_final_observation(status))
                     increment_count = outcome.pop("increment_delivery_count", False)
                     if increment_count:
                         outcome["delivery_count"] = DigestSubscription.delivery_count + 1
                     if outcome:
                         final_update = update(DigestSubscription).where(
-                            DigestSubscription.id == sub_id
+                            DigestSubscription.id == sub_id,
+                            DigestSubscription.delivery_observation_token == observation_token,
                         )
                         # A failed delivery may shorten only the slot this
                         # attempt claimed. A concurrent pause/resume or schedule
@@ -5972,7 +6032,11 @@ def dispatch_scheduled_digests(self):
                         await db.execute(final_update.values(**outcome))
                     await db.commit()
             except Exception as exc:
-                logger.error("Digest delivery failed for subscription %s: %s", sub_id, exc)
+                # A provider may have accepted before a later transaction
+                # failed. Keep its slot unresolved; never infer success or
+                # automatically replay an ambiguous outcome from telemetry.
+                await observe_digest_phase(sub_id, observation_token, phase="unknown")
+                logger.error("Digest delivery failed for subscription %s: %s", sub_id, type(exc).__name__)
 
     with _beat_span("dispatch_scheduled_digests") as span:
         try:
@@ -7834,7 +7898,27 @@ def run_retention_purges(self, project_id: str | None = None) -> dict:
 
     async def _run():
         with _beat_span("run_retention_purges") as span:
+            identity = None
+            uploads = None
+            if project_id is None:
+                from app.services.identity_retention_service import run_scheduled_batch
+                from app.worker.upload_receipts import sweep_terminal_uploads
+
+                try:
+                    identity = await run_scheduled_batch()
+                except Exception as exc:  # noqa: BLE001 - preserve the independent project sweep
+                    identity = {"status": "failed", "deleted": 0}
+                    _slog.warning("identity_retention_sweep_failed", error_type=type(exc).__name__)
+                try:
+                    uploads = await sweep_terminal_uploads()
+                except Exception as exc:  # noqa: BLE001 - preserve the independent project sweep
+                    uploads = {"status": "failed"}
+                    _slog.warning("terminal_upload_sweep_failed", error_type=type(exc).__name__)
             out = await _retention_purge_sweep(project_id, owner=owner)
+            if identity is not None:
+                out["identity_security_events"] = identity
+            if uploads is not None:
+                out["upload_receipts"] = uploads
             span.set_attribute("result.projects", int(out.get("projects", 0)))
             span.set_attribute("result.errors", int(out.get("errors", 0)))
             span.set_attribute("explicit_project", bool(project_id))

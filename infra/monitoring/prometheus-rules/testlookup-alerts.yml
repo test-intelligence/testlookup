@@ -1,5 +1,115 @@
 # TestLookup — Prometheus alerting rules
 groups:
+  # The expected-role inventory is independent of scrape discovery. Compose
+  # loads compose-telemetry-contract.yml; Operator installs the equivalent
+  # k8s/monitoring/telemetry-contract.yaml. Do not derive it from `up`.
+  - name: testlookup.telemetry
+    interval: 30s
+    rules:
+      - alert: TestLookupTelemetryContractMissing
+        expr: absent(testlookup:telemetry_expected_role)
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "The required telemetry inventory is not loaded"
+          description: "No expected-role recording rules are evaluating. Load the inventory for this monitoring profile and verify its selection independently of the application PodMonitors. Missing inventory makes role-loss detection incomplete. Runbook: docs/operations/telemetry-contract.md."
+
+      # Set matching intentionally tolerates extra rollout replicas and only
+      # requires one healthy target per declared role. It also handles `up`
+      # disappearing entirely, unlike `up == 0` on its own.
+      - alert: TestLookupExpectedRoleUnavailable
+        expr: |
+          (testlookup:telemetry_expected_role == 1)
+          unless on (cluster, namespace, job, telemetry_profile, telemetry_role)
+          (up == 1)
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "A required TestLookup telemetry role has no healthy target"
+          description: "Profile {{ $labels.telemetry_profile }} role {{ $labels.telemetry_role }} has no healthy {{ $labels.job }} scrape target for five minutes. Check discovery, monitor selectors, port, scrape credentials and network policy; an entirely deleted monitor also triggers this alert. Runbook: docs/operations/telemetry-contract.md."
+
+      # These four collectors are an unconditional E02 baseline. New optional
+      # collectors must explicitly join the contract when applicable. Preserve
+      # each target, rather than allowing a healthy replica to hide a broken one.
+      - record: testlookup:telemetry_required_collector
+        expr: |
+          label_replace(up{job="testlookup-backend"} == 1, "collector", "queues", "job", ".*")
+          or label_replace(up{job="testlookup-backend"} == 1, "collector", "agents", "job", ".*")
+          or label_replace(up{job="testlookup-backend"} == 1, "collector", "downstream", "job", ".*")
+          or label_replace(up{job="testlookup-backend"} == 1, "collector", "redis", "job", ".*")
+
+      - alert: TestLookupRequiredTelemetryMissing
+        expr: |
+          label_replace(
+            testlookup:telemetry_required_collector
+            unless on (cluster, namespace, job, instance, telemetry_profile, telemetry_role, collector)
+            testlookup_metric_collection_success,
+            "signal", "collection_success", "job", ".*"
+          )
+          or
+          label_replace(
+            testlookup:telemetry_required_collector
+            unless on (cluster, namespace, job, instance, telemetry_profile, telemetry_role, collector)
+            testlookup_metric_collection_last_success_timestamp_seconds,
+            "signal", "collection_last_success", "job", ".*"
+          )
+          or
+          label_replace(
+            (up{job=~"testlookup-backend|testlookup-worker"} == 1)
+            unless on (cluster, namespace, job, instance, telemetry_profile, telemetry_role)
+            testlookup_finalize_step_failures_total{step="suite_sync"},
+            "signal", "metric_registry", "job", ".*"
+          )
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "A healthy scrape is missing required application telemetry"
+          description: "Target {{ $labels.instance }} is up but required signal {{ $labels.signal }} (collector {{ $labels.collector }}) is absent. Check exporter initialization and metric relabel/drop filters. Zero is valid; lazy task histograms and optional collectors are deliberately excluded. Runbook: docs/operations/telemetry-contract.md."
+
+      # An external dead-man receiver must alert when these notifications stop.
+      # This rule alone cannot detect the failure of its own Prometheus server.
+      - alert: TestLookupWatchdog
+        expr: vector(time())
+        labels:
+          severity: none
+          category: watchdog
+        annotations:
+          summary: "TestLookup notification heartbeat"
+          description: "Always firing. Route to an independently hosted authenticated dead-man receiver that alarms on missing heartbeats; do not page on normal receipt. Runbook: docs/operations/alert-routing.md."
+          heartbeat_evaluated_at_unix_seconds: '{{ printf "%.0f" $value }}'
+
+      # Alertmanager is optional. These rules require its actual scrape series;
+      # the opt-in alerting profile supplies its job and external routing.
+      - alert: TestLookupAlertmanagerDown
+        expr: up{job="alertmanager"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "The configured Alertmanager scrape is failing"
+          description: "Alert delivery may be unavailable. Check Alertmanager health and its scrape path, then use the independent heartbeat receiver to confirm notification-path recovery."
+
+      - alert: TestLookupAlertmanagerNotificationsFailing
+        expr: increase(alertmanager_notifications_failed_total{job="alertmanager"}[5m]) > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Alertmanager failed to deliver notifications"
+          description: "A configured receiver has failed notification attempts in the last five minutes. Inspect receiver authorization, connectivity and rate limits; verify delivery through the independent receiver."
+
+      - alert: TestLookupAlertmanagerConfigReloadFailed
+        expr: alertmanager_config_last_reload_successful{job="alertmanager"} == 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Alertmanager rejected its latest configuration reload"
+          description: "The intended routing configuration is not active. Validate the configuration and confirm a successful reload before relying on new receiver routes."
+
   - name: testlookup.application
     interval: 30s
     rules:
@@ -13,6 +123,54 @@ groups:
         annotations:
           summary: "TestLookup backend is down"
           description: "The FastAPI backend has been unreachable for more than 1 minute."
+
+      # The scrape can succeed while one operational dependency cannot be read.
+      # Keep per-target labels: another healthy API replica must not hide it.
+      - alert: TestLookupOperationalCollectionStale
+        expr: |
+          testlookup_metric_collection_success == 0
+          or
+          (time() - testlookup_metric_collection_last_success_timestamp_seconds) > 120
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Operational metric collection failed or is stale"
+          description: "Collector {{ $labels.collector }} cannot provide a fresh snapshot on this target. Scrape availability alone does not prove dependency health; inspect metric_collection_failed logs before trusting the retained gauges."
+
+      # Each API replica reads the SAME SQL outbox. max avoids counting one
+      # failure twice; cluster/namespace preserve independent installations.
+      - alert: TestLookupDownstreamOutboxFailed
+        expr: |
+          max by (cluster, namespace, operation) (
+            testlookup_downstream_outbox_entries{status="failed"}
+            and on (cluster, namespace, job, instance)
+            (testlookup_metric_collection_success{collector="downstream"} == 1)
+            and on (cluster, namespace, job, instance)
+            ((time() - testlookup_metric_collection_last_success_timestamp_seconds{collector="downstream"}) <= 120)
+          ) > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Durable downstream work exhausted retries"
+          description: "Operation {{ $labels.operation }} has {{ $value }} terminal failed outbox rows. Empty broker queues and Celery SUCCESS do not imply business completion. Inspect durable outbox outcomes and use the authorized replay process after fixing the cause."
+
+      - alert: TestLookupDownstreamOutboxOverdue
+        expr: |
+          max by (cluster, namespace, operation) (
+            testlookup_downstream_outbox_overdue_seconds{status=~"waiting|pending|sending|published|processing"}
+            and on (cluster, namespace, job, instance)
+            (testlookup_metric_collection_success{collector="downstream"} == 1)
+            and on (cluster, namespace, job, instance)
+            ((time() - testlookup_metric_collection_last_success_timestamp_seconds{collector="downstream"}) <= 120)
+          ) > 300
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Durable downstream work missed its retry or lease deadline"
+          description: "Operation {{ $labels.operation }} is {{ $value }} seconds beyond its stored retry or execution lease deadline. The rule includes a five-minute margin and does not treat scheduled future retries as stuck. Inspect relay and worker health."
 
       # High HTTP 5xx error rate
       - alert: TestLookupHighErrorRate
@@ -151,39 +309,136 @@ groups:
     interval: 30s
     rules:
 
-      # PostgreSQL connection pool exhaustion
+      # livemax preserves one exhausted process even when other pools are idle.
+      # The producer includes configured overflow in each process's capacity.
       - alert: TestLookupDBPoolExhausted
         expr: |
-          sqlalchemy_pool_checked_out{job="testlookup-backend"}
-          /
-          sqlalchemy_pool_size{job="testlookup-backend"} > 0.9
+          sqlalchemy_pool_utilization_ratio{job=~"testlookup-backend|testlookup-worker"} > 0.9
         for: 2m
         labels:
           severity: critical
         annotations:
-          summary: "Database connection pool > 90% utilized"
-          description: "PostgreSQL pool is nearly exhausted. Increase pool_size or investigate long-running queries."
+          summary: "A database connection pool is > 90% utilized"
+          description: "At least one {{ $labels.role }} process has used over 90% of its PostgreSQL pool capacity, including configured overflow. Investigate held connections and slow transactions; check the fleet connection budget before increasing pool limits."
 
-      # Redis memory at capacity
+      # Native INFO memory observes configured application and broker roles.
+      # Excluded replication/AOF buffers are not part of the eviction budget.
+      # Never sum redundant API replicas or two roles sharing one Redis server.
       - alert: TestLookupRedisMemoryHigh
-        expr: redis_memory_used_bytes / redis_memory_max_bytes > 0.85
+        expr: |
+          max by (cluster, namespace, store_role) (
+            (
+              testlookup_redis_memory_counted_for_evict_bytes{job="testlookup-backend"}
+              / redis_memory_max_bytes{job="testlookup-backend"}
+            )
+            and on (cluster, namespace, job, instance, store_role)
+              (redis_memory_max_bytes{job="testlookup-backend"} > 0)
+            and on (cluster, namespace, job, instance)
+              (testlookup_metric_collection_success{job="testlookup-backend",collector="redis"} == 1)
+            and on (cluster, namespace, job, instance)
+              ((time() - testlookup_metric_collection_last_success_timestamp_seconds{job="testlookup-backend",collector="redis"}) <= 120)
+          ) > 0.85
         for: 5m
         labels:
           severity: warning
         annotations:
           summary: "Redis memory usage > 85%"
-          description: "Redis is approaching its memory limit. Volatile-LRU eviction may start dropping session tokens."
+          description: "Configured {{ $labels.store_role }} Redis/Valkey memory counted for eviction exceeds 85% of maxmemory. Inspect capacity and key eviction policy; application and broker roles may share one physical server."
 
-      # Celery queue depth — tasks backing up
-      - alert: TestLookupCeleryQueueBacklog
+      - alert: TestLookupRedisMemoryLimitMissing
         expr: |
-          max by (queue_name) (celery_queue_length) > 100
+          max by (cluster, namespace, store_role) (
+            redis_memory_max_bytes{job="testlookup-backend"}
+            and on (cluster, namespace, job, instance)
+              (testlookup_metric_collection_success{job="testlookup-backend",collector="redis"} == 1)
+            and on (cluster, namespace, job, instance)
+              ((time() - testlookup_metric_collection_last_success_timestamp_seconds{job="testlookup-backend",collector="redis"}) <= 120)
+          ) == 0
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Redis has no configured dataset memory limit"
+          description: "Configured {{ $labels.store_role }} Redis/Valkey reports maxmemory=0. Percentage saturation is undefined; define a supported capacity policy with headroom for process/container overhead or an explicit managed-service exception."
+
+      # API replicas observe the same broker. Gate each logical queue by its
+      # own completed observation before merging equivalent replicas.
+      - record: testlookup:celery_queue_pending
+        expr: |
+          max by (cluster, namespace, telemetry_profile, queue_name) (
+            celery_queue_length{job="testlookup-backend"}
+            and on (cluster, namespace, telemetry_profile, job, instance, queue_name)
+              (testlookup_celery_queue_depth_observed_timestamp_seconds{job="testlookup-backend"} > 0)
+            and on (cluster, namespace, telemetry_profile, job, instance, queue_name)
+              ((time() - testlookup_celery_queue_depth_observed_timestamp_seconds{job="testlookup-backend"}) <= 60)
+            and on (cluster, namespace, telemetry_profile, job, instance, queue_name)
+              ((time() - testlookup_celery_queue_depth_observed_timestamp_seconds{job="testlookup-backend"}) >= 0)
+            and on (cluster, namespace, telemetry_profile, job, instance)
+              (up{job="testlookup-backend"} == 1)
+          )
+
+      - alert: TestLookupCeleryQueueBacklog
+        expr: testlookup:celery_queue_pending > 100
         for: 5m
         labels:
           severity: warning
         annotations:
           summary: "Celery queue backlog > 100 tasks"
-          description: "Queue {{ $labels.queue_name }} has more than 100 pending tasks. Workers may need scaling."
+          description: "Queue {{ $labels.queue_name }} has more than 100 broker-pending tasks. Check consumer health, progress and capacity. Runbook at docs/operations/celery-queue-monitoring.md."
+
+      - alert: TestLookupChildQueueNoHealthyTarget
+        expr: |
+          (
+            (testlookup:celery_queue_pending{queue_name="agent_children"} > 0)
+            and on (cluster, namespace, telemetry_profile)
+              (testlookup:telemetry_expected_role{job="testlookup-worker",telemetry_role="worker-children"} == 1)
+          )
+          unless on (cluster, namespace, telemetry_profile)
+            (up{job="testlookup-worker",telemetry_role="worker-children"} == 1)
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Child tasks are pending and their worker targets are unavailable"
+          description: "The broker has child tasks pending and the declared worker-children role has no healthy scrape target. Check the worker deployment and its monitoring path. Runbook at docs/operations/celery-queue-monitoring.md."
+
+      - record: testlookup:celery_child_worker_progress_3m
+        expr: |
+          (
+            sum by (cluster, namespace, telemetry_profile) (
+              increase(celery_task_queue_wait_seconds_count{job="testlookup-worker",telemetry_role="worker-children",queue_name="agent_children"}[3m])
+            ) > 0
+          )
+          or
+          (
+            sum by (cluster, namespace, telemetry_profile) (
+              increase(celery_task_queue_wait_unavailable_total{job="testlookup-worker",telemetry_role="worker-children",queue_name="agent_children"}[3m])
+            ) > 0
+          )
+          or
+          (
+            sum by (cluster, namespace, telemetry_profile) (
+              increase(celery_task_runtime_seconds_count{job="testlookup-worker",telemetry_role="worker-children",queue_name="agent_children"}[3m])
+            ) > 0
+          )
+
+      - alert: TestLookupChildQueueNoProgress
+        expr: |
+          (
+            (testlookup:celery_queue_pending{queue_name="agent_children"} > 0)
+            and on (cluster, namespace, telemetry_profile)
+              (testlookup:telemetry_expected_role{job="testlookup-worker",telemetry_role="worker-children"} == 1)
+            and on (cluster, namespace, telemetry_profile)
+              (up{job="testlookup-worker",telemetry_role="worker-children"} == 1)
+          )
+          unless on (cluster, namespace, telemetry_profile)
+            (testlookup:celery_child_worker_progress_3m > 0)
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Pending child tasks have no recent worker progress"
+          description: "The child queue kept a broker backlog while a worker-children target was scrapeable. Recent starts and completed attempts were absent. Check routing, broker connectivity and worker capacity. Runbook at docs/operations/celery-queue-monitoring.md."
 
       # Task execution time P99 exceeds budget
       - alert: TestLookupTaskLatencyHigh
@@ -202,23 +457,108 @@ groups:
       # Disk space low (requires node-exporter)
       - alert: TestLookupDiskSpaceLow
         expr: |
-          (node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"}) < 0.10
+          (
+            node_filesystem_avail_bytes{job=~"node-exporter|testlookup-infra-host",mountpoint="/"}
+            / (node_filesystem_size_bytes{job=~"node-exporter|testlookup-infra-host",mountpoint="/"} > 0)
+          ) < 0.10
         for: 10m
         labels:
           severity: critical
         annotations:
           summary: "Disk space < 10% remaining"
-          description: "Root filesystem has less than 10% free space. Data loss risk."
+          description: "The root filesystem on {{ $labels.instance }} has less than 10% available space. Check host storage and the installation's data volumes. Runbook at docs/operations/infrastructure-exporters.md."
 
-      # OOM kill events (requires node-exporter with textfile collector)
+      # OOM kill events from the Linux vmstat collector.
       - alert: TestLookupOOMKillDetected
-        expr: increase(node_vmstat_oom_kill[5m]) > 0
+        expr: increase(node_vmstat_oom_kill{job=~"node-exporter|testlookup-infra-host"}[5m]) > 0
         for: 0m
         labels:
           severity: critical
         annotations:
           summary: "OOM kill detected on host"
-          description: "The kernel OOM killer terminated a process. Check container resource limits."
+          description: "The Linux host {{ $labels.instance }} reports an OOM kill. Check affected workloads and memory pressure. Runbook at docs/operations/infrastructure-exporters.md."
+
+  # The site opts in by loading expected targets independently of discovery.
+  # A missing exporter target and an unavailable monitored database differ.
+  - name: testlookup.infrastructure_exporters
+    interval: 30s
+    rules:
+      - alert: TestLookupInfrastructureExporterUnavailable
+        expr: |
+          (testlookup:infrastructure_expected_target == 1)
+          unless on (cluster, namespace, telemetry_profile, telemetry_role, job, instance)
+            (up == 1)
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "A declared infrastructure exporter is unavailable"
+          description: "Check discovery, private routing and TLS trust for {{ $labels.telemetry_role }} target {{ $labels.instance }}. Runbook at docs/operations/infrastructure-exporters.md."
+
+      - record: testlookup:infrastructure_expected_healthy_target
+        expr: |
+          (testlookup:infrastructure_expected_target == 1)
+          and on (cluster, namespace, telemetry_profile, telemetry_role, job, instance)
+            (up == 1)
+
+      - alert: TestLookupInfrastructureExporterSignalMissing
+        expr: |
+          label_replace(
+            testlookup:infrastructure_expected_healthy_target{job="testlookup-infra-host"}
+            unless on (cluster, namespace, telemetry_profile, telemetry_role, job, instance)
+              node_filesystem_avail_bytes{job="testlookup-infra-host",mountpoint="/"},
+            "signal", "root_available_bytes", "job", ".*"
+          )
+          or
+          label_replace(
+            testlookup:infrastructure_expected_healthy_target{job="testlookup-infra-host"}
+            unless on (cluster, namespace, telemetry_profile, telemetry_role, job, instance)
+              (node_filesystem_size_bytes{job="testlookup-infra-host",mountpoint="/"} > 0),
+            "signal", "root_size_bytes", "job", ".*"
+          )
+          or
+          label_replace(
+            testlookup:infrastructure_expected_healthy_target{job="testlookup-infra-host"}
+            unless on (cluster, namespace, telemetry_profile, telemetry_role, job, instance)
+              node_vmstat_oom_kill{job="testlookup-infra-host"},
+            "signal", "oom_kills", "job", ".*"
+          )
+          or
+          label_replace(
+            testlookup:infrastructure_expected_healthy_target{job="testlookup-infra-postgres"}
+            unless on (cluster, namespace, telemetry_profile, telemetry_role, job, instance)
+              pg_up{job="testlookup-infra-postgres"},
+            "signal", "database_up", "job", ".*"
+          )
+          or
+          label_replace(
+            (
+              testlookup:infrastructure_expected_healthy_target{job="testlookup-infra-postgres"}
+              and on (cluster, namespace, telemetry_profile, telemetry_role, job, instance)
+                (pg_up{job="testlookup-infra-postgres"} == 1)
+            )
+            unless on (cluster, namespace, telemetry_profile, telemetry_role, job, instance)
+              (pg_settings_max_connections{job="testlookup-infra-postgres"} > 0),
+            "signal", "database_max_connections", "job", ".*"
+          )
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "An infrastructure exporter is missing a required signal"
+          description: "Target {{ $labels.instance }} answered its scrape without a usable {{ $labels.signal }} sample. Check collector configuration and metric filters. Runbook at docs/operations/infrastructure-exporters.md."
+
+      - alert: TestLookupPostgresExporterDatabaseUnavailable
+        expr: |
+          (pg_up{job="testlookup-infra-postgres"} == 0)
+          and on (cluster, namespace, telemetry_profile, telemetry_role, job, instance)
+            testlookup:infrastructure_expected_healthy_target{job="testlookup-infra-postgres"}
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "A PostgreSQL exporter cannot reach its database"
+          description: "Exporter {{ $labels.instance }} answered but reported a PostgreSQL connection failure. Check datastore availability, the restricted monitor account and TLS. Runbook at docs/operations/infrastructure-exporters.md."
 
   # ── Per-endpoint SLO budgets ──────────────────────────────────────────────
   #
@@ -493,10 +833,12 @@ groups:
       - alert: TestLookupWebhookDeliveryFailureRate
         expr: |
           (
-            sum(rate(testlookup_webhook_delivery_attempts_total{result="failure"}[15m]))
+            sum by (cluster, namespace) (rate(testlookup_webhook_delivery_attempts_total{result="failure"}[15m]))
             /
-            clamp_min(sum(rate(testlookup_webhook_delivery_attempts_total[15m])), 1)
+            sum by (cluster, namespace) (rate(testlookup_webhook_delivery_attempts_total[15m]))
           ) > 0.05
+          and on (cluster, namespace)
+          sum by (cluster, namespace) (rate(testlookup_webhook_delivery_attempts_total[15m])) > 0
         for: 15m
         labels:
           severity: warning
@@ -506,78 +848,81 @@ groups:
           summary: "Outbound webhook delivery failure rate > 5% for 15 min"
           description: "More than 5% of webhook delivery attempts are terminal failures over the last 15 minutes. Check the Webhook Deliveries panel in /settings/webhooks for the DLQ rows and the most recent error text, and consider quarantining the offending subscription until the receiver is fixed."
 
-      # ── 1-3 Flaky quarantine maintenance: back-to-back failures ────────
-      # The beat runs once daily at 04:00 UTC. Two failures in a row
-      # leaves the quarantine queue unmanaged for 48+ hours, during
-      # which PROPOSED rows won't expire and approved rows won't be
-      # re-checked. Scoped to the specific Celery task name so other
-      # task failures don't page the quarantine on-call.
+      # 04:00 UTC due slot and one-hour completion margin. The SQL snapshot
+      # describes the same installation across worker and API replacement.
       - alert: TestLookupFlakyQuarantineMaintenanceFailing
         expr: |
-          increase(
-            testlookup_celery_tasks_total{
-              task_name="app.worker.tasks.run_flaky_quarantine_maintenance",
-              status="failure"
-            }[2d]
-          ) >= 2
-        for: 0m
+          max by (cluster, namespace, schedule) (
+            testlookup_nightly_job_overdue{job="testlookup-backend",schedule="quarantine_maintenance"}
+            and on (cluster, namespace, job, instance)
+              (testlookup_metric_collection_success{job="testlookup-backend",collector="nightly"} == 1)
+            and on (cluster, namespace, job, instance)
+              ((time() - testlookup_metric_collection_last_success_timestamp_seconds{job="testlookup-backend",collector="nightly"}) <= 120)
+          ) == 1
+        for: 5m
         labels:
           severity: warning
           tier: "1-3"
           feature: flaky_auto_quarantine
         annotations:
-          summary: "Flaky quarantine maintenance beat failed twice in a row"
-          description: "The run_flaky_quarantine_maintenance Celery beat (04:00 UTC) has failed on two consecutive runs. PROPOSED rows aren't being expired and approved rows aren't being rechecked. Check the worker logs for the most recent traceback and the celery.beat.run_flaky_quarantine_maintenance spans in Jaeger."
+          summary: "Flaky quarantine maintenance missed its completion deadline"
+          description: "The enabled nightly quarantine slot has no durable success after its one-hour completion margin. Compare the schedule's last attempt and success to distinguish missing dispatch from incomplete work, then inspect worker and Beat health."
 
-      # ── 2-12 Weekly retro digest: missed Monday dispatch ───────────────
-      # The Monday 07:05 UTC beat entry produces a WEEKLY_RETRO digest
-      # for each subscribed project. If the success counter hasn't
-      # incremented in the last 2 hours of the Monday 08:00-10:00 UTC
-      # window, the dispatch almost certainly didn't fire — either the
-      # beat scheduler is down, the feature flag got flipped off, or
-      # the retro_digest_service crashed inside the dispatcher loop.
-      # The day-of-week+hour guard narrows the alert to the window
-      # where we'd actually expect traffic.
-      - alert: TestLookupWeeklyRetroDigestMissedMonday
+      # Subscription due dates are UTC instants on arbitrary weekdays. The
+      # durable claim receipt survives next_delivery_at advancement/retries.
+      # The producer allows the normal daily dispatch interval plus processing
+      # grace. Generation counters are diagnostics, never delivery evidence.
+      - alert: TestLookupWeeklyDigestDeliveryOverdue
         expr: |
-          (
-            increase(
-              testlookup_retro_digest_dispatch_total{status="success"}[2h]
-            ) == 0
-          )
-          and (day_of_week() == 1)
-          and (hour() >= 8 and hour() < 10)
+          max by (cluster, namespace, schedule) (
+            testlookup_weekly_digest_oldest_overdue_seconds{job="testlookup-backend"}
+            and on (cluster, namespace, job, instance)
+              (testlookup_metric_collection_success{job="testlookup-backend",collector="digests"} == 1)
+            and on (cluster, namespace, job, instance)
+              ((time() - testlookup_metric_collection_last_success_timestamp_seconds{job="testlookup-backend",collector="digests"}) <= 120)
+          ) > 0
         for: 15m
         labels:
           severity: warning
-          tier: "2-12"
-          feature: weekly_retro_digest
         annotations:
-          summary: "Weekly retro digest didn't dispatch on Monday"
-          description: "No retro_digest_dispatch_total{status=\"success\"} increments have been observed during the Monday 08:00-10:00 UTC window. The Monday 07:05 UTC beat either didn't fire, the weekly_retro_digest feature flag got flipped off, or every generate_weekly_retro call raised. Check the celery.beat.dispatch_scheduled_digests span in Jaeger for the most recent Monday and the worker logs."
+          summary: "Weekly digest delivery has overdue work"
+          description: "An enabled {{ $labels.schedule }} subscription has an unresolved due slot beyond the normal daily dispatch interval and processing grace. Content generation is not provider delivery. Inspect durable attempt outcomes and provider logs before replaying any ambiguous send."
 
-      # ── 2-10 Perf baseline refresh: back-to-back failures ──────────────
-      # The nightly refresh is best-effort (the release gate falls back
-      # to the hardcoded config thresholds if no baseline exists), so a
-      # single miss is not a page. Two consecutive failures mean the
-      # baselines are frozen on stale data and spike detection at gate
-      # time degrades to "no signal".
+      - alert: TestLookupWeeklyDigestScheduleMissing
+        expr: |
+          max by (cluster, namespace, schedule) (
+            testlookup_weekly_digest_subscriptions{job="testlookup-backend",state="missing_schedule"}
+            and on (cluster, namespace, job, instance)
+              (testlookup_metric_collection_success{job="testlookup-backend",collector="digests"} == 1)
+            and on (cluster, namespace, job, instance)
+              ((time() - testlookup_metric_collection_last_success_timestamp_seconds{job="testlookup-backend",collector="digests"}) <= 120)
+          ) > 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Enabled weekly digest has no due schedule"
+          description: "An enabled {{ $labels.schedule }} subscription has neither a next delivery time nor an unresolved claimed slot. Inspect its durable schedule; absence of a due date is not successful delivery."
+
+      # 04:30 UTC due slot and one-hour completion margin. Disabled features
+      # have no deadline, and a skipped refresh does not advance success.
       - alert: TestLookupPerfBaselineRefreshFailing
         expr: |
-          increase(
-            testlookup_celery_tasks_total{
-              task_name="app.worker.tasks.refresh_perf_baselines",
-              status="failure"
-            }[2d]
-          ) >= 2
-        for: 0m
+          max by (cluster, namespace, schedule) (
+            testlookup_nightly_job_overdue{job="testlookup-backend",schedule="perf_baseline_refresh"}
+            and on (cluster, namespace, job, instance)
+              (testlookup_metric_collection_success{job="testlookup-backend",collector="nightly"} == 1)
+            and on (cluster, namespace, job, instance)
+              ((time() - testlookup_metric_collection_last_success_timestamp_seconds{job="testlookup-backend",collector="nightly"}) <= 120)
+          ) == 1
+        for: 5m
         labels:
           severity: warning
           tier: "2-10"
           feature: perf_regression_detection
         annotations:
-          summary: "Perf baseline refresh beat failed twice in a row"
-          description: "The refresh_perf_baselines Celery beat (04:30 UTC) has failed on two consecutive runs. Release-gate spike detection will degrade to 'no signal' against stale baselines. Check the celery.beat.refresh_perf_baselines spans in Jaeger and the worker logs."
+          summary: "Performance baseline refresh missed its completion deadline"
+          description: "The enabled nightly baseline refresh has no durable success after its one-hour completion margin. Check the schedule's last attempt and success, Beat dispatch and worker logs. Release gating may use stale baselines."
 
       # ── 1-4 Release compliance pack generation errors ──────────────────
       # Pack generation is user-triggered (QA Lead clicks "Generate
@@ -653,3 +998,69 @@ groups:
         annotations:
           summary: "No successful TestLookup backup in 26 hours"
           description: "The testlookup-backup CronJob has not completed successfully for more than 26h (failing, suspended, or never run). The newest restorable archive is older than a day. Runbook: k8s/components/backup/README.md."
+
+  - name: testlookup.pipeline_event_delivery
+    interval: 30s
+    rules:
+      # Every API reads the same SQL rows. Filter each scrape for successful
+      # fresh collection before taking a fleet maximum; never sum replicas.
+      - alert: TestLookupPipelineEventDeliveryFailed
+        expr: |
+          max by (cluster, namespace) (
+            testlookup_pipeline_event_outbox_entries{job="testlookup-backend",status="failed"}
+            and on (cluster, namespace, job, instance)
+              (testlookup_metric_collection_success{collector="pipeline_events"} == 1)
+            and on (cluster, namespace, job, instance)
+              (time() - testlookup_metric_collection_last_success_timestamp_seconds{collector="pipeline_events"} < 120)
+          ) > 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Pipeline event delivery requires recovery"
+          description: "Automatic event materialization exhausted retries or found an immutable identity conflict. SQL retains the unresolved evidence; inspect scoped event-log health before explicit delivery requeue. This does not re-execute a pipeline or prove Mongo evidence was lost."
+          runbook_url: "https://github.com/test-intelligence/testlookup/blob/main/docs/operations/pipeline-event-delivery.md"
+
+      - alert: TestLookupPipelineEventBacklogStale
+        expr: |
+          max by (cluster, namespace) (
+            testlookup_pipeline_event_outbox_oldest_age_seconds{job="testlookup-backend",status=~"pending|sending"}
+            and on (cluster, namespace, job, instance)
+              (testlookup_metric_collection_success{collector="pipeline_events"} == 1)
+            and on (cluster, namespace, job, instance)
+              (time() - testlookup_metric_collection_last_success_timestamp_seconds{collector="pipeline_events"} < 120)
+          ) > 300
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Pipeline event materialization is falling behind"
+          description: "A durable pending or leased event is older than five minutes. Verify the relay schedule, default-queue consumer, Mongo connectivity and expired leases. Retained intent age is not the age of a missing business operation."
+          runbook_url: "https://github.com/test-intelligence/testlookup/blob/main/docs/operations/pipeline-event-delivery.md"
+
+      - alert: TestLookupPipelineEventCapacityHigh
+        expr: |
+          max by (cluster, namespace) (
+            (sum without (status) (testlookup_pipeline_event_outbox_entries{job="testlookup-backend"})
+              / testlookup_pipeline_event_outbox_capacity{job="testlookup-backend"})
+            and on (cluster, namespace, job, instance)
+              (testlookup_metric_collection_success{collector="pipeline_events"} == 1)
+            and on (cluster, namespace, job, instance)
+              (time() - testlookup_metric_collection_last_success_timestamp_seconds{collector="pipeline_events"} < 120)
+          ) > 0.85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Shared pipeline event admission is near its row limit"
+          description: "Retained intents and acknowledged receipts exceed 85% of the installation row limit. Restore relay delivery; only acknowledged receipts may be pressure-pruned. Never delete pending or failed evidence to make room."
+          runbook_url: "https://github.com/test-intelligence/testlookup/blob/main/docs/operations/pipeline-event-delivery.md"
+
+      - alert: TestLookupPipelineEventAdmissionRefused
+        expr: sum by (cluster, namespace, reason) (increase(testlookup_pipeline_event_admission_failures_total[5m])) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "A pipeline event was not durably admitted"
+          description: "At least one source event could not enter the SQL delivery boundary. Accepted backlog recovery cannot reconstruct an event that was never admitted; inspect the bounded reason and source failure handling."
+          runbook_url: "https://github.com/test-intelligence/testlookup/blob/main/docs/operations/pipeline-event-delivery.md"

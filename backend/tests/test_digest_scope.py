@@ -576,6 +576,13 @@ def _dispatch(monkeypatch, *, schedule, saved_view_id, saved_view_name, view_ans
         None,  # the finalising UPDATE
     ]
     monkeypatch.setattr(postgres, "AsyncSessionLocal", lambda: _ScriptedSession(world))
+    # These cases isolate saved-view scoping; real transactional phase/CAS
+    # observation is exercised in test_digest_delivery_observation.py.
+    monkeypatch.setattr(postgres, "release_read_connection", AsyncMock(return_value=True))
+    monkeypatch.setattr(
+        "app.services.digest_delivery_observation.observe_digest_phase",
+        AsyncMock(return_value=True),
+    )
 
     async def _generate(db, project_id, period, *args, **kwargs):
         world.generated.append(kwargs)

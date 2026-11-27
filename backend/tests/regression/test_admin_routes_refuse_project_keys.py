@@ -250,6 +250,11 @@ REVIEWED_INLINE_ADMIN_CHECKS: dict[tuple[str, str], str] = {
         "dispatch_scheduled_digests, not the request principal, so it carries no API-key "
         "binding to consult; the ADMIN branch keeps the workspace-wide-digest rule"
     ),
+    ("app/services/identity_retention_service.py", "require_interactive_admin"): (
+        "requires trusted credential_kind(actor) == CREDENTIAL_KIND_JWT as well as ADMIN, "
+        "so bound and unbound API keys and unknown credential kinds are refused; "
+        "mounted identity retention route tests cover both API-key cases"
+    ),
 }
 
 _BINDING_REFERENCES = frozenset({"_api_key_bound_project", "_enforce_api_key_project_binding"})

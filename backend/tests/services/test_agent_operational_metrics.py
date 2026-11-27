@@ -136,6 +136,7 @@ async def test_pending_review_age_alert_fires_and_clears(monkeypatch):
 async def test_scrape_wrapper_refreshes_agent_metrics(monkeypatch):
     from app import bootstrap
     from app.services import agent_operational_metrics
+    from app.services import downstream_operational_metrics
 
     queue_refresh = MagicMock()
     agent_refresh = MagicMock()
@@ -150,6 +151,10 @@ async def test_scrape_wrapper_refreshes_agent_metrics(monkeypatch):
         agent_operational_metrics, "refresh_agent_operational_metrics", _agent_refresh
     )
     monkeypatch.setattr(bootstrap, "_refresh_celery_queue_depths", _queue_refresh)
+    from unittest.mock import AsyncMock
+    monkeypatch.setattr(
+        downstream_operational_metrics, "refresh_downstream_operational_metrics", AsyncMock(return_value=True)
+    )
 
     class _Route:
         path = "/metrics"

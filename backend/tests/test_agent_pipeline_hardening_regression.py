@@ -339,17 +339,14 @@ def test_stage_replay_checksums_and_runtime_versions_are_persisted():
     assert '"final_state_checksum_sha256": _canonical_checksum(final_state)' in mark_done
 
 
-def test_event_log_has_retry_and_dead_letter_accounting():
-    event_log = _read("app/services/pipeline_event_log.py")
+def test_event_log_admits_to_sql_before_relay():
     emit_event = _function_source("app/services/pipeline_event_log.py", "emit_event")
+    stage_event = _function_source("app/services/pipeline_event_admission.py", "stage_pipeline_event")
 
-    assert "_MAX_WRITE_ATTEMPTS" in event_log
-    assert "_DEAD_LETTER_EVENTS" in event_log
-    assert "def _record_dead_letter" in event_log
-    assert "def get_event_log_health" in event_log
-    assert "for attempt in range(1, _MAX_WRITE_ATTEMPTS + 1)" in emit_event
-    assert "await asyncio.sleep(0)" in emit_event
-    assert "_record_dead_letter(event, last_error)" in emit_event
+    assert "await stage_pipeline_event" in emit_event
+    assert "db.begin_nested()" in emit_event
+    assert "get_mongo_db" not in emit_event
+    assert "PipelineEventOutbox(" in stage_event
 
 
 def test_decision_trail_falls_back_to_postgres_route_decisions():
@@ -420,8 +417,9 @@ def test_agents_router_exposes_event_log_health_and_timeline_integrity():
     assert "PipelineEventLogHealthResponse" in router
     assert '@router.get("/event-log/health", response_model=PipelineEventLogHealthResponse)' in router
     assert "require_role(UserRole.QA_LEAD)" in health
-    assert "get_event_log_health" in health
-    assert '"status": status' in health
+    assert "read_event_log_health" in health
+    assert "resolve_project_scope" in health
+    assert "project_ids=projects" in health
     assert "build_replay_integrity_summary" in timeline
     assert '"replay_integrity": replay_integrity' in timeline
 

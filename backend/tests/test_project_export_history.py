@@ -494,7 +494,7 @@ def test_a_live_event_keyed_by_a_session_slug_travels_under_its_run(monkeypatch:
     assert sorted(line["run_id"] for line in lines) == sorted([str(run_id), str(other_run)])
     (call,) = mongo.calls
     assert sorted(call["query"]["run_id"]["$in"]) == sorted([str(run_id), str(other_run), slug])
-    assert "FROM live_sessions" in _sql(db.statements[0])
+    assert any("FROM live_sessions" in _sql(statement) for statement in db.statements)
 
 
 def test_the_real_mongo_specs_are_all_selectable() -> None:
@@ -798,6 +798,97 @@ def test_a_body_less_export_is_still_phase_1(monkeypatch: pytest.MonkeyPatch, si
     assert manifest["schema_version"] == 1 and "history" not in manifest
     assert not any(n.startswith(("documents/", "objects/", "entities/test_runs/")) for n in archive.namelist())
     assert world["mongo"].calls == [] and world["store"].streamed == []
+
+
+def test_accepted_event_guard_uses_only_the_selected_canonical_pipeline_scope() -> None:
+    project_id, run_id = uuid.uuid4(), uuid.uuid4()
+    db = RecordingSession({})
+    window = _window([run_id], project_id)
+    asyncio.run(hx.ensure_pipeline_events_materialized(db, window))
+    statement, = db.statements
+    sql = _sql(statement)
+    assert "pipeline_event_outbox.project_id =" in sql
+    assert "pipeline_event_outbox.status !=" in sql
+    assert "pipeline_event_outbox.pipeline_id IN (SELECT agent_pipeline_runs.id" in sql
+    assert "agent_pipeline_runs.test_run_id = ANY" in sql
+    assert "agent_pipeline_runs.status IN" in sql
+    params = statement.compile(dialect=PG).params
+    assert params["project_id_1"] == project_id
+    assert params["run_window"] == [run_id]
+    assert params["status_1"] == "delivered"
+
+
+def test_accepted_sql_event_without_mongo_materialization_blocks_publication(
+    monkeypatch: pytest.MonkeyPatch, signing: Any,
+) -> None:
+    world = _history_world(monkeypatch)
+    world["rows"]["pipeline_event_outbox"] = [{"id": uuid.uuid4(), "status": "pending"}]
+    db = RecordingSession(world["rows"], users=world["users"], counts=(1, 0))
+    with pytest.raises(svc.ProjectExportFailed) as caught:
+        _export(world, db, sign_db=RecordingSession({}))
+    assert caught.value.code == "export_build"
+    assert caught.value.params == {"error_type": "PipelineEventDeliveryPending"}
+    assert world["store"].archives == {} and world["store"].streamed == []
+    assert world["mongo"].calls == []
+    # Counts-only preview remains available rather than turning a GET into an
+    # archive creation/error path. It does not promise materialization.
+    estimated = _estimate(world, RecordingSession(world["rows"], counts=(1, 0)))
+    assert estimated.measured["documents"] is True and estimated.estimated_bytes is not None
+
+
+def test_real_sql_guard_ignores_other_windows_projects_and_delivered_receipts(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any,
+) -> None:
+    from sqlalchemy import Uuid, literal, select, update
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+    from app.models.postgres import PipelineEventOutbox
+
+    project_id, foreign_project, run_id, pipeline_id, outside_pipeline = (uuid.uuid4() for _ in range(5))
+    # Existing canonical-pipeline selection is compiled above. Substitute its
+    # result for SQLite, which has no PostgreSQL ANY(array) operator, while
+    # exercising the actual new tenant/state/pipeline predicate on real rows.
+    monkeypatch.setattr(hx, "exported_ids", lambda table, window: select(literal(pipeline_id, Uuid())))
+
+    async def scenario() -> None:
+        engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'export-events.sqlite'}")
+        try:
+            async with engine.begin() as connection:
+                await connection.run_sync(lambda sync: PipelineEventOutbox.__table__.create(sync))
+            sessions = async_sessionmaker(engine, expire_on_commit=False)
+            selected = uuid.uuid4()
+            now = datetime.now(timezone.utc)
+            async with sessions() as db:
+                for identifier, project, pipeline in (
+                    (selected, project_id, pipeline_id),
+                    (uuid.uuid4(), project_id, outside_pipeline),
+                    (uuid.uuid4(), foreign_project, pipeline_id),
+                    (uuid.uuid4(), project_id, None),
+                ):
+                    db.add(PipelineEventOutbox(
+                        id=identifier, project_id=project, pipeline_id=pipeline,
+                        pipeline_run_id=str(pipeline or uuid.uuid4()), payload={"detail": "synthetic-private-evidence"},
+                        status="pending", attempts=0, created_at=now,
+                    ))
+                await db.commit()
+            window = _window([run_id], project_id)
+            mongo = FakeMongo({})
+            async with sessions() as db:
+                with pytest.raises(svc.ProjectExportFailed) as caught:
+                    _ = [member async for member in hx.iter_documents(db, mongo, window=window, stats={})]
+                assert caught.value.params == {"error_type": "PipelineEventDeliveryPending"}
+                assert "synthetic-private-evidence" not in str(caught.value)
+                assert mongo.calls == []
+            async with sessions() as db:
+                await db.execute(update(PipelineEventOutbox).where(PipelineEventOutbox.id == selected).values(
+                    status="delivered", delivered_at=now,
+                ))
+                await db.commit()
+            async with sessions() as db:
+                await hx.ensure_pipeline_events_materialized(db, window)
+        finally:
+            await engine.dispose()
+
+    asyncio.run(scenario())
 
 
 # ── E-H7: the estimate (a GET: counts only) ─────────────────────────────────

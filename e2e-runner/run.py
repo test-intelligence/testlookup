@@ -102,6 +102,31 @@ def client_evidence(name, problem):
     return evidence
 
 
+def security_evidence(observed, source_sha):
+    """Keep a fixed policy result, with no bodies, headers or principals."""
+    keys = {
+        "schema_version", "candidate_sha", "profile", "controls", "viewer_authenticated",
+        "viewer_admin_read_denied", "admin_read_permitted", "transport", "hsts_browser_enforcement",
+    }
+    controls = {
+        "frame_options", "content_type_options", "referrer_policy", "hsts_header",
+        "csp_frame_ancestors", "login_document_no_store", "meta_csp_baseline",
+    }
+    if (
+        not isinstance(observed, dict) or set(observed) != keys
+        or type(observed["schema_version"]) is not int or observed["schema_version"] != 1
+        or observed["candidate_sha"] != source_sha or observed["profile"] != "ephemeral"
+        or not isinstance(observed["controls"], list) or len(observed["controls"]) != len(controls)
+        or any(not isinstance(value, str) for value in observed["controls"])
+        or set(observed["controls"]) != controls
+        or any(observed[key] is not True for key in ("viewer_authenticated", "viewer_admin_read_denied", "admin_read_permitted"))
+        or not isinstance(observed["transport"], str) or observed["transport"] not in {"http:", "https:"}
+        or observed["hsts_browser_enforcement"] != "not_measured"
+    ):
+        raise ValueError("Security-control evidence differs from the bounded contract")
+    return dict(observed)
+
+
 def render(directory, report):
     (directory / "results.json").write_text(
         json.dumps(report, indent=2), encoding="utf-8"
@@ -294,6 +319,7 @@ def main():
             browser_cases = [
                 "TL-AUTH-001",
                 "TL-AUTH-003",
+                "TL-SEC-001",
                 "TL-STREAM-001",
                 *("TL-INGEST-001 " + fmt for fmt in UPLOAD_FORMATS),
             ]
@@ -506,7 +532,7 @@ def main():
                 )
             for r in results:
                 for a in r.get("attachments", []):
-                    if a["name"] not in {"observed-build", "request-evidence"}:
+                    if a["name"] not in {"observed-build", "request-evidence", "security-control-evidence"}:
                         continue
                     observed = (
                         json.loads(base64.b64decode(a["body"]))
@@ -515,8 +541,14 @@ def main():
                     )
                     if a["name"] == "observed-build":
                         report["observed_build"] = observed
+                    elif a["name"] == "security-control-evidence":
+                        if key != "TL-SEC-001" or target != "ephemeral":
+                            raise ValueError("Unexpected security-control evidence")
+                        cases[key]["security_controls"] = security_evidence(observed, manifest["source_sha"])
                     else:
                         cases[key].setdefault("requests", []).append(observed)
+        if cases.get("TL-SEC-001", {}).get("status") == "PASSED" and "security_controls" not in cases["TL-SEC-001"]:
+            cases["TL-SEC-001"].update(status="FAILED", evidence="Bounded security-control evidence is missing.")
         if process.returncode and all(cases[k]["status"] == "PASSED" for k in expected):
             report["errors"].append(
                 "Playwright exited nonzero despite the recorded case results."

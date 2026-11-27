@@ -26,7 +26,7 @@ CASES: list[dict[str, Any]] = VECTORS["cases"]
 #: Fragments of every secret sample in the vector inputs (non-hex: each carries a w / s / k … letter).
 RAW_FRAGMENTS = (
     "eyJzdWIiOiJ3MjNkLXNhbXBsZSJ9", "c2lnbmF0dXJlLXNhbXBsZS12YWx1ZS0x", "dzIzZDpzYW1wbGUtcGFzcw",
-    "w23dSampleSessionValue", "w23dcsrf", "sid=w23dsid", "tlk_w23d_sample_key_", "cHJveHk6dzIzZFByb3h5UGFzcw",
+    "w23dSampleSessionValue", "w23dcsrf", "sid=w23dsid", "tlk_w23d_sample_key_", "cHJveHk6dzIzZFByb3h5UGFzcw", # gitleaks:allow -- synthetic test credential, never production authority
     "w23dSampleSessionToken", "QxZkLmNoPqRsTuVwXy", "W23DSAMPLEKEYQZX", "w23dCustomSecretValue",
     "w23dServicePass", "w23dSamplePass", "w23dClientSecretValue", "w23dApiKeyValue", "w23dGithubValue",
     "w23d.sample@example.test", "w23dSampleAccessToken123", "w23dsig", "samplepass", "w23dBareUserinfo",

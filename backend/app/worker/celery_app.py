@@ -1,9 +1,13 @@
 """Celery application configuration."""
 from datetime import timedelta
+from functools import lru_cache
 from pathlib import Path
+import re
+from collections.abc import Mapping
 
-from celery import Celery, Task
+from celery import Task
 from celery.signals import (
+    before_task_publish,
     celeryd_init,
     setup_logging,
     task_postrun,
@@ -11,12 +15,21 @@ from celery.signals import (
     worker_process_init,
     worker_process_shutdown,
     worker_ready,
+    worker_shutting_down,
     worker_shutdown,
 )
 from celery.schedules import crontab
 from kombu import Exchange, Queue
 
 from app.core.config import settings
+from app.worker.tracing import TracingCelery
+from app.worker.nightly_schedule import (
+    PERF_BASELINE_REFRESH, QUARANTINE_MAINTENANCE, SCHEDULE_HEADER, stamp_nightly_slot,
+)
+from app.worker.queue_inventory import (
+    AGENT_CHILDREN_QUEUE, AI_ANALYSIS_QUEUE, CRITICAL_QUEUE, DEFAULT_QUEUE,
+    INGESTION_QUEUE, all_task_queue_names,
+)
 
 
 class TimeLimitedTask(Task):
@@ -39,13 +52,14 @@ class TimeLimitedTask(Task):
         return bound
 
 
-celery_app = Celery(
+celery_app = TracingCelery(
     "testlookup",
     broker=settings.CELERY_BROKER_URL,
     backend=settings.CELERY_RESULT_BACKEND,
     include=["app.worker.tasks", "app.worker.training_tasks"],
     task_cls=TimeLimitedTask,
 )
+before_task_publish.connect(stamp_nightly_slot)
 
 
 @celery_app.task(bind=True, name="app.worker.celery_app.queue_delivery_probe")
@@ -74,19 +88,10 @@ _default_exchange = Exchange("default", type="direct")
 # tuple imperatively so the shard count is read from settings at startup,
 # not frozen at module-import time.
 def _build_task_queues() -> tuple[Queue, ...]:
-    base = [
-        Queue("critical",    _default_exchange, routing_key="critical",    queue_arguments={"x-max-priority": 10}),
-        Queue("ingestion",   _default_exchange, routing_key="ingestion",   queue_arguments={"x-max-priority": 10}),
-        Queue("ai_analysis", _default_exchange, routing_key="ai_analysis", queue_arguments={"x-max-priority": 10}),
-        Queue("agent_children", _default_exchange, routing_key="agent_children", queue_arguments={"x-max-priority": 10}),
-        Queue("default",     _default_exchange, routing_key="default",     queue_arguments={"x-max-priority": 10}),
-    ]
-    # Lazy import to avoid the ``app.core.config`` → ``Celery`` import
-    # cycle that bites if we put this at module top.
-    from app.worker.ingestion_routing import all_shard_queues
-    for q in all_shard_queues():
-        base.append(Queue(q, _default_exchange, routing_key=q, queue_arguments={"x-max-priority": 10}))
-    return tuple(base)
+    return tuple(
+        Queue(name, _default_exchange, routing_key=name, queue_arguments={"x-max-priority": 10})
+        for name in all_task_queue_names()
+    )
 
 
 celery_app.conf.task_queues = _build_task_queues()
@@ -97,34 +102,34 @@ celery_app.conf.update(
     result_serializer="json",
     timezone="UTC",
     enable_utc=True,
-    task_default_queue="default",
+    task_default_queue=DEFAULT_QUEUE,
     task_default_exchange="default",
-    task_default_routing_key="default",
+    task_default_routing_key=DEFAULT_QUEUE,
     task_routes={
-        "app.worker.tasks.run_live_test_analysis":          {"queue": "critical"},
-        "app.worker.tasks.ingest_test_run":                 {"queue": "ingestion"},
-        "app.worker.tasks.run_ai_analysis":                 {"queue": "ai_analysis"},
-        "app.worker.tasks.run_agent_pipeline":              {"queue": "ai_analysis"},
-        "app.worker.tasks.run_agent_child_investigation":   {"queue": "agent_children"},
-        "app.worker.tasks.generate_run_compare_report":     {"queue": "ai_analysis"},
-        "app.worker.tasks.precompute_suite_comparisons_for_run": {"queue": "ai_analysis"},
-        "app.worker.tasks.generate_ai_test_cases_task":     {"queue": "ai_analysis"},
-        "app.worker.tasks.create_ai_test_plan_task":         {"queue": "ai_analysis"},
-        "app.worker.tasks.generate_ai_strategy_task":        {"queue": "ai_analysis"},
-        "app.worker.tasks.run_fixer_run_task":               {"queue": "ai_analysis"},
-        "app.worker.training_tasks.export_training_data":   {"queue": "default"},
-        "app.worker.training_tasks.check_finetune_trigger": {"queue": "default"},
-        "app.worker.training_tasks.run_finetune_pipeline":  {"queue": "default"},
-        "app.worker.tasks.reindex_search":                    {"queue": "default"},
+        "app.worker.tasks.run_live_test_analysis":          {"queue": CRITICAL_QUEUE},
+        "app.worker.tasks.ingest_test_run":                 {"queue": INGESTION_QUEUE},
+        "app.worker.tasks.run_ai_analysis":                 {"queue": AI_ANALYSIS_QUEUE},
+        "app.worker.tasks.run_agent_pipeline":              {"queue": AI_ANALYSIS_QUEUE},
+        "app.worker.tasks.run_agent_child_investigation":   {"queue": AGENT_CHILDREN_QUEUE},
+        "app.worker.tasks.generate_run_compare_report":     {"queue": AI_ANALYSIS_QUEUE},
+        "app.worker.tasks.precompute_suite_comparisons_for_run": {"queue": AI_ANALYSIS_QUEUE},
+        "app.worker.tasks.generate_ai_test_cases_task":     {"queue": AI_ANALYSIS_QUEUE},
+        "app.worker.tasks.create_ai_test_plan_task":         {"queue": AI_ANALYSIS_QUEUE},
+        "app.worker.tasks.generate_ai_strategy_task":        {"queue": AI_ANALYSIS_QUEUE},
+        "app.worker.tasks.run_fixer_run_task":               {"queue": AI_ANALYSIS_QUEUE},
+        "app.worker.training_tasks.export_training_data":   {"queue": DEFAULT_QUEUE},
+        "app.worker.training_tasks.check_finetune_trigger": {"queue": DEFAULT_QUEUE},
+        "app.worker.training_tasks.run_finetune_pipeline":  {"queue": DEFAULT_QUEUE},
+        "app.worker.tasks.reindex_search":                    {"queue": DEFAULT_QUEUE},
         # W12 SRCH-02: a re-embed into a new generation runs on the AI worker,
         # one <= 480 s slice per invocation (never in the API process).
-        "app.worker.tasks.rebuild_embedding_generation":    {"queue": "ai_analysis"},
-        "app.worker.tasks.run_retention_purges":            {"queue": "default"},
+        "app.worker.tasks.rebuild_embedding_generation":    {"queue": AI_ANALYSIS_QUEUE},
+        "app.worker.tasks.run_retention_purges":            {"queue": DEFAULT_QUEUE},
         # W07 FAIL-04: may wait minutes for a defect-candidate build; kept off ai_analysis.
-        "app.worker.tasks.rebuild_run_snapshot":            {"queue": "default"},
+        "app.worker.tasks.rebuild_run_snapshot":            {"queue": DEFAULT_QUEUE},
         # W34 STRAT-13: the every-minute drop-folder sweep (it queues ingest_test_run on "ingestion").
-        "app.worker.tasks.watch_drop_folders":              {"queue": "default"},
-        "app.worker.tasks.*":                               {"queue": "default"},
+        "app.worker.tasks.watch_drop_folders":              {"queue": DEFAULT_QUEUE},
+        "app.worker.tasks.*":                               {"queue": DEFAULT_QUEUE},
     },
     # Redis keeps late-acked deliveries in ``unacked`` until this timeout.
     # Keep it above the 31-minute hard task limit so a healthy long-running
@@ -342,6 +347,11 @@ celery_app.conf.update(
             "task": "app.worker.tasks.relay_run_downstream_outbox",
             "schedule": crontab(minute="*"),
         },
+        "relay-pipeline-event-outbox": {
+            "task": "app.worker.tasks.relay_pipeline_event_outbox",
+            "schedule": crontab(minute="*"),
+            "options": {"expires": 55},
+        },
         "relay-queued-criteria-deletions": {
             "task": "app.worker.tasks.relay_queued_criteria_deletions",
             "schedule": crontab(minute="*"),
@@ -390,14 +400,16 @@ celery_app.conf.update(
         # No-op until the ``flaky_auto_quarantine`` feature flag is enabled.
         "nightly-flaky-quarantine-maintenance": {
             "task": "app.worker.tasks.run_flaky_quarantine_maintenance",
-            "schedule": crontab(hour=4, minute=0),
+            "schedule": crontab(hour=QUARANTINE_MAINTENANCE.hour, minute=QUARANTINE_MAINTENANCE.minute),
+            "options": {"headers": {SCHEDULE_HEADER: QUARANTINE_MAINTENANCE.key}},
         },
         # Tier 2 item 10: per-test duration baseline refresh (nightly at
         # 04:30 UTC, after quarantine maintenance so its reclassifications
         # land first). No-op until ``perf_regression_detection`` flag is on.
         "nightly-perf-baseline-refresh": {
             "task": "app.worker.tasks.refresh_perf_baselines",
-            "schedule": crontab(hour=4, minute=30),
+            "schedule": crontab(hour=PERF_BASELINE_REFRESH.hour, minute=PERF_BASELINE_REFRESH.minute),
+            "options": {"headers": {SCHEDULE_HEADER: PERF_BASELINE_REFRESH.key}},
         },
         # Tier 2 item 12: weekly auto-retro digest dispatch (Mondays
         # 07:00 UTC, same time as the existing daily digest pass). The
@@ -780,32 +792,68 @@ def _reset_db_pool_after_fork(**_kwargs: object) -> None:
 _TASK_STARTED_AT: dict[str, float] = {}
 
 
+def _task_log_context(task=None, task_id=None) -> dict[str, object]:
+    """Canonical task identity and allowlisted diagnostic correlation only.
+
+    Headers and task arguments are not an authority boundary. In particular,
+    never copy arbitrary broker headers or payload fields into log context.
+    """
+    request = getattr(task, "request", None)
+    retries = getattr(request, "retries", 0)
+    context: dict[str, object] = {
+        "celery_task_id": task_id or getattr(request, "id", None) or "unknown",
+        "celery_task_name": getattr(task, "name", None) or "unknown",
+        "celery_retry": retries if isinstance(retries, int) and retries >= 0 else 0,
+    }
+    headers = getattr(request, "headers", None)
+    if not isinstance(headers, Mapping):
+        headers = {}
+    candidates = {
+        "request_id": (
+            headers.get("request_id"), headers.get("x-request-id"), headers.get("X-Request-ID"),
+        ),
+        "correlation_id": (headers.get("correlation_id"), getattr(request, "correlation_id", None)),
+    }
+    for field, values in candidates.items():
+        for value in values:
+            if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", value):
+                context[field] = value
+                break
+    return context
+
+
+@task_prerun.connect
+def _bind_task_log_context(task_id=None, task=None, **_kwargs: object) -> None:
+    """Start every execution with fresh context, including retries/reused children."""
+    from structlog.contextvars import bind_contextvars, clear_contextvars, get_contextvars
+
+    request = getattr(task, "request", None)
+    if request is not None and getattr(request, "is_eager", False):
+        # Eager tasks run inside the caller's request/context rather than a
+        # worker child. Restore that caller after this execution completes.
+        request._testlookup_parent_log_context = get_contextvars()
+    clear_contextvars()
+    bind_contextvars(**_task_log_context(task=task, task_id=task_id))
+
+
 @celeryd_init.connect
 def _prepare_worker_metrics_directory(**_kwargs: object) -> None:
-    """Remove metrics from an earlier worker parent before it forks children.
+    """Keep the launcher's early reset, with a fallback for direct Celery CLI use.
 
-    Kubernetes ``emptyDir`` survives a container restart in the same pod, and
-    Compose may restart a container without recreating its tmpfs mount. Keeping
-    those files would make the replacement worker report the previous process
-    group's counters again. ``celeryd_init`` runs once in the parent before the
-    prefork pool starts, so it cannot race with live child observations.
+    Celery imports task modules before celeryd_init. The reference launcher
+    clears old metric files before those imports and this idempotent check
+    preserves current parent files already mapped by prometheus_client.
     """
-    import os
-
-    multiproc_dir = os.environ.get("PROMETHEUS_MULTIPROC_DIR")
-    if not multiproc_dir:
-        return
     try:
-        for entry in os.scandir(multiproc_dir):
-            if entry.is_file() and entry.name.endswith(".db"):
-                os.unlink(entry.path)
-    except OSError as exc:
+        from app.worker.worker_process import prepare_startup
+
+        prepare_startup(READY_SENTINEL)
+    except Exception as exc:  # noqa: BLE001 — direct legacy launches keep their failure diagnostics
         import structlog
 
         structlog.get_logger(__name__).error(
             "worker_metrics_directory_reset_failed",
-            directory=multiproc_dir,
-            error=str(exc),
+            error_type=type(exc).__name__,
         )
 
 
@@ -827,17 +875,38 @@ def _record_task_runtime(task_id=None, task=None, **_kwargs: object) -> None:
         return
     try:
         from app.core.metrics import celery_task_runtime_seconds
+        from app.core.metric_dimensions import task_queue_family
 
         queue = ""
         request = getattr(task, "request", None)
         if request is not None:
             queue = getattr(request, "delivery_info", {}).get("routing_key", "") or ""
         celery_task_runtime_seconds.labels(
-            task_name=getattr(task, "name", "unknown"),
-            queue_name=queue or "unknown",
+            task_name=_metric_task_name(task),
+            queue_name=task_queue_family(queue),
         ).observe(time.perf_counter() - started)
     except Exception:  # noqa: BLE001 — metrics must never break the task
         pass
+
+
+@lru_cache(maxsize=1)
+def _metric_task_names() -> frozenset[str]:
+    """Freeze deployed task identities, never growing with received headers."""
+    from app.core.metric_dimensions import MAX_METRIC_TASK_NAMES
+
+    # An eager task or an early signal can reach this before worker startup
+    # imports the configured task modules. Freeze the complete code registry,
+    # rather than permanently admitting only Celery's built-in tasks. Import
+    # failures leave the cache empty so a partial registry is never frozen.
+    loader = getattr(celery_app, "loader", None)
+    if loader is not None:
+        loader.import_default_modules()
+    return frozenset(sorted(celery_app.tasks)[:MAX_METRIC_TASK_NAMES])
+
+
+def _metric_task_name(task: object) -> str:
+    name = getattr(task, "name", None)
+    return name if isinstance(name, str) and name in _metric_task_names() else "other"
 
 
 @task_postrun.connect
@@ -855,24 +924,44 @@ def _record_task_outcome(task_id=None, task=None, state=None, **_kwargs: object)
     that has failed terminally — queue depth cannot, because a task waiting
     on a retry countdown is not on the queue at all.
 
-    ``state`` is Celery's terminal state for this execution: SUCCESS, FAILURE
-    or RETRY. Lower-cased verbatim rather than mapped through a table, so an
-    unexpected state (REVOKED, REJECTED) reports itself instead of being
-    folded into an "other" bucket that means nothing to the reader.
+    Known Celery states retain their names; custom states share ``other``.
+    Task names must belong to the frozen, capped deployed code registry.
     """
     try:
         from app.core.metrics import celery_tasks_total
+        from app.core.metric_dimensions import TASK_STATES, bounded_dimension
 
         celery_tasks_total.labels(
-            task_name=getattr(task, "name", "unknown"),
-            status=str(state or "unknown").lower(),
+            task_name=_metric_task_name(task),
+            status=bounded_dimension(str(state or "unknown").lower(), TASK_STATES),
         ).inc()
     except Exception:  # noqa: BLE001 — metrics must never break the task
         pass
 
 
-#: Readiness sentinel. Written once the worker has booted and connected to the
-#: broker; removed on shutdown.
+@task_postrun.connect
+def _clear_task_log_context(task=None, state=None, **_kwargs: object) -> None:
+    """Postrun runs for success, failure and retry; none may leak into the next task."""
+    from structlog.contextvars import bind_contextvars, clear_contextvars
+
+    try:
+        if settings.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT:
+            import structlog
+
+            outcome = {"SUCCESS": "success", "FAILURE": "failure", "RETRY": "retry"}.get(state, "other")
+            task_logger = structlog.get_logger(__name__)
+            log = task_logger.warning if outcome in {"failure", "retry"} else task_logger.info
+            log("celery_task_execution", state=outcome)
+    finally:
+        clear_contextvars()
+        request = getattr(task, "request", None)
+        parent_context = getattr(request, "_testlookup_parent_log_context", None)
+        if request is not None and getattr(request, "is_eager", False) and isinstance(parent_context, dict):
+            del request._testlookup_parent_log_context
+            bind_contextvars(**parent_context)
+
+
+#: Generation-owned state. The stdlib launcher clears it before Celery imports.
 READY_SENTINEL = "/tmp/celery-worker-ready"
 
 
@@ -894,26 +983,30 @@ def _mark_worker_ready(**_kwargs: object) -> None:
     while the replacement sat NotReady beside it.
 
     ``worker_ready`` fires after the consumer has connected to the broker and
-    begun consuming, which is exactly the condition readiness should express,
-    and a file check costs nothing under load. Liveness stays on ``pgrep`` and
-    remains the thing that catches a dead worker.
+    begun consuming. Publish the current launch generation and process identity
+    so a preserved file cannot make its replacement ready before startup.
+    The stdlib probes verify this state without importing Celery or contacting
+    the broker, and liveness checks the current parent process.
     """
-    try:
-        with open(READY_SENTINEL, "w", encoding="utf-8") as fh:
-            fh.write("ready\n")
-    except OSError:  # noqa: BLE001 — readiness must never stop a worker booting
-        pass
+    from app.worker.worker_process import mark_ready
+
+    mark_ready(READY_SENTINEL)
 
 
 @worker_shutdown.connect
 def _clear_worker_ready(**_kwargs: object) -> None:
-    """Drop the sentinel so a draining worker stops reporting Ready."""
-    import os
+    """Release only this parent's state after its shutdown finishes."""
+    from app.worker.worker_process import clear_current
 
-    try:
-        os.remove(READY_SENTINEL)
-    except OSError:  # noqa: BLE001 — already gone, or never written
-        pass
+    clear_current(READY_SENTINEL)
+
+
+@worker_shutting_down.connect
+def _stop_worker_readiness(**_kwargs: object) -> None:
+    """Warm shutdown stops new readiness while the live parent drains children."""
+    from app.worker.worker_process import clear_ready
+
+    clear_ready(READY_SENTINEL)
 
 
 @worker_ready.connect
@@ -942,6 +1035,54 @@ def _start_metrics_server(**_kwargs: object) -> None:
         )
 
 
+def _reap_dead_child_metric_gauges(metric_dir: Path) -> None:
+    """Remove only live gauges whose process is confirmed absent on POSIX.
+
+    A killed/OOM child cannot run ``worker_process_shutdown``. This directory
+    belongs to one worker parent and its children; a successful or denied
+    existence probe must preserve that process's observations. Counters,
+    histograms and non-live gauges retain their existing lifecycle.
+    """
+    import os
+
+    if os.name != "posix":
+        return
+
+    from prometheus_client import multiprocess
+
+    try:
+        files = tuple(metric_dir.glob("gauge_live*_*.db"))
+    except OSError:
+        return
+    pids: set[int] = set()
+    for metric_file in files:
+        match = re.fullmatch(
+            r"gauge_live(?:all|sum|min|max|mostrecent)_([1-9][0-9]*)\.db",
+            metric_file.name,
+        )
+        if match is None:
+            continue
+        try:
+            if metric_file.is_symlink() or not metric_file.is_file():
+                continue
+            pids.add(int(match.group(1)))
+        except (OSError, ValueError):
+            continue
+
+    for pid in pids:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            try:
+                multiprocess.mark_process_dead(pid, path=str(metric_dir))
+            except OSError:
+                # Child shutdown may have removed the same gauge already.
+                pass
+        except (OSError, OverflowError):
+            # Permission denied or an unrepresentable PID is not proof of death.
+            continue
+
+
 def _start_metrics_file_guard() -> None:
     """Recycle the worker before dead-child metric files become unbounded.
 
@@ -966,6 +1107,7 @@ def _start_metrics_file_guard() -> None:
 
         logger = structlog.get_logger(__name__)
         while True:
+            _reap_dead_child_metric_gauges(metric_dir)
             if len(list(metric_dir.glob("*.db"))) > max_files:
                 logger.warning(
                     "worker_metrics_file_limit_reached",
@@ -1025,3 +1167,25 @@ def _close_worker_loop(**_kwargs: object) -> None:
         shutdown_worker_loop()
     except Exception:  # noqa: BLE001 -- never block worker shutdown
         pass
+
+
+# Register completion last so the operational execution log observes the
+# consumer span before its context is restored. No Celery instrumentation
+# package or task wrapper is required.
+from app.worker.tracing import (  # noqa: E402
+    finish_task_trace, initialize_worker_tracing, propagate_traceparent, shutdown_worker_tracing, start_task_trace,
+)
+
+worker_process_init.connect(initialize_worker_tracing, weak=False)
+worker_process_shutdown.connect(shutdown_worker_tracing, weak=False)
+before_task_publish.connect(propagate_traceparent, weak=False)
+task_prerun.connect(start_task_trace, weak=False)
+task_postrun.connect(finish_task_trace, weak=False)
+
+# Queue delay sampling is independent of tracing and uses a single reserved
+# scalar header. Runtime histogram_count remains the completion-attempt signal.
+from app.worker.queue_wait import finish_queue_wait, observe_queue_wait, stamp_publish_time  # noqa: E402
+
+before_task_publish.connect(stamp_publish_time, weak=False, dispatch_uid="testlookup.queue_wait.publish")
+task_prerun.connect(observe_queue_wait, weak=False, dispatch_uid="testlookup.queue_wait.start")
+task_postrun.connect(finish_queue_wait, weak=False, dispatch_uid="testlookup.queue_wait.finish")

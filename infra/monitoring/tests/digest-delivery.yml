@@ -1,0 +1,137 @@
+rule_files:
+- ../prometheus-rules/testlookup-alerts.yml
+evaluation_interval: 30s
+tests:
+- name: enabled future work and disabled/no subscriptions are quiet
+  interval: 30s
+  input_series:
+  - series: testlookup_weekly_digest_subscriptions{job="testlookup-backend",instance="api",schedule="WEEKLY",state="enabled"}
+    values: '2x40'
+  - series: testlookup_weekly_digest_oldest_overdue_seconds{job="testlookup-backend",instance="api",schedule="WEEKLY"}
+    values: '0x40'
+  - series: testlookup_weekly_digest_subscriptions{job="testlookup-backend",instance="api",schedule="WEEKLY",state="missing_schedule"}
+    values: '0x40'
+  - series: testlookup_weekly_digest_subscriptions{job="testlookup-backend",instance="api",schedule="WEEKLY_RETRO",state="enabled"}
+    values: '0x40'
+  - series: testlookup_weekly_digest_oldest_overdue_seconds{job="testlookup-backend",instance="api",schedule="WEEKLY_RETRO"}
+    values: '0x40'
+  - series: testlookup_metric_collection_success{job="testlookup-backend",instance="api",collector="digests"}
+    values: '1x40'
+  - series: testlookup_metric_collection_last_success_timestamp_seconds{job="testlookup-backend",instance="api",collector="digests"}
+    values: '0+30x40'
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: TestLookupWeeklyDigestDeliveryOverdue
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: TestLookupWeeklyDigestScheduleMissing
+    exp_alerts: []
+- name: generation success cannot hide a failed delivery and fresh recovery beats stale replica
+  interval: 30s
+  input_series:
+  - series: testlookup_retro_digest_dispatch_total{status="success"}
+    values: '0+1x60'
+  - series: testlookup_weekly_digest_oldest_overdue_seconds{cluster="lab",namespace="prod",job="testlookup-backend",instance="fresh",schedule="WEEKLY_RETRO"}
+    values: '100x40 0x20'
+  - series: testlookup_weekly_digest_delivery_outcomes{cluster="lab",namespace="prod",job="testlookup-backend",instance="fresh",schedule="WEEKLY_RETRO",outcome="failed"}
+    values: '1x40 0x20'
+  - series: testlookup_weekly_digest_oldest_overdue_seconds{cluster="lab",namespace="prod",job="testlookup-backend",instance="stale",schedule="WEEKLY_RETRO"}
+    values: '900x60'
+  - series: testlookup_metric_collection_success{cluster="lab",namespace="prod",job="testlookup-backend",instance="fresh",collector="digests"}
+    values: '1x60'
+  - series: testlookup_metric_collection_last_success_timestamp_seconds{cluster="lab",namespace="prod",job="testlookup-backend",instance="fresh",collector="digests"}
+    values: '0+30x60'
+  - series: testlookup_metric_collection_success{cluster="lab",namespace="prod",job="testlookup-backend",instance="stale",collector="digests"}
+    values: '1x60'
+  - series: testlookup_metric_collection_last_success_timestamp_seconds{cluster="lab",namespace="prod",job="testlookup-backend",instance="stale",collector="digests"}
+    values: '0x60'
+  alert_rule_test:
+  - eval_time: 14m30s
+    alertname: TestLookupWeeklyDigestDeliveryOverdue
+    exp_alerts: []
+  - eval_time: 15m
+    alertname: TestLookupWeeklyDigestDeliveryOverdue
+    exp_alerts:
+    - exp_labels:
+        cluster: lab
+        namespace: prod
+        schedule: WEEKLY_RETRO
+        severity: warning
+      exp_annotations:
+        summary: Weekly digest delivery has overdue work
+        description: An enabled WEEKLY_RETRO subscription has an unresolved due slot beyond the normal daily dispatch interval and processing grace. Content generation is not provider delivery. Inspect durable attempt outcomes and provider logs before replaying any ambiguous send.
+  - eval_time: 22m
+    alertname: TestLookupWeeklyDigestDeliveryOverdue
+    exp_alerts: []
+- name: never-delivered work fires outside Monday without content-generation traffic
+  interval: 30s
+  input_series:
+  - series: testlookup_weekly_digest_oldest_overdue_seconds{job="testlookup-backend",instance="replacement-api",schedule="WEEKLY"}
+    values: '10x40'
+  - series: testlookup_weekly_digest_subscriptions{job="testlookup-backend",instance="replacement-api",schedule="WEEKLY",state="never_delivered"}
+    values: '1x40'
+  - series: testlookup_metric_collection_success{job="testlookup-backend",instance="replacement-api",collector="digests"}
+    values: '1x40'
+  - series: testlookup_metric_collection_last_success_timestamp_seconds{job="testlookup-backend",instance="replacement-api",collector="digests"}
+    values: '0+30x40'
+  alert_rule_test:
+  # Promtool starts on Thursday, outside any Monday-only window.
+  - eval_time: 15m
+    alertname: TestLookupWeeklyDigestDeliveryOverdue
+    exp_alerts:
+    - exp_labels:
+        schedule: WEEKLY
+        severity: warning
+      exp_annotations:
+        summary: Weekly digest delivery has overdue work
+        description: An enabled WEEKLY subscription has an unresolved due slot beyond the normal daily dispatch interval and processing grace. Content generation is not provider delivery. Inspect durable attempt outcomes and provider logs before replaying any ambiguous send.
+- name: missing schedule alerts without pretending that zero overdue proves delivery
+  interval: 30s
+  input_series:
+  - series: testlookup_weekly_digest_subscriptions{job="testlookup-backend",instance="api",schedule="WEEKLY",state="missing_schedule"}
+    values: '1x40'
+  - series: testlookup_weekly_digest_oldest_overdue_seconds{job="testlookup-backend",instance="api",schedule="WEEKLY"}
+    values: '0x40'
+  - series: testlookup_metric_collection_success{job="testlookup-backend",instance="api",collector="digests"}
+    values: '1x40'
+  - series: testlookup_metric_collection_last_success_timestamp_seconds{job="testlookup-backend",instance="api",collector="digests"}
+    values: '0+30x40'
+  alert_rule_test:
+  - eval_time: 15m
+    alertname: TestLookupWeeklyDigestScheduleMissing
+    exp_alerts:
+    - exp_labels:
+        schedule: WEEKLY
+        severity: warning
+      exp_annotations:
+        summary: Enabled weekly digest has no due schedule
+        description: An enabled WEEKLY subscription has neither a next delivery time nor an unresolved claimed slot. Inspect its durable schedule; absence of a due date is not successful delivery.
+  - eval_time: 15m
+    alertname: TestLookupWeeklyDigestDeliveryOverdue
+    exp_alerts: []
+- name: failed collection does not present old overdue samples as current
+  interval: 30s
+  input_series:
+  - series: testlookup_weekly_digest_oldest_overdue_seconds{job="testlookup-backend",instance="api",schedule="WEEKLY"}
+    values: '100x40'
+  - series: testlookup_metric_collection_success{job="testlookup-backend",instance="api",collector="digests"}
+    values: '0x40'
+  - series: testlookup_metric_collection_last_success_timestamp_seconds{job="testlookup-backend",instance="api",collector="digests"}
+    values: '0x40'
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: TestLookupWeeklyDigestDeliveryOverdue
+    exp_alerts: []
+  promql_expr_test:
+  - expr: count(ALERTS{alertname="TestLookupOperationalCollectionStale",alertstate="firing"})
+    eval_time: 20m
+    exp_samples:
+    - labels: '{}'
+      value: 1
+- name: absent observations cannot invent overdue deliveries
+  interval: 30s
+  input_series: []
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: TestLookupWeeklyDigestDeliveryOverdue
+    exp_alerts: []

@@ -41,9 +41,9 @@ def test_every_outbound_request_funnels_through_one_gate():
     """
     src = inspect.getsource(sync)
     # The module makes exactly one HTTP call, inside _authorized_get.
-    assert src.count("httpx.AsyncClient") == 1
+    assert src.count("create_integration_http_client") == 2  # import + call
     gate = inspect.getsource(sync._authorized_get)
-    assert "httpx.AsyncClient" in gate
+    assert "create_integration_http_client" in gate
 
 
 def test_the_gate_checks_offline_credential_and_ssrf_in_that_order():

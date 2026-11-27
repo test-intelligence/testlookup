@@ -17,7 +17,6 @@ from typing import Any, Mapping, Optional, Sequence
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.metrics import workflow_eval_coverage
 from app.models.postgres import (
     AIEvalGateRun,
     AgentPipelineRun,
@@ -947,9 +946,6 @@ async def evaluate_definition(
     row.eval_regression_accepted_by = None
     row.eval_regression_accepted_at = None
     await db.flush()
-    workflow_eval_coverage.labels(
-        project_id=str(project_id), workflow_id=row.workflow_id
-    ).set(result["coverage"])
     result["gate_run_id"] = str(gate.id)
     return result
 

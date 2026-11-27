@@ -11,9 +11,8 @@
 # The backend service is extended with the OTEL environment variables so it
 # automatically ships spans to Jaeger and exposes /metrics for Prometheus.
 #
-# Every port is published on 127.0.0.1 only: Jaeger, the OTLP receivers and
-# Prometheus have no authentication. Reach them through an SSH tunnel, or set
-# MONITORING_PUBLISH_ADDR=0.0.0.0 in .env behind something that authenticates.
+# Operational ports default to loopback. Keep the direct listeners there and
+# use an SSH tunnel or an authenticated TLS proxy for authorized remote access.
 
 services:
 
@@ -39,7 +38,7 @@ services:
 
   # ── Prometheus ──────────────────────────────────────────────────────────────
   prometheus:
-    image: prom/prometheus:v3.16.0
+    image: prom/prometheus:v3.16.0@sha256:e04987641b57704f408e31f6373ba4138ecf27cb4a165d24aabb6c38fddd0f06
     container_name: testlookup-prometheus
     restart: unless-stopped
     command:
@@ -50,6 +49,7 @@ services:
       # /-/reload without authentication. Restart the container to reload.
     volumes:
       - ./infra/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./infra/monitoring/backend-scrape.yml:/etc/prometheus/backend-scrape.yml:ro
       - ./infra/monitoring/prometheus-rules:/etc/prometheus/rules:ro
       - prometheus-data:/prometheus
     ports:
@@ -97,7 +97,6 @@ services:
       - testlookup_net
     depends_on:
       - prometheus
-      - jaeger
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/health"]
       interval: 20s
@@ -110,9 +109,6 @@ services:
       OTEL_ENABLED: "true"
       OTEL_EXPORTER_OTLP_ENDPOINT: "http://jaeger:4318"
       METRICS_ENABLED: "true"
-    depends_on:
-      jaeger:
-        condition: service_healthy
 
 volumes:
   prometheus-data:

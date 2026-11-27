@@ -1,0 +1,57 @@
+# No delivery is enabled by the ordinary monitoring overlay. The opt-in
+# alerting overlay requires the operator's URL and bearer-token secret files.
+global:
+  resolve_timeout: 5m
+
+route:
+  receiver: incidents
+  group_by: [installation, environment, cluster, namespace, alertname]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    # The heartbeat must reach an independent service which pages on absence.
+    - receiver: watchdog
+      matchers: ['alertname="TestLookupWatchdog"']
+      group_wait: 0s
+      group_interval: 1m
+      repeat_interval: 1m
+    - receiver: incidents
+      matchers: ['severity="critical"']
+      group_wait: 10s
+      repeat_interval: 30m
+
+# Inhibition is opt-in through a nonempty alert_family label. Missing labels
+# must never cause an unrelated critical alert to suppress every warning.
+inhibit_rules:
+  - source_matchers: ['severity="critical"', 'alert_family=~".+"']
+    target_matchers: ['severity="warning"', 'alert_family=~".+"']
+    equal: [installation, environment, cluster, namespace, alert_family]
+
+receivers:
+  - name: incidents
+    webhook_configs:
+      - url_file: /run/secrets/alertmanager-incident-url
+        send_resolved: true
+        timeout: 10s
+        http_config:
+          authorization:
+            type: Bearer
+            credentials_file: /run/secrets/alertmanager-incident-token
+          follow_redirects: false
+          proxy_from_environment: false
+          tls_config:
+            min_version: TLS12
+  - name: watchdog
+    webhook_configs:
+      - url_file: /run/secrets/alertmanager-watchdog-url
+        send_resolved: true
+        timeout: 10s
+        http_config:
+          authorization:
+            type: Bearer
+            credentials_file: /run/secrets/alertmanager-watchdog-token
+          follow_redirects: false
+          proxy_from_environment: false
+          tls_config:
+            min_version: TLS12

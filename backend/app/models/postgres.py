@@ -649,6 +649,8 @@ class RunDownstreamOutbox(Base):
 
     __tablename__ = "run_downstream_outbox"
     __table_args__ = (
+        # 0264: retained SLI acceptance cohorts filter the timestamp first.
+        Index("ix_run_downstream_outbox_created_at", "created_at"),
         UniqueConstraint(
             "run_id",
             "operation",
@@ -2594,6 +2596,7 @@ class AgentPipelineRun(Base):
     """Tracks a single execution of the multi-agent pipeline for a test run."""
     __tablename__ = "agent_pipeline_runs"
     __table_args__ = (
+        Index("ix_agent_pipeline_runs_created_at", "created_at"),  # 0264 cohort horizon
         Index("ix_pipeline_runs_test_run", "test_run_id"),
         Index("ix_pipeline_runs_status", "status"),
         CheckConstraint(
@@ -2657,6 +2660,40 @@ class AgentPipelineRun(Base):
 
     # Relationships
     stages: Mapped[list["AgentStageResult"]] = relationship("AgentStageResult", back_populates="pipeline_run", cascade="all, delete-orphan")
+
+
+class PipelineEventOutbox(Base):
+    """Project-scoped event intent awaiting idempotent Mongo materialization."""
+
+    __tablename__ = "pipeline_event_outbox"
+    __table_args__ = (
+        CheckConstraint("status IN ('pending', 'sending', 'delivered', 'failed')", name="ck_pipeline_event_outbox_status"),
+        CheckConstraint("attempts >= 0", name="ck_pipeline_event_outbox_attempts"),
+        Index("ix_pipeline_event_outbox_schedule", "status", "next_attempt_at", "created_at"),
+        Index("ix_pipeline_event_outbox_lease", "status", "lease_expires_at"),
+        Index("ix_pipeline_event_outbox_delivered", "status", "delivered_at"),
+        Index("ix_pipeline_event_outbox_project", "project_id", "status"),
+        Index("ix_pipeline_event_outbox_pipeline", "pipeline_id"),
+        Index("ix_pipeline_event_outbox_timeline", "pipeline_run_id", "created_at"),
+        Index("ix_pipeline_event_outbox_run", "test_run_id"),
+        Index("ix_pipeline_event_outbox_test_case", "test_case_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
+    pipeline_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("agent_pipeline_runs.id", ondelete="CASCADE"))
+    test_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("test_runs.id", ondelete="CASCADE"))
+    test_case_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("test_cases.id", ondelete="CASCADE"))
+    pipeline_run_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    payload: Mapped[dict] = mapped_column(JSON().with_variant(JSONB(), "postgresql"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    status: Mapped[str] = mapped_column(String(12), default="pending", server_default="pending")
+    attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    next_attempt_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    lease_token: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True))
+    lease_expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    last_error_code: Mapped[Optional[str]] = mapped_column(String(48))
+    delivered_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 
 
 class AgentStageResult(Base):
@@ -4995,7 +5032,7 @@ class IdentityEventType(str, PyEnum):
     # if a future addition is not.
     #
     # Deliberately absent: a per-attempt LOGIN_FAILED event. ``identity_events``
-    # has no retention clock (see the model docstring), so anything an
+    # retains failures indefinitely (see the model docstring), so anything an
     # unauthenticated attacker can emit at will accumulates forever. The events
     # here are either operator-initiated or bounded by the lockout threshold.
     MFA_ENROLL_STARTED = "MFA_ENROLL_STARTED"
@@ -5166,9 +5203,13 @@ class IdentityEvent(Base):
     UPDATEs an audit table or DELETEs from one outside
     ``services/retention_service.py``.
 
-    Not currently covered by any retention clock: the US-11.4 purge does not
-    touch this table (it has no project scope), so rows accumulate until an
-    operator prunes them out-of-band.
+    The project retention clocks do not apply: this table has no project
+    scope. A separate default-off instance policy can expire only successful
+    SSO_LOGIN, SSO_LOGOUT and MFA_VERIFY_SUCCESS records after explicit admin
+    approval, subject to independent instance identity holds. SCIM_USER_CREATED
+    rows remain live authorization evidence; all other types, failed routine
+    records and unknown future types stay retained. Policy/hold/purge receipts
+    remain in the never-purged settings audit trail.
 
     Beyond that, durability is the **operator's** responsibility: direct
     Postgres credentials can still rewrite or drop rows. Real immutability
@@ -5674,6 +5715,14 @@ class DigestSubscription(Base):
     # each scheduled delivery reports changes since the previous send.
     last_delivered_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     next_delivery_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    # OBS-E03-S01: an atomic schedule claim must not erase unfinished due
+    # work. This original slot survives retry claims until sent/policy-skipped.
+    # The token fences late writes from an older attempt or schedule edit.
+    pending_delivery_since_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    delivery_observation_token: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True))
+    last_delivery_attempt_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    last_content_generated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    last_delivery_outcome: Mapped[Optional[str]] = mapped_column(String(20))
     delivery_count: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
@@ -6651,6 +6700,20 @@ class AgentActionDispatchOutbox(Base):
 #
 # Every create/update/delete writes a SettingsAuditLog entry so the flag
 # history is a first-class audit trail for regulated customers.
+
+
+class NightlyJobObservation(Base):
+    """Bounded operational state shared by the scheduled workers and API."""
+
+    __tablename__ = "nightly_job_observations"
+
+    schedule_key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    monitoring_since: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    enabled_since: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    last_attempt_slot_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    last_attempt_started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    last_success_slot_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    last_success_finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 
 
 class FeatureFlag(Base):
@@ -8685,3 +8748,39 @@ class DropFolderBuild(Base):
     )
     queued_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     task_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+
+
+class UploadDispatchReceipt(Base):
+    """Durable upload identity created before its object or broker publication."""
+
+    __tablename__ = "upload_dispatch_receipts"
+    __table_args__ = (
+        UniqueConstraint("project_id", "actor_digest", "kind", "idempotency_digest", name="uq_upload_receipt_idempotency"),
+        CheckConstraint("kind IN ('batch','file')", name="ck_upload_receipt_kind"),
+        CheckConstraint("state IN ('pending','parsing','ingesting','succeeded','failed')", name="ck_upload_receipt_state"),
+        CheckConstraint("(state IN ('succeeded','failed')) = (completed_at IS NOT NULL)", name="ck_upload_receipt_terminal"),
+        Index("ix_upload_receipt_cleanup", text("payload_deleted_at ASC NULLS FIRST"), "completed_at", postgresql_where=text("completed_at IS NOT NULL")),
+        Index("ix_upload_receipt_project_created", "project_id", "created_at"),
+        Index("ix_upload_receipt_outstanding", "project_id", postgresql_where=text("payload_deleted_at IS NULL")),
+        CheckConstraint("payload_deleted_at IS NULL OR completed_at IS NOT NULL", name="ck_upload_receipt_cleanup_terminal"),
+    )
+
+    task_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    # No run FK: durable admission precedes the worker's TestRun INSERT.
+    run_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    # Keep cleanup custody if a project is removed outside the soft-delete API.
+    project_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    actor_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    kind: Mapped[str] = mapped_column(String(8), nullable=False)
+    idempotency_digest: Mapped[Optional[str]] = mapped_column(String(64))
+    request_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    storage_key: Mapped[str] = mapped_column(String(1000), nullable=False)
+    task_kwargs: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    state: Mapped[str] = mapped_column(String(12), nullable=False, server_default="pending")
+    status_payload: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    payload_ready_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    payload_deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())

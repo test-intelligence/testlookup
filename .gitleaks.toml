@@ -34,10 +34,78 @@ regex = '''eyJhIjoi[A-Za-z0-9+/=_\-]{40,}'''
 keywords = ["eyjhijoi"]
 
 [[allowlists]]
-description = "Cross-SDK redaction vectors: they hold token-shaped fake values on purpose, to prove every SDK masks them"
-paths = ['''^sdk-vectors/''']
-
-[[allowlists]]
 description = "Chart axis keys such as p95_duration_ms read as high-entropy generic keys"
 targetRules = ["generic-api-key"]
 stopwords = ["_duration_ms"]
+
+# These exact golden chart-metadata lines are deterministic test labels, not
+# credentials. The AND condition permits no other value anywhere in this file.
+[[allowlists]]
+description = "Exact synthetic chart metadata in the analytics parity golden fixture"
+condition = "AND"
+targetRules = ["generic-api-key"]
+paths = ['''^backend/tests/integration/golden/analytics_parity_characterisation\.json$''']
+regexTarget = "line"
+regexes = [
+  '''^\s*"membership_key": "395524f698eb9382943f84f87782ca2b",\s*$''', # gitleaks:allow -- exact synthetic golden metadata
+  '''^\s*"membership_key": "398fa42ff77ee0c8119dd3749c780d3f",\s*$''', # gitleaks:allow -- exact synthetic golden metadata
+  '''^\s*"membership_key": "5a28a10db27b29653db1c73983d33b16",\s*$''', # gitleaks:allow -- exact synthetic golden metadata
+]
+
+# Shared SDK conformance vectors deliberately contain fixed synthetic canaries.
+# Match the exact recorded lines AND file AND detector, never the directory.
+
+[[allowlists]]
+description = "Exact synthetic cross-SDK redaction vector for aws-access-token"
+condition = "AND"
+targetRules = ["aws-access-token"]
+paths = ['''^sdk\-vectors/http_exchange\.json$''']
+regexTarget = "line"
+regexes = [
+  '''^\s*"X\-Debug": "key AKIAW23DSAMPLEKEYQZX",\s*$''', # gitleaks:allow -- exact synthetic conformance input
+]
+
+[[allowlists]]
+description = "Exact synthetic cross-SDK redaction vector for generic-api-key"
+condition = "AND"
+targetRules = ["generic-api-key"]
+paths = ['''^sdk\-vectors/http_exchange\.json$''']
+regexTarget = "line"
+regexes = [
+  '''^\s*"Sec\-WebSocket\-Key": "dGhlIHNhbXBsZSBub25jZQ==",\s*$''', # gitleaks:allow -- exact synthetic conformance input
+]
+
+[[allowlists]]
+description = "Exact synthetic cross-SDK redaction vector for github-pat"
+condition = "AND"
+targetRules = ["github-pat"]
+paths = ['''^sdk\-vectors/http_exchange\.json$''']
+regexTarget = "line"
+regexes = [
+  '''^\s*"X\-GitHub\-Token": "ghp_w23dSamplePatValueQxZkLmNoPqRsTuVwXy",\s*$''', # gitleaks:allow -- exact synthetic conformance input
+  '''^\s*"X\-Trace": "pat ghp_w23dSamplePatValueQxZkLmNoPqRsTuVwXy"\s*$''', # gitleaks:allow -- exact synthetic conformance input
+  '''^\s*"body": "\{\\"note\\": \\"sample ghp_w23dSamplePatValueQxZkLmNoPqRsTuVwXy\\", \\"id\\": 11\}"\s*$''', # gitleaks:allow -- exact synthetic conformance input
+  '''^\s*"url": "https://api\.example\.test/api/hooks/ghp_w23dSamplePatValueQxZkLmNoPqRsTuVwXy/deliveries",\s*$''', # gitleaks:allow -- exact synthetic conformance input
+  '''^\s*"url": "https://api\.example\.test/api/search\?q=ghp_w23dSamplePatValueQxZkLmNoPqRsTuVwXy\&limit=5",\s*$''', # gitleaks:allow -- exact synthetic conformance input
+]
+
+[[allowlists]]
+description = "Exact synthetic cross-SDK redaction vector for jwt"
+condition = "AND"
+targetRules = ["jwt"]
+paths = ['''^sdk\-vectors/http_exchange\.json$''']
+regexTarget = "line"
+regexes = [
+  '''^\s*"Authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\.eyJzdWIiOiJ3MjNkLXNhbXBsZSJ9\.c2lnbmF0dXJlLXNhbXBsZS12YWx1ZS0x",\s*$''', # gitleaks:allow -- exact synthetic conformance input
+  '''^\s*"body": "\{\\"session\\": \\"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\.eyJzdWIiOiJ3MjNkLXNhbXBsZSJ9\.c2lnbmF0dXJlLXNhbXBsZS12YWx1ZS0x\\"\}"\s*$''', # gitleaks:allow -- exact synthetic conformance input
+]
+
+[[allowlists]]
+description = "Exact synthetic cross-SDK redaction vector for jwt"
+condition = "AND"
+targetRules = ["jwt"]
+paths = ['''^sdk\-vectors/run_context\.json$''']
+regexTarget = "line"
+regexes = [
+  '''^\s*"BUILD_IMAGE": "eyJSentinelSentinelSenti\.eyJPayloadSentinelPayloa\.SignatureSentinelSignatu"\s*$''', # gitleaks:allow -- exact synthetic conformance input
+]

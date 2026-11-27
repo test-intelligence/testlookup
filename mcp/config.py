@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 #: The directory that holds ``server.py`` (and this file).
@@ -47,6 +48,11 @@ class Settings(BaseSettings):
     # exact hosts/origins; ``:*`` is supported for local ephemeral ports.
     mcp_allowed_hosts: str = "127.0.0.1:*,localhost:*,[::1]:*"
     mcp_allowed_origins: str = ""
+    otlp_logs_endpoint: str = ""
+    otlp_traces_endpoint: str = ""
+    otlp_metrics_endpoint: str = ""
+    telemetry_trace_sample_ratio: float = Field(default=1.0, ge=0.0, le=1.0)
+    telemetry_environment: str = "production"
 
     model_config = SettingsConfigDict(
         env_prefix="TESTLOOKUP_",

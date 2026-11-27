@@ -5,6 +5,7 @@ from hashlib import sha256
 from types import SimpleNamespace
 from datetime import datetime, timezone
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -467,3 +468,42 @@ async def test_inline_invocation_pipelines_are_never_replay_evidence() -> None:
     assert "NOT (EXISTS (SELECT 1" in sql
     assert "agent_invocations.pipeline_run_id = agent_pipeline_runs.id" in sql
     assert "agent_invocations.input_sha256 IS NOT NULL" in sql
+
+
+@pytest.mark.asyncio
+async def test_many_workflow_identities_keep_coverage_in_sql_and_api_without_series(monkeypatch):
+    from prometheus_client import REGISTRY
+    from app.services import agent_authority_lock, workflow_definition_service
+
+    monkeypatch.setattr(agent_authority_lock, "lock_agent_authority_snapshot", AsyncMock())
+    monkeypatch.setattr(svc, "_candidate_step_authority", AsyncMock(return_value={}))
+    monkeypatch.setattr(svc, "_load_replay_cases", AsyncMock(return_value=[]))
+    baseline = _evaluate([_case(index) for index in range(20)])
+    monkeypatch.setattr(svc, "evaluate_replay", lambda **_kwargs: dict(baseline))
+    admitted = []
+
+    def add(gate):
+        gate.id = uuid.uuid4()
+        admitted.append(gate)
+
+    db = SimpleNamespace(execute=AsyncMock(), add=add, flush=AsyncMock())
+    for generation in range(2):
+        # Distinct projects and definitions, including delete/recreate-shaped
+        # identity churn. This unit boundary does not simulate real DB deletes.
+        for index in range(100):
+            row = _row("insufficient_samples")
+            row.project_id = uuid.uuid4()
+            row.workflow_id = f"wf.custom.{generation}.{index}"
+            result = await svc.evaluate_definition(
+                db, project_id=row.project_id, row=row, sample_limit=20, evaluated_by=None,
+            )
+            serialized = workflow_definition_service.serialize(row)
+            assert serialized["workflow_id"] == row.workflow_id
+            assert serialized["project_id"] == str(row.project_id)
+            assert serialized["eval_coverage"] == result["coverage"] == baseline["coverage"]
+            assert serialized["eval_verdict"] == baseline["verdict"]
+            assert serialized["eval_gate_run_id"] == result["gate_run_id"]
+            assert row.evaluated_at is not None
+
+    assert len(admitted) == 200
+    assert "testlookup_workflow_eval_coverage" not in {family.name for family in REGISTRY.collect()}

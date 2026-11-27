@@ -218,9 +218,7 @@ def test_stage_snapshot_captures_every_authored_field():
     assert snapshot.test_case_id == case.id
     assert snapshot.changed_by_id == actor_id
     assert snapshot.changed_fields == ["priority"]
-    assert db.info["test_management_state_metric_projects"] == {
-        values["project_id"]
-    }
+    assert db.info == {}  # SQL snapshot remains; tenant gauges are retired.
 
 
 @pytest.mark.asyncio
@@ -406,7 +404,7 @@ async def test_transition_stages_snapshot_audit_flush_and_metric(monkeypatch):
     monkeypatch.setattr(lifecycle, "stage_test_case_snapshot", snapshot)
     monkeypatch.setattr(lifecycle, "audit_event", audit)
     metric = test_case_transitions_total.labels(
-        str(case.project_id), "approved", "active", UserRole.QA_LEAD.value
+        "approved", "active", UserRole.QA_LEAD.value
     )
     before = metric._value.get()
 

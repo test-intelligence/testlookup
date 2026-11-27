@@ -143,10 +143,13 @@ def get_engine() -> AsyncEngine:
     production), pool_recycle capped at 900s to stay within typical PG
     idle timeouts.
     """
+    from app.db.pool_metrics import InstrumentedAsyncAdaptedQueuePool
+
     pool = get_effective_pool_config()
     return create_async_engine(
         settings.DATABASE_URL,
         echo=settings.is_development,
+        poolclass=InstrumentedAsyncAdaptedQueuePool,
         # Re-audit M1: a worker's pooled connections now outlive a task, so a
         # Postgres restart or an idle timeout must not strand dead ones in the
         # pool. The API keeps the P3-5 saving; its pool was always long-lived.

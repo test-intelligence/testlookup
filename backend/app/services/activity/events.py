@@ -233,6 +233,7 @@ def _spec(
 _SPECS: tuple[ActivityEventSpec, ...] = (
     # ── runs ────────────────────────────────────────────────────────────────
     _spec("run.received", "runs", "run", "Report received for {entity_label}", "attempt"),
+    _spec("run.upload_resumed", "runs", "run", "Upload delivery resumed for {entity_label}", "attempt"),
     _spec("run.completed", "runs", "run", "{entity_label} completed — {failed} failed of {total}"),
     _spec("run.ingest_failed", "runs", "run", "Ingestion failed for {entity_label}: {error}", "attempt"),
     _spec("run.deleted", "runs", "run", "{entity_label} was deleted", "attempt"),
@@ -269,6 +270,7 @@ _SPECS: tuple[ActivityEventSpec, ...] = (
     # fails. A cancel in particular must leave a trace precisely when it did
     # NOT tidily succeed.
     _spec("analysis.retried", "analysis", "run", "Analysis for {entity_label} was retried ({mode})", "attempt"),
+    _spec("analysis.event_delivery_requeued", "analysis", "project", "{entity_label} was requeued", "outcome"),
     _spec("analysis.cancelled", "analysis", "run", "Analysis for {entity_label} was cancelled", "attempt"),
     # W14 AGT-12: a tracked bulk job was cancelled (one row per project of the
     # job). An attempt write, like the bulk trigger it cancels: the cancel

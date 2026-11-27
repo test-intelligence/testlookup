@@ -24,7 +24,7 @@ the endpoint leaked every tenant's live run (slug, build number, counts,
 timing) to any authenticated user — the ``/active-runs/{run_id}`` sibling
 already gates on ``require_run_access`` but the list did not.
 
-Source: [backend/app/routers/agents.py:1460](../../../backend/app/routers/agents.py#L1460).
+Source: [backend/app/routers/agents.py:1489](../../../backend/app/routers/agents.py#L1489).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -101,7 +101,7 @@ Get Live Run State
 
 Get the current state for a single live test run.
 
-Source: [backend/app/routers/agents.py:1516](../../../backend/app/routers/agents.py#L1516).
+Source: [backend/app/routers/agents.py:1545](../../../backend/app/routers/agents.py#L1545).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -361,7 +361,7 @@ Run the Defect Commander on a failure cluster.
 Scores the cluster on 7 criticality dimensions, generates a Jira-ready
 defect description, and optionally creates a Jira ticket.
 
-Source: [backend/app/routers/agents.py:1719](../../../backend/app/routers/agents.py#L1719).
+Source: [backend/app/routers/agents.py:1748](../../../backend/app/routers/agents.py#L1748).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -481,16 +481,16 @@ Contract limit: at least one response has an unstructured schema. Read the linke
 
 Get Pipeline Event Log Health
 
-Return write-health details for the pipeline audit event log.
+Read shared delivery health within the caller's accessible projects.
 
-Source: [backend/app/routers/agents.py:1427](../../../backend/app/routers/agents.py#L1427).
+Source: [backend/app/routers/agents.py:1428](../../../backend/app/routers/agents.py#L1428).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
 Declared Python handler arguments (includes exact role/guard options):
 
 ```python
-_: Any=Depends(require_role(UserRole.QA_LEAD))
+project_id: uuid.UUID | None=Query(None), db: AsyncSession=Depends(get_db), current_user: Any=Depends(require_role(UserRole.QA_LEAD))
 ```
 
 ### Declared wire contract
@@ -501,6 +501,23 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 {
   "operationId": "get_pipeline_event_log_health_api_v1_agents_event_log_health_get",
   "parameters": [
+    {
+      "in": "query",
+      "name": "project_id",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "format": "uuid",
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "Project Id"
+      }
+    },
     {
       "in": "header",
       "name": "X-API-Key",
@@ -547,6 +564,111 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
   ]
 }
 ```
+
+## POST `/api/v1/agents/event-log/{event_id}/replay`
+
+Replay Pipeline Event Delivery
+
+Requeue one failed delivery; never re-execute pipeline business work.
+
+Source: [backend/app/routers/agents.py:1442](../../../backend/app/routers/agents.py#L1442).
+
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+event_id: uuid.UUID, project_id: uuid.UUID=Query(...), db: AsyncSession=Depends(get_db), current_user: Any=Depends(require_role(UserRole.QA_LEAD))
+```
+
+Direct handler error branches (dependency/service errors can add others):
+
+```python
+HTTPException(404, detail='Event delivery not found.')
+HTTPException(409, detail='Event history is busy; retry later.')
+HTTPException(409, detail='Only failed event deliveries may be requeued.')
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "replay_pipeline_event_delivery_api_v1_agents_event_log__event_id__replay_post",
+  "parameters": [
+    {
+      "in": "path",
+      "name": "event_id",
+      "required": true,
+      "schema": {
+        "format": "uuid",
+        "title": "Event Id",
+        "type": "string"
+      }
+    },
+    {
+      "in": "query",
+      "name": "project_id",
+      "required": true,
+      "schema": {
+        "format": "uuid",
+        "title": "Project Id",
+        "type": "string"
+      }
+    },
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "responses": {
+    "202": {
+      "content": {
+        "application/json": {
+          "schema": {}
+        }
+      },
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```
+
+Handler return expressions (source excerpts, not an inferred wire schema):
+
+```python
+result
+```
+
+Contract limit: at least one response has an unstructured schema. Read the linked handler/serializer for emitted fields; the empty schema is not a promise of an empty JSON object.
 
 ## GET `/api/v1/agents/pipelines`
 
@@ -1266,7 +1388,7 @@ This additive adapter keeps the established timeline API stable while
 exposing selected/skipped capabilities, parent-child task identity,
 allocated budgets, actual usage and terminal stop reasons in one model.
 
-Source: [backend/app/routers/agents.py:1319](../../../backend/app/routers/agents.py#L1319).
+Source: [backend/app/routers/agents.py:1320](../../../backend/app/routers/agents.py#L1320).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -1450,7 +1572,7 @@ Get Pipeline Replay
 
 Return a deterministic replay document for audit reconstruction.
 
-Source: [backend/app/routers/agents.py:1442](../../../backend/app/routers/agents.py#L1442).
+Source: [backend/app/routers/agents.py:1471](../../../backend/app/routers/agents.py#L1471).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -1826,7 +1948,7 @@ Run the Regression Watchman on an existing test run.
 Returns classification of each failure cluster as:
   - new_regression | known_flaky_recurrence | environmental_anomaly
 
-Source: [backend/app/routers/agents.py:1771](../../../backend/app/routers/agents.py#L1771).
+Source: [backend/app/routers/agents.py:1800](../../../backend/app/routers/agents.py#L1800).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -1926,7 +2048,7 @@ WF-1: Return the latest pipeline execution status for a run and workflow type.
 Enables the frontend to know when deep/offline analysis ran, whether it
 completed fully, partially, or failed, without scanning the full timeline.
 
-Source: [backend/app/routers/agents.py:1529](../../../backend/app/routers/agents.py#L1529).
+Source: [backend/app/routers/agents.py:1558](../../../backend/app/routers/agents.py#L1558).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 
@@ -2034,7 +2156,7 @@ Carries the human-review envelope (E8.3): ``requires_human_review``,
 ``review`` and the ``X-TestLookup-AI-Generated`` / ``X-TestLookup-Review-State``
 headers. A deterministic fallback is ``not_applicable``: no AI wrote it.
 
-Source: [backend/app/routers/agents.py:1606](../../../backend/app/routers/agents.py#L1606).
+Source: [backend/app/routers/agents.py:1635](../../../backend/app/routers/agents.py#L1635).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_run_access.<locals>._check`.
 

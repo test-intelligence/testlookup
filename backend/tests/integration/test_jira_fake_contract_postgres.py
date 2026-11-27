@@ -89,7 +89,7 @@ async def world():
     monkeypatch.setattr("app.db.postgres.AsyncSessionLocal", sessions)
     monkeypatch.setattr(settings, "AI_OFFLINE_MODE", False)
     monkeypatch.setattr(svc, "resolve_jira_config", resolved)
-    monkeypatch.setattr(svc, "get_http_client", lambda: client)
+    monkeypatch.setattr(svc, "get_integration_http_client", lambda: client)
 
     async def file(fingerprint, **kwargs):
         async with sessions() as db:

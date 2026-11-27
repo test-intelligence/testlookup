@@ -110,5 +110,6 @@ The overlay keeps the NGINX annotations from the base (120-second proxy timeouts
 ## Related
 
 - [Kubernetes guide](deploy-kubernetes.md) for the base, secrets, monitoring and backups
+- [Durable telemetry](durable-telemetry.md#kubernetes-and-managed-gateways) for private or managed OTLP collection
 - [Sizing](../../user-guide/sizing.md)
 - [Startup and upgrade order](deployment.md#startup-and-upgrade-order)

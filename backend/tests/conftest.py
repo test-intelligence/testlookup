@@ -2,7 +2,10 @@
 import os
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
+from uuid import UUID
 
 import pytest
 
@@ -84,6 +87,42 @@ def pytest_collection_modifyitems(config, items):
         if path.endswith("/tests/test_performance_budgets_live.py"):
             item.add_marker(integration_marker)
             item.add_marker(live_marker)
+
+
+@pytest.fixture
+def upload_receipt_store(monkeypatch):
+    """In-memory receipt seam for HTTP tests that replace the PostgreSQL database."""
+    from app.services import upload_receipts
+    from app.worker import upload_receipts as boundary
+
+    rows = {}
+
+    async def reserve(*, task_id, run_id, project_id, kind, storage_key, task_kwargs, **_fields):
+        row = SimpleNamespace(
+            task_id=UUID(task_id), run_id=UUID(run_id), project_id=UUID(project_id),
+            kind=kind, storage_key=storage_key, task_kwargs=dict(task_kwargs),
+            state="pending", status_payload={}, created_at=datetime.now(timezone.utc),
+            payload_ready_at=None, completed_at=None, payload_deleted_at=None,
+        )
+        rows[task_id] = row
+        return row
+
+    async def mark_ready(task_id):
+        rows[task_id].payload_ready_at = datetime.now(timezone.utc)
+
+    async def read(task_id):
+        return rows.get(task_id)
+
+    async def read_from_session(_db, task_id):
+        return rows.get(task_id)
+
+    monkeypatch.setattr(boundary, "reserve_upload", reserve)
+    monkeypatch.setattr(boundary, "acquire_upload_lock", AsyncMock(return_value=object()))
+    monkeypatch.setattr(boundary, "release_upload_lock", AsyncMock())
+    monkeypatch.setattr(boundary, "mark_payload_ready", mark_ready)
+    monkeypatch.setattr(boundary, "read_upload", read)
+    monkeypatch.setattr(upload_receipts, "get_receipt", read_from_session)
+    return rows
 
 
 @dataclass

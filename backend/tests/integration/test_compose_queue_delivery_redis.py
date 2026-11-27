@@ -81,7 +81,7 @@ def _write_override(
       CELERY_RESULT_BACKEND: redis://redis:6379/1
       REDIS_URL: redis://redis:6379/0
       APP_SECRET_KEY: h07-compose-secret
-      JWT_SECRET_KEY: h07-compose-jwt
+      JWT_SECRET_KEY: h07-compose-jwt # gitleaks:allow -- synthetic test credential, never production authority
       AI_OFFLINE_MODE: "true"
   worker-children:
     image: {image}
@@ -95,7 +95,7 @@ def _write_override(
       CELERY_RESULT_BACKEND: redis://redis:6379/1
       REDIS_URL: redis://redis:6379/0
       APP_SECRET_KEY: h07-compose-secret
-      JWT_SECRET_KEY: h07-compose-jwt
+      JWT_SECRET_KEY: h07-compose-jwt # gitleaks:allow -- synthetic test credential, never production authority
       AI_OFFLINE_MODE: "true"
 """
     for service in sorted(env_file_services - {"worker", "worker-children"}):
@@ -152,7 +152,7 @@ def test_supported_compose_topology_delivers_one_task_per_queue(
         "MINIO_SECRET_KEY": "h07-compose-minio-secret",
         "FLOWER_PASSWORD": "h07-compose-flower",
         "APP_SECRET_KEY": "h07-compose-secret",
-        "JWT_SECRET_KEY": "h07-compose-jwt",
+        "JWT_SECRET_KEY": "h07-compose-jwt", # gitleaks:allow -- synthetic test credential, never production authority
         "TESTLOOKUP_IMAGE": "testlookup-h07",
         "TESTLOOKUP_VERSION": source_sha[:12],
         "TESTLOOKUP_REGISTRY": "testlookup-h07",

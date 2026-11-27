@@ -352,7 +352,7 @@ async def test_retirement_confirmation_captures_actor_reason_and_timestamp():
 
 
 @pytest.mark.asyncio
-async def test_orphan_query_is_project_scoped_unconfirmed_and_updates_gauge(monkeypatch):
+async def test_orphan_query_preserves_scoped_paginated_analytics_without_metric_reads():
     project_id = uuid.uuid4()
     orphan = _canonical(
         project_id=project_id,
@@ -362,14 +362,11 @@ async def test_orphan_query_is_project_scoped_unconfirmed_and_updates_gauge(monk
     total_result = FakeExecuteResult(scalar_value=1)
     rows_result = FakeExecuteResult()
     rows_result.scalars = lambda: SimpleNamespace(all=lambda: [orphan])
-    count_result = FakeExecuteResult(all_value=[(project_id, 1)])
     db = SimpleNamespace(
         execute=AsyncMock(
-            side_effect=[total_result, rows_result, count_result]
+            side_effect=[total_result, rows_result]
         )
     )
-    metric = Mock()
-    monkeypatch.setattr(svc, "automation_cases_orphaned", metric)
 
     rows, total = await svc.list_orphaned_canonical_cases(
         db, [project_id], page=2, size=7
@@ -383,48 +380,38 @@ async def test_orphan_query_is_project_scoped_unconfirmed_and_updates_gauge(monk
     assert "canonical_test_cases.project_id IN" in compiled
     assert "deleted_observed_at ASC NULLS FIRST" in compiled
     assert "LIMIT" in compiled and "OFFSET" in compiled
-    metric.labels.assert_called_once_with(str(project_id))
-    metric.labels.return_value.set.assert_called_once_with(1)
+    assert db.execute.await_count == 2
 
 
 @pytest.mark.asyncio
-async def test_orphan_gauge_is_reset_when_scoped_project_has_no_orphans(monkeypatch):
+async def test_orphan_query_empty_project_retains_zero_without_global_metric_query():
     project_id = uuid.uuid4()
     total_result = FakeExecuteResult(scalar_value=0)
     rows_result = FakeExecuteResult()
     rows_result.scalars = lambda: SimpleNamespace(all=lambda: [])
-    count_result = FakeExecuteResult(all_value=[])
     db = SimpleNamespace(
         execute=AsyncMock(
-            side_effect=[total_result, rows_result, count_result]
+            side_effect=[total_result, rows_result]
         )
     )
-    metric = Mock()
-    monkeypatch.setattr(svc, "automation_cases_orphaned", metric)
 
     assert await svc.list_orphaned_canonical_cases(db, [project_id]) == ([], 0)
-    metric.labels.assert_called_once_with(str(project_id))
-    metric.labels.return_value.set.assert_called_once_with(0)
+    assert db.execute.await_count == 2
 
 
 @pytest.mark.asyncio
-async def test_orphan_gauge_failure_is_best_effort(monkeypatch):
-    project_id = uuid.uuid4()
+async def test_orphan_query_all_projects_uses_only_authoritative_total_and_page():
     total_result = FakeExecuteResult(scalar_value=0)
     rows_result = FakeExecuteResult()
     rows_result.scalars = lambda: SimpleNamespace(all=lambda: [])
-    count_result = FakeExecuteResult(all_value=[])
     db = SimpleNamespace(
         execute=AsyncMock(
-            side_effect=[total_result, rows_result, count_result]
+            side_effect=[total_result, rows_result]
         )
     )
-    metric = Mock()
-    metric.labels.return_value.set.side_effect = RuntimeError("registry down")
-    monkeypatch.setattr(svc, "automation_cases_orphaned", metric)
 
-    assert await svc.list_orphaned_canonical_cases(db, [project_id]) == ([], 0)
-    metric.labels.return_value.set.assert_called_once_with(0)
+    assert await svc.list_orphaned_canonical_cases(db, None) == ([], 0)
+    assert db.execute.await_count == 2
 
 
 @pytest.mark.asyncio

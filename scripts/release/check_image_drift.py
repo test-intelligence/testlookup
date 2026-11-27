@@ -31,10 +31,7 @@ import sys
 from pathlib import Path
 
 # Compose files whose literal image: lines are covered by the manifest.
-# docker-compose.monitoring.yml (prometheus/grafana/jaeger) and
-# docker-compose.gcp-vm.yml (a build-only override with no image: lines) are
-# deliberately out of scope: the monitoring sidecar stack is not part of the
-# TestLookup application bundle. They are still scanned for :latest below.
+# The separately bundled durable telemetry overlays have their own inventory.
 MANIFEST_COMPOSE_FILES = (
     "docker-compose.yml",
     "docker-compose.release.yml",
@@ -42,6 +39,11 @@ MANIFEST_COMPOSE_FILES = (
 )
 
 AIRGAP_COMPOSE_FILE = "docker-compose.airgap.yml"
+TELEMETRY_COMPOSE_FILES = (
+    "docker-compose.monitoring.yml",
+    "docker-compose.telemetry.yml",
+    "docker-compose.alerting.yml",
+)
 OPENSHIFT_KUSTOMIZATION = "k8s/overlays/openshift-artifactory/kustomization.yaml"
 OPENSHIFT_SCRIPTS = (
     "openshiftsetup/mirror-images.sh",
@@ -81,18 +83,20 @@ class Row:
 
     @property
     def name(self) -> str:
-        return self.ref.rsplit(":", 1)[0]
+        return self.ref.split("@sha256:", 1)[0].rsplit(":", 1)[0]
 
     @property
     def tag(self) -> str:
-        return self.ref.rsplit(":", 1)[1] if ":" in self.ref else ""
+        tagged = self.ref.split("@sha256:", 1)[0]
+        return tagged.rsplit(":", 1)[1] if ":" in tagged else ""
 
 
 def load_manifest(path: Path) -> list[Row]:
     rows: list[Row] = []
     valid_roles = {"app", "infra"}
-    valid_bundles = {"core", "llm", "external", "excluded"}
-    valid_surfaces = {"compose", "k8s"}
+    telemetry_bundles = {"telemetry", "telemetry-external"}
+    valid_bundles = {"core", "llm", "external", "excluded", *telemetry_bundles}
+    valid_surfaces = {"compose", "k8s", "telemetry"}
     for lineno, raw in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
         line = raw.split("#", 1)[0].strip()
         if not line:
@@ -115,6 +119,14 @@ def load_manifest(path: Path) -> list[Row]:
                 f"{path}:{lineno}: app images must carry the literal tag {APP_TAG_TOKEN} "
                 "(the real tag is resolved at build time)"
             )
+        if "telemetry" in row.surfaces or row.bundle in telemetry_bundles:
+            if (
+                row.role != "infra" or row.surfaces != ("telemetry",) or row.bundle not in telemetry_bundles
+                or not re.fullmatch(r"[^\s@]+:[^\s@:]+@sha256:[a-f0-9]{64}", row.ref)
+            ):
+                raise SystemExit(f"{path}:{lineno}: telemetry images need an immutable optional infra reference")
+        if row.name in {"grafana/grafana", "grafana/loki"} and row.bundle != "telemetry-external":
+            raise SystemExit(f"{path}:{lineno}: Grafana Labs OSS images must stay external to shipment")
         rows.append(row)
     if not rows:
         raise SystemExit(f"{path}: manifest is empty")
@@ -154,6 +166,27 @@ def check(repo_root: Path) -> list[str]:
     infra_k8s = {r.ref for r in rows if r.role == "infra" and "k8s" in r.surfaces}
     app_names = {r.name for r in rows if r.role == "app"}
     all_infra_names = {r.name for r in rows if r.role == "infra"}
+
+    telemetry_refs = {r.ref for r in rows if "telemetry" in r.surfaces}
+    telemetry_files = [repo_root / rel for rel in TELEMETRY_COMPOSE_FILES]
+    if telemetry_refs or (repo_root / "docker-compose.telemetry.yml").exists():
+        missing_files = [file.name for file in telemetry_files if not file.is_file()]
+        if missing_files:
+            errors.append(f"durable telemetry Compose files are missing: {missing_files}")
+        else:
+            telemetry_images = {
+                ref
+                for file in telemetry_files
+                for _, ref in compose_image_refs(file)
+                # The durable overlay replaces the basic, ephemeral service.
+                if not (file.name == "docker-compose.monitoring.yml" and ref.startswith("jaegertracing/all-in-one:"))
+            }
+            if telemetry_images != telemetry_refs:
+                errors.append(
+                    f"durable telemetry image inventory differs from Compose; "
+                    f"missing from manifest: {sorted(telemetry_images - telemetry_refs)}, "
+                    f"missing from Compose: {sorted(telemetry_refs - telemetry_images)}"
+                )
 
     # ── 1. Compose <-> manifest, both directions ────────────────────────────
     seen_compose: set[str] = set()

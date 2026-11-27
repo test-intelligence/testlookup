@@ -43,7 +43,7 @@ def test_the_fingerprint_ignores_key_order_and_covers_project_and_input():
 
 
 def test_the_lock_key_is_scoped_by_user_and_project_and_hides_the_client_key():
-    key = "018f3c2e-7b1a-7c1d-9e4f-2a6b8c0d1e2f"
+    key = "018f3c2e-7b1a-7c1d-9e4f-2a6b8c0d1e2f" # gitleaks:allow -- synthetic test credential, never production authority
     a = idem.lock_key("user-a", "project-1", "agent.summary.v1", key)
     assert key not in a
     assert a != idem.lock_key("user-b", "project-1", "agent.summary.v1", key)
@@ -117,7 +117,7 @@ async def test_the_lock_degrades_to_unavailable_when_redis_is_down(monkeypatch):
 # -- the route -------------------------------------------------------------------------------
 
 
-KEY = "018f3c2e-7b1a-7c1d-9e4f-2a6b8c0d1e2f"
+KEY = "018f3c2e-7b1a-7c1d-9e4f-2a6b8c0d1e2f" # gitleaks:allow -- synthetic test credential, never production authority
 
 
 class _Result:

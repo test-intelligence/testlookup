@@ -200,11 +200,27 @@ file, and exits 1 if any file fails.
 | `--no-ai` | Skip the AI analysis, the suite comparison and the automatic Investigator run of the uploaded run (sends `run_ai=false`) |
 | `--wait` / `--no-wait` | Wait until the server has ingested the report and exit non-zero if it refuses it (over the result cap, unparseable, empty). When the upload carried a commit range, it also prints what became of it: `Commit range: stored`, or a warning when the server cut it, could not read it or failed to save it (the results are ingested either way). Default `--no-wait`: the command returns once the upload is accepted. |
 | `--wait-timeout <seconds>` | How long `--wait` waits (default 600; for `upload dir` one budget covers every file) |
+| `--idempotency-key <key>` | `upload file` only. Reuse the same key with the same account, project, file and metadata after an uncertain response on a receipt-aware server. Accepts 1–128 ASCII letters/digits or `_.:-`, starting with a letter/digit. A key is generated once per upload when omitted. |
 | `--profile`, `-o`/`--output` | Profile to use; `table`, `json` or `yaml` output |
 
-An upload that meets a 429 or 503 is retried, honouring `Retry-After` (otherwise
-backing off from 0.5 s), for up to five minutes in total. The accepted upload's
-JSON carries `run_id` and `task_id`:
+Admission 429 responses and 503 responses without an upload receipt retry with
+the same key, honouring `Retry-After` (otherwise backing off from 0.5 s), within
+five minutes. A 503 carrying an original task/run receipt switches to polling
+that task and never sends a second upload. Confirmation polling stays within
+the remaining five-minute budget and, with `--wait`, its shorter wait timeout.
+If still pending, the command exits nonzero and JSON/YAML retains the original
+IDs and state. A terminal processing failure also exits nonzero.
+
+When the HTTP response is lost entirely, the CLI makes no automatic replay. Its
+diagnostic includes the generated key. On a receipt-aware server, rerun
+`upload file` with `--idempotency-key` and identical file/options to recover that
+invocation. Keep the chosen key for that report when retrying from CI. Changed
+content with the same key returns 409. A new independent upload uses a new key.
+Older servers may ignore this optional header, so check any known receipt
+before manually submitting again. See [upload recovery](../docs/operations/upload-client-recovery.md).
+
+An ordinary 202 acceptance preserves the default `--no-wait` behavior. The
+accepted upload's JSON carries `run_id` and `task_id`:
 
 ```bash
 RUN_ID=$(testlookup upload file results.xml -p "$PROJECT_ID" -b "$BUILD_ID" --wait -o json | jq -r '.run_id')
@@ -586,6 +602,28 @@ off with `--no-run-context` or `TESTLOOKUP_RUN_CONTEXT=0`.
 `--environment` labels the run (two uploads with `--environment staging` and
 `--environment prod` show `environment staging → prod` as drift), and `--no-ai`
 uploads without the AI analysis — a CI job that wants no AI cost.
+
+## Backend error request IDs
+
+HTTP failures include `[request_id=<id>]` in stderr when the response carries a
+valid `X-Request-ID`. The ID accepts 1–128 ASCII letters, digits or `._:-`.
+Malformed, duplicate and missing headers add no metadata. After authentication
+or shedding retries, the final response supplies the failure's ID. A connection
+failure without a response has no backend ID.
+
+Successful response bodies and exit codes stay compatible. `doctor --output
+json` adds an optional `request_id` to a failed check. Failed or uncertain upload
+output can also carry this optional field beside its original task/run receipt.
+An upload poll timeout identifies its most recent HTTP poll response when that
+response provided a valid ID. This ID identifies the status request, and the
+task/run IDs identify the asynchronous processing.
+
+Give support the request ID, approximate time and operation. The reference OTLP
+log exporter stores its SHA-256 ASCII digest as `request_id` metadata. Compute
+that digest locally and filter it within the selected service, environment and
+time range in [Loki](../docs/operations/log-storage.md); retain the existing site
+and installation boundaries. Request IDs are diagnostic metadata and confer no
+permissions.
 
 ## Further reading
 

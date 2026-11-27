@@ -356,6 +356,12 @@ async def create_flag(
     # audit row below can reference them and the response serialization
     # below sees the fully-hydrated row. Router owns the commit.
     await db.flush()
+    from app.services.nightly_job_observation import stage_nightly_activation
+
+    await stage_nightly_activation(
+        db, key, was_enabled=False,
+        is_enabled=flag.enabled_global and flag.rollout_percent > 0, at=flag.updated_at,
+    )
     _write_audit_entry(db, actor, action="create", key=key, after=_serialize_flag(flag), reason=reason)
     return flag
 
@@ -395,6 +401,12 @@ async def update_flag(
     flag.updated_by_user_id = actor.id
     flag.updated_at = datetime.now(timezone.utc)
     await db.flush()
+    from app.services.nightly_job_observation import stage_nightly_activation
+
+    await stage_nightly_activation(
+        db, key, was_enabled=bool(before["enabled_global"] and before["rollout_percent"] > 0),
+        is_enabled=flag.enabled_global and flag.rollout_percent > 0, at=flag.updated_at,
+    )
     _write_audit_entry(
         db, actor, action="update", key=key, before=before, after=_serialize_flag(flag), reason=reason,
     )

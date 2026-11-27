@@ -1,0 +1,348 @@
+# Run from this directory: promtool test rules operational-alerts.yml
+# Loads actual production rules; never put fixture files in prometheus-rules/.
+# Synthetic samples and evaluation only: no notifications or application data.
+# Future retry timestamps are converted to zero overdue by the Python collector;
+# these fixtures check alert semantics, while collector tests check that mapping.
+rule_files:
+- ../prometheus-rules/testlookup-alerts.yml
+evaluation_interval: 30s
+tests:
+- name: stale SQL snapshots cannot override a fresh replica or mask recovery
+  interval: 30s
+  input_series:
+  - series: testlookup_downstream_outbox_entries{cluster="lab",namespace="prod",job="testlookup-backend",instance="api-fresh",operation="agent_pipeline",status="failed"}
+    values: '2x25 0x14'
+  - series: testlookup_downstream_outbox_entries{cluster="lab",namespace="prod",job="testlookup-backend",instance="api-failed-read",operation="agent_pipeline",status="failed"}
+    values: '9x40'
+  - series: testlookup_downstream_outbox_entries{cluster="lab",namespace="prod",job="testlookup-backend",instance="api-stale-time",operation="agent_pipeline",status="failed"}
+    values: '9x40'
+  - series: testlookup_downstream_outbox_overdue_seconds{cluster="lab",namespace="prod",job="testlookup-backend",instance="api-fresh",operation="agent_pipeline",status="processing"}
+    values: '0x40'
+  - series: testlookup_downstream_outbox_overdue_seconds{cluster="lab",namespace="prod",job="testlookup-backend",instance="api-failed-read",operation="agent_pipeline",status="processing"}
+    values: '900x40'
+  - series: testlookup_downstream_outbox_overdue_seconds{cluster="lab",namespace="prod",job="testlookup-backend",instance="api-stale-time",operation="agent_pipeline",status="processing"}
+    values: '900x40'
+  - series: testlookup_metric_collection_success{cluster="lab",namespace="prod",job="testlookup-backend",instance="api-fresh",collector="downstream"}
+    values: '1x40'
+  - series: testlookup_metric_collection_last_success_timestamp_seconds{cluster="lab",namespace="prod",job="testlookup-backend",instance="api-fresh",collector="downstream"}
+    values: '0+30x40'
+  - series: testlookup_metric_collection_success{cluster="lab",namespace="prod",job="testlookup-backend",instance="api-failed-read",collector="downstream"}
+    values: '0x40'
+  - series: testlookup_metric_collection_last_success_timestamp_seconds{cluster="lab",namespace="prod",job="testlookup-backend",instance="api-failed-read",collector="downstream"}
+    values: '0+30x40'
+  - series: testlookup_metric_collection_success{cluster="lab",namespace="prod",job="testlookup-backend",instance="api-stale-time",collector="downstream"}
+    values: '1x40'
+  - series: testlookup_metric_collection_last_success_timestamp_seconds{cluster="lab",namespace="prod",job="testlookup-backend",instance="api-stale-time",collector="downstream"}
+    values: '0x40'
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: TestLookupDownstreamOutboxFailed
+    exp_alerts:
+    - exp_labels:
+        cluster: lab
+        namespace: prod
+        operation: agent_pipeline
+        severity: warning
+      exp_annotations:
+        summary: Durable downstream work exhausted retries
+        description: Operation agent_pipeline has 2 terminal failed outbox rows. Empty broker queues and Celery SUCCESS do not imply business completion. Inspect durable outbox outcomes and use the authorized replay process after fixing the cause.
+  - eval_time: 13m
+    alertname: TestLookupDownstreamOutboxFailed
+    exp_alerts: []
+  - eval_time: 10m
+    alertname: TestLookupDownstreamOutboxOverdue
+    exp_alerts: []
+  promql_expr_test:
+  - expr: count(ALERTS{alertname="TestLookupOperationalCollectionStale",alertstate="firing"})
+    eval_time: 10m
+    exp_samples:
+    - labels: '{}'
+      value: 2
+- name: collector failure is per target, waits two minutes, and resolves
+  interval: 30s
+  input_series:
+  - series: testlookup_metric_collection_success{cluster="lab",namespace="prod",instance="api-a",collector="downstream"}
+    values: 1x1 0x5 1x4
+  - series: testlookup_metric_collection_last_success_timestamp_seconds{cluster="lab",namespace="prod",instance="api-a",collector="downstream"}
+    values: 0+30x1 30x5 240+30x4
+  - series: testlookup_metric_collection_success{cluster="lab",namespace="prod",instance="api-b",collector="downstream"}
+    values: 1x12
+  - series: testlookup_metric_collection_last_success_timestamp_seconds{cluster="lab",namespace="prod",instance="api-b",collector="downstream"}
+    values: 0+30x12
+  promql_expr_test:
+  - expr: ALERTS{alertname="TestLookupOperationalCollectionStale",alertstate="firing"}
+    eval_time: 2m30s
+    exp_samples: []
+  - expr: count by (cluster,namespace,instance,collector) (ALERTS{alertname="TestLookupOperationalCollectionStale",alertstate="firing"})
+    eval_time: 3m
+    exp_samples:
+    - labels: '{cluster="lab",namespace="prod",instance="api-a",collector="downstream"}'
+      value: 1
+  - expr: ALERTS{alertname="TestLookupOperationalCollectionStale",alertstate="firing"}
+    eval_time: 4m
+    exp_samples: []
+- name: success flag alone cannot hide a stale timestamp, and fresh collection recovers
+  interval: 30s
+  input_series:
+  - series: testlookup_metric_collection_success{cluster="lab",namespace="prod",instance="api-a",collector="queues"}
+    values: 1x12
+  - series: testlookup_metric_collection_last_success_timestamp_seconds{cluster="lab",namespace="prod",instance="api-a",collector="queues"}
+    values: 0x9 300+30x2
+  promql_expr_test:
+  - expr: ALERTS{alertname="TestLookupOperationalCollectionStale",alertstate="firing"}
+    eval_time: 2m
+    exp_samples: []
+  - expr: ALERTS{alertname="TestLookupOperationalCollectionStale",alertstate="firing"}
+    eval_time: 4m
+    exp_samples: []
+  - expr: count by (collector,instance) (ALERTS{alertname="TestLookupOperationalCollectionStale",alertstate="firing"})
+    eval_time: 4m30s
+    exp_samples:
+    - labels: '{collector="queues",instance="api-a"}'
+      value: 1
+  - expr: ALERTS{alertname="TestLookupOperationalCollectionStale",alertstate="firing"}
+    eval_time: 5m
+    exp_samples: []
+- name: terminal SQL outcomes use MAX across replicas and retain installation scope
+  interval: 30s
+  input_series:
+  - series: testlookup_downstream_outbox_entries{cluster="lab",namespace="prod",instance="api-a",operation="agent_pipeline",status="failed",job="testlookup-backend"}
+    values: 2x5 0x3
+  - series: testlookup_downstream_outbox_entries{cluster="lab",namespace="prod",instance="api-b",operation="agent_pipeline",status="failed",job="testlookup-backend"}
+    values: 2x5 0x3
+  - series: testlookup_downstream_outbox_entries{cluster="lab",namespace="other",instance="api-c",operation="agent_pipeline",status="failed",job="testlookup-backend"}
+    values: '0x9'
+  - series: testlookup_downstream_outbox_entries{cluster="other-cluster",namespace="prod",instance="api-d",operation="agent_pipeline",status="failed",job="testlookup-backend"}
+    values: 1x5 0x3
+  - series: testlookup_metric_collection_success{cluster="lab",instance="api-a",job="testlookup-backend",namespace="prod",collector="downstream"}
+    values: 1x50
+  - series: testlookup_metric_collection_last_success_timestamp_seconds{cluster="lab",instance="api-a",job="testlookup-backend",namespace="prod",collector="downstream"}
+    values: 0+30x50
+  - series: testlookup_metric_collection_success{cluster="lab",instance="api-b",job="testlookup-backend",namespace="prod",collector="downstream"}
+    values: 1x50
+  - series: testlookup_metric_collection_last_success_timestamp_seconds{cluster="lab",instance="api-b",job="testlookup-backend",namespace="prod",collector="downstream"}
+    values: 0+30x50
+  - series: testlookup_metric_collection_success{cluster="lab",instance="api-c",job="testlookup-backend",namespace="other",collector="downstream"}
+    values: 1x50
+  - series: testlookup_metric_collection_last_success_timestamp_seconds{cluster="lab",instance="api-c",job="testlookup-backend",namespace="other",collector="downstream"}
+    values: 0+30x50
+  - series: testlookup_metric_collection_success{cluster="other-cluster",instance="api-d",job="testlookup-backend",namespace="prod",collector="downstream"}
+    values: 1x50
+  - series: testlookup_metric_collection_last_success_timestamp_seconds{cluster="other-cluster",instance="api-d",job="testlookup-backend",namespace="prod",collector="downstream"}
+    values: 0+30x50
+  alert_rule_test:
+  - eval_time: 30s
+    alertname: TestLookupDownstreamOutboxFailed
+    exp_alerts: []
+  - eval_time: 1m
+    alertname: TestLookupDownstreamOutboxFailed
+    exp_alerts:
+    - exp_labels:
+        cluster: lab
+        namespace: prod
+        operation: agent_pipeline
+        severity: warning
+      exp_annotations:
+        summary: Durable downstream work exhausted retries
+        description: Operation agent_pipeline has 2 terminal failed outbox rows. Empty broker queues and Celery SUCCESS do
+          not imply business completion. Inspect durable outbox outcomes and use the authorized replay process after fixing
+          the cause.
+    - exp_labels:
+        cluster: other-cluster
+        namespace: prod
+        operation: agent_pipeline
+        severity: warning
+      exp_annotations:
+        summary: Durable downstream work exhausted retries
+        description: Operation agent_pipeline has 1 terminal failed outbox rows. Empty broker queues and Celery SUCCESS do
+          not imply business completion. Inspect durable outbox outcomes and use the authorized replay process after fixing
+          the cause.
+  - eval_time: 3m
+    alertname: TestLookupDownstreamOutboxFailed
+    exp_alerts: []
+- name: overdue must exceed 300 seconds and persist five minutes before firing
+  interval: 30s
+  input_series:
+  - series: testlookup_downstream_outbox_overdue_seconds{cluster="lab",namespace="prod",instance="api-a",operation="agent_pipeline",status="published",job="testlookup-backend"}
+    values: 300x3 301x10 0x2
+  - series: testlookup_downstream_outbox_overdue_seconds{cluster="lab",namespace="prod",instance="api-b",operation="agent_pipeline",status="published",job="testlookup-backend"}
+    values: '0x16'
+  - series: testlookup_downstream_outbox_overdue_seconds{cluster="lab",namespace="terminal",operation="agent_pipeline",status="failed",instance="api-a",job="testlookup-backend"}
+    values: 9999x16
+  - series: testlookup_metric_collection_success{cluster="lab",instance="api-a",job="testlookup-backend",namespace="prod",collector="downstream"}
+    values: 1x50
+  - series: testlookup_metric_collection_last_success_timestamp_seconds{cluster="lab",instance="api-a",job="testlookup-backend",namespace="prod",collector="downstream"}
+    values: 0+30x50
+  - series: testlookup_metric_collection_success{cluster="lab",instance="api-a",job="testlookup-backend",namespace="terminal",collector="downstream"}
+    values: 1x50
+  - series: testlookup_metric_collection_last_success_timestamp_seconds{cluster="lab",instance="api-a",job="testlookup-backend",namespace="terminal",collector="downstream"}
+    values: 0+30x50
+  - series: testlookup_metric_collection_success{cluster="lab",instance="api-b",job="testlookup-backend",namespace="prod",collector="downstream"}
+    values: 1x50
+  - series: testlookup_metric_collection_last_success_timestamp_seconds{cluster="lab",instance="api-b",job="testlookup-backend",namespace="prod",collector="downstream"}
+    values: 0+30x50
+  promql_expr_test:
+  - expr: ALERTS{alertname="TestLookupDownstreamOutboxOverdue",alertstate="firing"}
+    eval_time: 1m30s
+    exp_samples: []
+  - expr: ALERTS{alertname="TestLookupDownstreamOutboxOverdue",alertstate="firing"}
+    eval_time: 6m30s
+    exp_samples: []
+  - expr: count by (cluster,namespace,operation) (ALERTS{alertname="TestLookupDownstreamOutboxOverdue",alertstate="firing"})
+    eval_time: 7m
+    exp_samples:
+    - labels: '{cluster="lab",namespace="prod",operation="agent_pipeline"}'
+      value: 1
+  - expr: ALERTS{alertname="TestLookupDownstreamOutboxOverdue",alertstate="firing"}
+    eval_time: 7m30s
+    exp_samples: []
+- name: every nonterminal SQL state is covered without blending namespaces
+  interval: 1m
+  input_series:
+  - series: testlookup_downstream_outbox_overdue_seconds{cluster="lab",namespace="waiting-ns",operation="agent_pipeline",status="waiting",instance="api-a",job="testlookup-backend"}
+    values: 401x8
+  - series: testlookup_downstream_outbox_overdue_seconds{cluster="lab",namespace="pending-ns",operation="agent_pipeline",status="pending",instance="api-a",job="testlookup-backend"}
+    values: 401x8
+  - series: testlookup_downstream_outbox_overdue_seconds{cluster="lab",namespace="sending-ns",operation="agent_pipeline",status="sending",instance="api-a",job="testlookup-backend"}
+    values: 401x8
+  - series: testlookup_downstream_outbox_overdue_seconds{cluster="lab",namespace="published-ns",operation="agent_pipeline",status="published",instance="api-a",job="testlookup-backend"}
+    values: 401x8
+  - series: testlookup_downstream_outbox_overdue_seconds{cluster="lab",namespace="processing-ns",operation="agent_pipeline",status="processing",instance="api-a",job="testlookup-backend"}
+    values: 401x8
+  - series: testlookup_metric_collection_success{cluster="lab",instance="api-a",job="testlookup-backend",namespace="pending-ns",collector="downstream"}
+    values: 1x50
+  - series: testlookup_metric_collection_last_success_timestamp_seconds{cluster="lab",instance="api-a",job="testlookup-backend",namespace="pending-ns",collector="downstream"}
+    values: 0+60x50
+  - series: testlookup_metric_collection_success{cluster="lab",instance="api-a",job="testlookup-backend",namespace="processing-ns",collector="downstream"}
+    values: 1x50
+  - series: testlookup_metric_collection_last_success_timestamp_seconds{cluster="lab",instance="api-a",job="testlookup-backend",namespace="processing-ns",collector="downstream"}
+    values: 0+60x50
+  - series: testlookup_metric_collection_success{cluster="lab",instance="api-a",job="testlookup-backend",namespace="published-ns",collector="downstream"}
+    values: 1x50
+  - series: testlookup_metric_collection_last_success_timestamp_seconds{cluster="lab",instance="api-a",job="testlookup-backend",namespace="published-ns",collector="downstream"}
+    values: 0+60x50
+  - series: testlookup_metric_collection_success{cluster="lab",instance="api-a",job="testlookup-backend",namespace="sending-ns",collector="downstream"}
+    values: 1x50
+  - series: testlookup_metric_collection_last_success_timestamp_seconds{cluster="lab",instance="api-a",job="testlookup-backend",namespace="sending-ns",collector="downstream"}
+    values: 0+60x50
+  - series: testlookup_metric_collection_success{cluster="lab",instance="api-a",job="testlookup-backend",namespace="waiting-ns",collector="downstream"}
+    values: 1x50
+  - series: testlookup_metric_collection_last_success_timestamp_seconds{cluster="lab",instance="api-a",job="testlookup-backend",namespace="waiting-ns",collector="downstream"}
+    values: 0+60x50
+  promql_expr_test:
+  - expr: ALERTS{alertname="TestLookupDownstreamOutboxOverdue",alertstate="firing"}
+    eval_time: 4m30s
+    exp_samples: []
+  - expr: count by (cluster,namespace) (ALERTS{alertname="TestLookupDownstreamOutboxOverdue",alertstate="firing"})
+    eval_time: 5m
+    exp_samples:
+    - labels: '{cluster="lab",namespace="waiting-ns"}'
+      value: 1
+    - labels: '{cluster="lab",namespace="pending-ns"}'
+      value: 1
+    - labels: '{cluster="lab",namespace="sending-ns"}'
+      value: 1
+    - labels: '{cluster="lab",namespace="published-ns"}'
+      value: 1
+    - labels: '{cluster="lab",namespace="processing-ns"}'
+      value: 1
+- name: future retries and completed work remain healthy
+  interval: 1m
+  input_series:
+  - series: testlookup_downstream_outbox_overdue_seconds{cluster="lab",namespace="prod",operation="agent_pipeline",status="pending",instance="api-a",job="testlookup-backend"}
+    values: '0x20'
+  - series: testlookup_downstream_outbox_overdue_seconds{cluster="lab",namespace="prod",operation="agent_pipeline",status="waiting",instance="api-a",job="testlookup-backend"}
+    values: '0x20'
+  - series: testlookup_downstream_outbox_entries{cluster="lab",namespace="prod",operation="agent_pipeline",status="failed",instance="api-a",job="testlookup-backend"}
+    values: '0x20'
+  - series: testlookup_downstream_outbox_entries{cluster="lab",namespace="prod",operation="agent_pipeline",status="completed",instance="api-a",job="testlookup-backend"}
+    values: 1000x20
+  - series: testlookup_metric_collection_success{cluster="lab",instance="api-a",job="testlookup-backend",namespace="prod",collector="downstream"}
+    values: 1x50
+  - series: testlookup_metric_collection_last_success_timestamp_seconds{cluster="lab",instance="api-a",job="testlookup-backend",namespace="prod",collector="downstream"}
+    values: 0+60x50
+  alert_rule_test:
+  - eval_time: 20m
+    alertname: TestLookupDownstreamOutboxOverdue
+    exp_alerts: []
+  - eval_time: 20m
+    alertname: TestLookupDownstreamOutboxFailed
+    exp_alerts: []
+- name: one terminal webhook failure per minute fires without fleet-rate dilution
+  interval: 1m
+  input_series:
+  - series: testlookup_webhook_delivery_attempts_total{cluster="lab",namespace="quiet",result="failure"}
+    values: 0+1x40
+  - series: testlookup_webhook_delivery_attempts_total{cluster="lab",namespace="quiet",result="success"}
+    values: '0x40'
+  - series: testlookup_webhook_delivery_attempts_total{cluster="lab",namespace="busy",result="failure"}
+    values: '0x40'
+  - series: testlookup_webhook_delivery_attempts_total{cluster="lab",namespace="busy",result="success"}
+    values: 0+10000x40
+  promql_expr_test:
+  - expr: ALERTS{alertname="TestLookupWebhookDeliveryFailureRate",alertstate="firing"}
+    eval_time: 15m30s
+    exp_samples: []
+  - expr: count by (cluster,namespace) (ALERTS{alertname="TestLookupWebhookDeliveryFailureRate",alertstate="firing"})
+    eval_time: 16m
+    exp_samples:
+    - labels: '{cluster="lab",namespace="quiet"}'
+      value: 1
+  - expr: count by (cluster,namespace) (ALERTS{alertname="TestLookupWebhookDeliveryFailureRate",alertstate="firing"})
+    eval_time: 30m
+    exp_samples:
+    - labels: '{cluster="lab",namespace="quiet"}'
+      value: 1
+- name: strict webhook threshold and installation scope are preserved
+  interval: 1m
+  input_series:
+  - series: testlookup_webhook_delivery_attempts_total{cluster="lab",namespace="threshold",result="failure"}
+    values: 0+3x40
+  - series: testlookup_webhook_delivery_attempts_total{cluster="lab",namespace="threshold",result="success"}
+    values: 0+57x40
+  - series: testlookup_webhook_delivery_attempts_total{cluster="other-cluster",namespace="threshold",result="failure"}
+    values: 0+4x40
+  - series: testlookup_webhook_delivery_attempts_total{cluster="other-cluster",namespace="threshold",result="success"}
+    values: 0+56x40
+  promql_expr_test:
+  - expr: count by (cluster,namespace) (ALERTS{alertname="TestLookupWebhookDeliveryFailureRate",alertstate="firing"})
+    eval_time: 30m
+    exp_samples:
+    - labels: '{cluster="other-cluster",namespace="threshold"}'
+      value: 1
+- name: zero webhook traffic is quiet and success without a failure series is healthy
+  interval: 1m
+  input_series:
+  - series: testlookup_webhook_delivery_attempts_total{cluster="lab",namespace="zero",result="failure"}
+    values: '0x40'
+  - series: testlookup_webhook_delivery_attempts_total{cluster="lab",namespace="zero",result="success"}
+    values: '0x40'
+  - series: testlookup_webhook_delivery_attempts_total{cluster="lab",namespace="healthy",result="success"}
+    values: 0+1x40
+  alert_rule_test:
+  - eval_time: 40m
+    alertname: TestLookupWebhookDeliveryFailureRate
+    exp_alerts: []
+- name: absent webhook series does not invent failed traffic
+  interval: 1m
+  input_series: []
+  alert_rule_test:
+  - eval_time: 40m
+    alertname: TestLookupWebhookDeliveryFailureRate
+    exp_alerts: []
+- name: webhook failure alert resolves after healthy delivery replaces the bad window
+  interval: 1m
+  input_series:
+  - series: testlookup_webhook_delivery_attempts_total{cluster="lab",namespace="recovering",result="failure"}
+    values: 0+1x20 20x40
+  - series: testlookup_webhook_delivery_attempts_total{cluster="lab",namespace="recovering",result="success"}
+    values: 0x20 0+10x40
+  promql_expr_test:
+  - expr: count by (namespace) (ALERTS{alertname="TestLookupWebhookDeliveryFailureRate",alertstate="firing"})
+    eval_time: 20m
+    exp_samples:
+    - labels: '{namespace="recovering"}'
+      value: 1
+  - expr: ALERTS{alertname="TestLookupWebhookDeliveryFailureRate",alertstate="firing"}
+    eval_time: 40m
+    exp_samples: []

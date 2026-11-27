@@ -18,13 +18,16 @@ is stored or queued.
 """
 from __future__ import annotations
 
-import inspect
 import uuid
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import HTTPException
 
+from app.models.schemas import IngestPayload, IngestTestResult
 from app.routers import ingest as ingest_router
+from app.services import ingestion_backpressure, ingestion_rate_limit
 
 
 @pytest.mark.asyncio
@@ -59,14 +62,29 @@ async def test_a_live_run_id_is_let_through(monkeypatch):
     )
 
 
-def test_the_batch_route_refuses_before_it_stores_or_queues():
-    """The check is only worth having ahead of the 202.
+@pytest.mark.asyncio
+async def test_the_batch_route_refuses_before_it_stores_or_queues(monkeypatch):
+    project_id, run_id = uuid.uuid4(), str(uuid.uuid4())
+    actor = SimpleNamespace(id=uuid.uuid4(), role="QA_ENGINEER", is_active=True)
+    payload = IngestPayload(
+        project_id=str(project_id),
+        build_number="nightly-1858",
+        results=[IngestTestResult(test_name="checkout", status="PASSED")],
+    )
+    db = SimpleNamespace(commit=AsyncMock())
+    tombstoned = AsyncMock(return_value=True)
+    stage_upload = AsyncMock()
+    monkeypatch.setattr(ingest_router, "resolve_project_scope", AsyncMock())
+    monkeypatch.setattr(ingestion_backpressure, "enforce_redis_memory_backpressure", AsyncMock())
+    monkeypatch.setattr(ingestion_rate_limit, "enforce_ingest_rate_limit", AsyncMock())
+    monkeypatch.setattr(ingest_router, "_resolve_run_id", AsyncMock(return_value=run_id))
+    monkeypatch.setattr(ingest_router, "run_is_tombstoned", tombstoned)
+    monkeypatch.setattr(ingest_router, "_stage_upload", stage_upload)
 
-    Placed after ``put_object`` or the publish it would leave a stored payload
-    and a doomed task behind the refusal.
-    """
-    source = inspect.getsource(ingest_router.ingest_batch)
-    refusal = source.index("_refuse_deleted_build(")
-    assert refusal > source.index("_resolve_run_id(")
-    assert refusal < source.index("put_object(")
-    assert refusal < source.index("ingest_uploaded_results.apply_async(")
+    with pytest.raises(HTTPException) as refused:
+        await ingest_router.ingest_batch(payload=payload, db=db, auth=(actor, project_id))
+
+    assert refused.value.status_code == 409
+    tombstoned.assert_awaited_once_with(db, run_id)
+    db.commit.assert_not_awaited()
+    stage_upload.assert_not_awaited()
