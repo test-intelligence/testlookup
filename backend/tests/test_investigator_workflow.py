@@ -554,7 +554,8 @@ async def test_finalize_is_idempotent_and_cancellation_updates_pipeline_atomical
         spend={"ledger_version": 2, "llm_calls": 0, "tokens": 0},
     )
     pipeline = SimpleNamespace(
-        id=pipeline_id,
+        id=uuid.UUID(pipeline_id),
+        attempt=1,
         status="running",
         completed_at=None,
         error=None,
@@ -734,6 +735,7 @@ async def test_completed_investigator_stages_review_for_its_narrative(monkeypatc
         id=pipeline_id,
         test_run_id=row.run_id,
         workflow_type="investigation",
+        attempt=1,
         status="running",
         completed_at=None,
         error=None,

@@ -5,6 +5,7 @@ container or pod. Each exporter aggregates its local processes, and Prometheus
 scrapes every API pod and both Compose worker services.
 """
 import os
+from fnmatch import fnmatchcase
 from pathlib import Path, PurePosixPath
 import subprocess
 import sys
@@ -51,8 +52,13 @@ def _scrape_jobs(authenticated: bool) -> dict:
             mounts[PurePosixPath(target)] = REPO_ROOT / source
     configs = list(PROMETHEUS["scrape_configs"])
     for include in PROMETHEUS["scrape_config_files"]:
-        included = yaml.safe_load(mounts[directory / include].read_text(encoding="utf-8"))
-        configs.extend(included["scrape_configs"])
+        pattern = (directory / include).as_posix()
+        matched = sorted(target for target in mounts if fnmatchcase(target.as_posix(), pattern))
+        # Prometheus permits unmatched optional globs. Explicit includes must exist.
+        assert matched or any(character in include for character in "*?["), include
+        for target in matched:
+            included = yaml.safe_load(mounts[target].read_text(encoding="utf-8"))
+            configs.extend(included["scrape_configs"])
     jobs = {job["job_name"]: job for job in configs}
     assert len(jobs) == len(configs), "multiple mounted jobs use the same name"
     return jobs

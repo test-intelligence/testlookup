@@ -166,6 +166,7 @@ def _pipeline():
         id=uuid.uuid4(),
         test_run_id=uuid.uuid4(),
         workflow_type="offline",
+        attempt=1,
         status="running",
         started_at=datetime.now(timezone.utc),
         completed_at=None,

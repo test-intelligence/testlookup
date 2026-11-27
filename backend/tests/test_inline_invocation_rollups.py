@@ -172,6 +172,7 @@ async def _finalize(monkeypatch, *, inline: bool, subject=_SUBJECT):
     project_id, test_run_id, invocation_id = uuid.uuid4(), uuid.uuid4(), str(uuid.uuid4())
     pipeline = SimpleNamespace(
         id=uuid.uuid4(), test_run_id=test_run_id, workflow_type="offline", requested_by=uuid.uuid4(),
+        attempt=1,
         status="running", started_at=datetime.now(timezone.utc), completed_at=None, error=None,
         execution_metadata={"initial_workflow_plan": plan, **({"invocation_input_sha256": SHA} if inline else {})},
         review_policy="human_required", lease_owner="h:1", fencing_token="tok",

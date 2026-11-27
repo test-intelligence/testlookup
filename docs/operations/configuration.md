@@ -435,6 +435,7 @@ Setup steps for each integration are in [Integrations](integrations.md). Values 
 | Setting | Type | Default | Description |
 |---|---|---|---|
 | `OTEL_ENABLED` | bool | `true` | OpenTelemetry tracing switch. Worker and standalone Beat tracing also require an OTLP endpoint. |
+| `OBSERVABILITY_INSTALLATION` | str | empty | Stable installation identifier for opt-in journey indicators and [proposed API objectives](api-objectives.md). Use 1–63 ASCII letters, digits, dots, underscores or hyphens, beginning with a letter or digit. Choose a non-sensitive deployment name. |
 | `OTEL_SERVICE_NAME` | str | `testlookup` | Service name on spans. |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | str (optional) | unset | OTLP/HTTP collector, for example `http://otel-collector:4318`. Unset: spans go to stdout in development only; elsewhere nothing is exported and one warning is logged. |
 | `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` | str | unset | Full OTLP/HTTP URL ending in `/v1/logs` for selected API or worker events. Use HTTPS outside the private Compose or loopback hop. |

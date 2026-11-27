@@ -4,7 +4,8 @@ SCIM creation events remain live authorization evidence, not disposable logs.
 The policy follows the existing MFA/SCIM setting pattern in app_settings.
 Every mutation and purge locks that single row; holds serialize with deletion.
 Released/expired hold history stays in the never-purged settings audit trail.
-This module stages writes only. The caller owns commit/rollback.
+Policy and hold helpers stage writes on the caller's transaction. The scheduled
+batch owns its dedicated session and commit.
 """
 from __future__ import annotations
 

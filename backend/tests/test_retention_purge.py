@@ -135,6 +135,10 @@ class _FakeDB:
         self.delete_stmts: list = []
         self.update_stmts: list = []
 
+    def get_bind(self):
+        # This in-memory adapter has no PostgreSQL advisory-lock capability.
+        return SimpleNamespace(dialect=SimpleNamespace(name="sqlite"))
+
     def add(self, obj):
         self.added.append(obj)
         # Emulate a subsequent SELECT seeing the staged policy row.
@@ -156,6 +160,9 @@ class _FakeDB:
         kind = type(stmt).__name__
         if kind == "Delete":
             table = stmt.table.name
+            if table == "pipeline_event_outbox":
+                self.events.append(("pg_outbox_cancel", table))
+                return _Dml(0)
             self.events.append(("pg_delete", table))
             self.delete_stmts.append(stmt)
             return _Dml(self.delete_rowcounts.get(table, 0))
@@ -533,6 +540,8 @@ async def test_execute_order_mongo_then_minio_then_postgres_run_delete():
     # Pinned order: ALL Mongo deletes precede ALL MinIO deletes precede the
     # Postgres run delete — the CASCADE destroys the only run→doc mapping.
     assert max(mongo_deletes) < min(minio_deletes) < min(run_deletes)
+    cancellations = [i for i, (kind, _) in enumerate(events) if kind == "pg_outbox_cancel"]
+    assert cancellations and max(cancellations) < min(mongo_deletes)
     # The service never commits — the caller owns the transaction.
     assert db.commits == 0
 

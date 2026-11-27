@@ -538,7 +538,8 @@ def test_8_pinned_counts():
     # W37 F-7 (deliberate): test_case_reviews / test_case_comments leave EXCLUDED (per_user_state) for EXPORTED as
     # the 2 OPTIONAL entities, written only when the exporter ticks Include reviews (56 → 58, 78 → 76)
     # W38 W31 F-1 (deliberate, 2026-11-07): + subject_erasure_requests under NOT_PROJECT_SCOPED (26 → 27)
-    assert counts == (58, 76, 27), (
+    # Operational admission/outbox identities stay at the source; nightly observations belong to the instance.
+    assert counts == (58, 78, 28), (
         f"EXPORTED / EXCLUDED / NOT_PROJECT_SCOPED = {counts}: a table was added or moved — "
         "classify it in project_export_entities.py and update this pin deliberately"
     )

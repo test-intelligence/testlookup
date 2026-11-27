@@ -34,7 +34,9 @@ def test_declared_routed_and_observed_inventory_agrees(monkeypatch, shards):
 
 @pytest.mark.parametrize("options", [{}, {"priority_steps": [0, 2, 5, 9], "sep": ":", "global_keyprefix": "test:"}])
 def test_physical_keys_match_the_installed_kombu_transport(monkeypatch, options):
-    monkeypatch.setattr(celery_app.conf, "broker_transport_options", options)
+    # Celery Settings exposes mapping entries through dynamic attributes.
+    # Restore the mapping entry so pytest never tries to delete an attribute.
+    monkeypatch.setitem(celery_app.conf, "broker_transport_options", options)
     channel = object.__new__(Channel)
     channel.priority_steps = options.get("priority_steps", Channel.priority_steps)
     channel.sep = options.get("sep", Channel.sep)

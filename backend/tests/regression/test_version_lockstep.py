@@ -22,6 +22,8 @@ import yaml
 
 from app.core.config import Settings
 
+from ._overlay_layers import overlay_layers
+
 ROOT = Path(__file__).resolve().parents[3]
 VERSION = (ROOT / "VERSION").read_text(encoding="utf-8").strip()
 IMAGE_TAG = f"v{VERSION}"
@@ -94,8 +96,14 @@ def test_every_overlay_keys_its_images_by_the_base_name_and_pins_this_release() 
     overlays = sorted((ROOT / "k8s/overlays").glob("*/kustomization.yaml"))
     assert overlays
     for path in overlays:
-        doc = yaml.safe_load(path.read_text(encoding="utf-8"))
-        entries = {e["name"]: e for e in doc.get("images", []) if e["name"].rsplit("/", 1)[-1] in APP_COMPONENTS}
+        # Thin telemetry overlays inherit their app-image transformations from
+        # the named deployment profile. Later local entries still override it.
+        entries = {
+            entry["name"]: entry
+            for layer in overlay_layers(path)
+            for entry in yaml.safe_load(layer.read_text(encoding="utf-8")).get("images", [])
+            if entry["name"].rsplit("/", 1)[-1] in APP_COMPONENTS
+        }
         rel = path.relative_to(ROOT).as_posix()
         # An entry keyed by any other name matches nothing and is silently ignored by kustomize.
         assert set(entries) == {f"{GHCR}/{c}" for c in APP_COMPONENTS}, (rel, sorted(entries))

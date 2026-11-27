@@ -286,7 +286,12 @@ async def test_retry_free_broker_socket_deadline_releases_a_stalled_publisher(pu
     monkeypatch.setattr(upload_dispatch, "UPLOAD_PUBLISH_TIMEOUT_SECONDS", 1)
     async with await asyncio.start_server(withhold_reply, "127.0.0.1", 0) as server:
         port = server.sockets[0].getsockname()[1]
-        with Celery(broker=f"redis://127.0.0.1:{port}/0", set_as_current=False) as app:
+        broker_url = f"redis://127.0.0.1:{port}/0"
+        # Celery's environment overrides its constructor broker. Keep this
+        # deadline probe on its owned socket even when CI supplies a live broker.
+        monkeypatch.setenv("CELERY_BROKER_URL", broker_url)
+        monkeypatch.setenv("CELERY_BROKER_WRITE_URL", broker_url)
+        with Celery(broker=broker_url, set_as_current=False) as app:
             @app.task(name="test.upload_publish_probe", shared=False)
             def probe():
                 return None

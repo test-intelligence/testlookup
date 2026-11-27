@@ -197,6 +197,10 @@ EXEMPT = {
     # Its pool holds live asyncpg connections, so it is *disposed on the loop
     # that owns them* when the worker loop is torn down, instead of dropped.
     "postgres.py": "disposed via dispose_engine_for_loop() when the worker loop is torn down",
+    "pool_metrics.py": (
+        "passive weak-reference instrumentation registry, not a loop-bound client; "
+        "postgres.py owns disposal of the observed engines and connections"
+    ),
 }
 
 

@@ -255,6 +255,30 @@ COMMIT_ALLOWLIST: dict[str, tuple[int, str]] = {
         "is committed separately for the same durable-resume contract.",
     ),
     # ── Worker-owned transactions (Celery tasks) ─────────────────────
+    "digest_delivery_observation.py": (
+        1,
+        "Worker-owned digest phase observation opens a dedicated AsyncSessionLocal "
+        "and commits its lease-token-guarded update. The subscription claim remains "
+        "on its caller's transaction, and this observation never asserts delivery.",
+    ),
+    "identity_retention_service.py": (
+        1,
+        "run_scheduled_batch owns a dedicated AsyncSessionLocal and commits one "
+        "approved instance purge batch in its UTC window. Router-facing policy "
+        "and hold mutations remain staged on the caller's transaction.",
+    ),
+    "nightly_job_observation.py": (
+        2,
+        "Worker-owned attempt and success receipts each open AsyncSessionLocal "
+        "and commit their durable UTC slot observation. Feature activation remains "
+        "staged atomically on the caller's feature-flag transaction.",
+    ),
+    "pipeline_event_delivery.py": (
+        4,
+        "Celery relay owns isolated sessions for durable lease or exhausted-attempt "
+        "claims (two commit sites), fenced delivery outcomes, and bounded pruning "
+        "of acknowledged receipts. Router-facing explicit requeue remains stage-only.",
+    ),
     "deletion_job_service.py": (
         2,
         "Independent-session BY DESIGN, and the design is the point. This module records that a destructive job started, and how it ended. A ``failed`` or ``partial`` status written on the caller's session is erased by the very rollback that produced the failure, so a stage-only writer could only ever record successes — precisely the half an operator does not need. open_job and close_job therefore each open their own AsyncSessionLocal and commit it (2 commits). Both swallow their own exceptions so a bookkeeping failure cannot break the purge it is describing. Same reason the retention purge-audit row is written after its commit rather than inside it.",
@@ -724,9 +748,7 @@ def test_new_services_are_either_stage_only_or_on_the_allowlist() -> None:
 
 
 def test_allowlist_total_is_bounded() -> None:
-    """Sanity cap — if the total allowed commits ever exceeds 25, someone
-    is adding without cleaning up. Forces a downward-only ratchet over time.
-    """
+    """Bound the total commits to the explicitly reviewed transaction owners."""
     total = sum(cap for cap, _ in COMMIT_ALLOWLIST.values())
     # Raised from 25 → 65 on 2026-04-14 to absorb the Tier 0-2 batch
     # (feature flags, LLM cost budget, compliance packs, GitHub Checks,
@@ -809,7 +831,11 @@ def test_allowlist_total_is_bounded() -> None:
     # 2026-09-12: 85 -> 86 for tool_call_idempotency.py (E7.6 claim-before-call).
     # 2026-09-13: 86 -> 87 for report_distribution_policy.py (E8.4 detached audit).
     # 2026-09-13: 87 -> 88 for agent_action_ledger_service.py (E8.6 policy_denied write).
-    assert total <= 88, (
+    # 2026-11-27: 88 -> 96 for the observability recovery boundaries:
+    # digest phase CAS (1), instance identity scheduled purge (1), nightly
+    # attempt/success receipts (2), and fenced pipeline-event relay/prune (4).
+    # Each owns an isolated worker session; request-facing writes stay staged.
+    assert total <= 96, (
         f"COMMIT_ALLOWLIST sums to {total} allowed commits — lower the caps "
         "or remove entries instead of raising this limit."
     )
