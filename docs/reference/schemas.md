@@ -37146,6 +37146,23 @@ These are the full generated JSON Schema definitions, including required fields,
 {
   "description": "Extended release decision with council context.",
   "properties": {
+    "analysis_changed_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Analysis Changed At"
+    },
+    "analysis_changed_since": {
+      "default": false,
+      "title": "Analysis Changed Since",
+      "type": "boolean"
+    },
     "band_downgrades": {
       "default": [],
       "items": {
@@ -37153,6 +37170,11 @@ These are the full generated JSON Schema definitions, including required fields,
       },
       "title": "Band Downgrades",
       "type": "array"
+    },
+    "band_held_back": {
+      "default": false,
+      "title": "Band Held Back",
+      "type": "boolean"
     },
     "band_policy_id": {
       "anyOf": [
@@ -37357,6 +37379,18 @@ These are the full generated JSON Schema definitions, including required fields,
         }
       ],
       "title": "Pass Rate"
+    },
+    "pass_rate_bands": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Pass Rate Bands"
     },
     "policy_id": {
       "anyOf": [
@@ -46995,6 +47029,20 @@ These are the full generated JSON Schema definitions, including required fields,
         }
       ],
       "title": "Input Tokens"
+    },
+    "mode_distribution": {
+      "anyOf": [
+        {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Mode Distribution"
     },
     "output_tokens": {
       "anyOf": [

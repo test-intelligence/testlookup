@@ -495,7 +495,8 @@ describe('ReleaseGatePage — the risk score explains itself', () => {
 
   it('states the floor percentage it actually applied', async () => {
     await renderGate(flooredDecision())
-    expect(await screen.findByText(/63%/)).toBeInTheDocument()
+    // The thresholds line (D-104) says "under 63%" too: this pins the floor note's own sentence.
+    expect(await screen.findByText(/below 63%/)).toBeInTheDocument()
   })
 
   it('stays silent when the score really is the dimension total', async () => {
@@ -1317,5 +1318,147 @@ describe('ReleaseGatePage — the band policy and the top-bar release (W11)', ()
     releaseScope.releaseId = 'rel-10'
     rerender(tree())
     await waitFor(() => expect(screen.getByTestId('where')).toHaveTextContent('/release-gate/run-of-2026-10'))
+  })
+})
+
+// Batch 8: D-104 (the thresholds the verdict used), D-142 (one policy named once, the rules a quick look could
+// not check) and D-97 (a correction saved after the stored decision).
+describe('ReleaseGatePage — batch 8: the card says what it was decided with', () => {
+  const STORED_SNAPSHOT = {
+    assembled_at: '2026-11-20T09:00:00+00:00',
+    policy_snapshot: {
+      policy_level: 'project',
+      document: {
+        thresholds: { go_threshold: 20, no_go_threshold: 55, pass_rate_minimum: 90, pass_rate_hard_floor_factor: 0.7 },
+      },
+    },
+  }
+
+  async function marked(selector: string): Promise<HTMLElement> {
+    return waitFor(() => {
+      const found = document.querySelector(selector) as HTMLElement | null
+      if (!found) throw new Error(`no ${selector}`)
+      return found
+    })
+  }
+
+  it('D-104: a stored decision states its four thresholds from the frozen policy', async () => {
+    await renderGate(flooredDecision({
+      recommendation: 'GO', risk_score: 12, composite_risk: 12, pass_rate: 96,
+      input_snapshot: STORED_SNAPSHOT,
+    }))
+    expect(await marked('[data-verdict-thresholds]')).toHaveTextContent(
+      'Go under risk 20 and at 90% or more · No-Go at risk 55 or under 63%',
+    )
+  })
+
+  it('D-104: a quick look states its own numbers, and a missing one is left out', async () => {
+    await renderGate(flooredDecision({
+      synthesized: true,
+      input_snapshot: { verdict_driver: 'pass_rate_floor', threshold: 95, no_go_floor_pct: 66.5, go_threshold: 20 },
+    }))
+    const line = await marked('[data-verdict-thresholds]')
+    // No `no_go_threshold` in the snapshot: no invented "risk 55".
+    expect(line).toHaveTextContent('Go under risk 20 and at 95% or more · No-Go under 66.5%')
+    expect(line).not.toHaveTextContent('risk 55')
+  })
+
+  it('D-104: a snapshot without thresholds shows no line', async () => {
+    await renderGate(flooredDecision({ input_snapshot: { verdict_driver: 'composite_risk' } }))
+    await screen.findByText(/Evaluated with/)
+    expect(document.querySelector('[data-verdict-thresholds]')).toBeNull()
+  })
+
+  it('D-142: a quick look evaluated with the policy whose bands it applied names that policy once, bands included', async () => {
+    await renderGate(flooredDecision({
+      synthesized: true,
+      policy_id: 'pol-1', policy_level: 'project', policy_version: 2,
+      ...({ band_policy_id: 'pol-1', band_policy_level: 'project', band_policy_version: 2 } as object),
+    }))
+    const footer = (await screen.findByText(/Evaluated with/)).parentElement ?? document.body
+    // The pieces sit in an inline-flex row (its gap spaces them), as the band label always did.
+    expect(footer).toHaveTextContent('Evaluated with project policy v2')
+    expect(document.querySelector('[data-band-policy]')).toHaveTextContent('· including its pass-rate bands')
+    expect(footer).not.toHaveTextContent('pass-rate bands: project policy')
+    expect(screen.queryByText(/system defaults/)).toBeNull()
+  })
+
+  // Review F1: every policy saved from the editor carries bands (red under 90, orange 90-95). The card must not
+  // state thresholds the band contradicts, and must say when the band set the verdict.
+  const EDITOR_BANDS = { orange_min: 90, yellow_min: 95, green_min: 99 }
+  const banded = (overrides: Partial<ReleaseCouncilDecision> & Record<string, unknown>) => flooredDecision({
+    risk_score: 10, composite_risk: 10, input_snapshot: STORED_SNAPSHOT,
+    policy_id: 'pol-1', policy_level: 'project', policy_version: 1,
+    ...({ band_policy_id: 'pol-1', band_policy_level: 'project', band_policy_version: 1, pass_rate_bands: EDITOR_BANDS } as object),
+    ...overrides,
+  } as Partial<ReleaseCouncilDecision>)
+
+  it('F1: a 92% run at risk 10 reads Conditional, and the card names the band that made it so', async () => {
+    await renderGate(banded({
+      recommendation: 'CONDITIONAL_GO', pass_rate: 92,
+      release_readiness_band: 'orange', band_held_back: true, original_recommendation: 'GO',
+    }))
+    expect(await marked('[data-verdict-thresholds]')).toHaveTextContent(
+      'Go under risk 20 and at 90% or more · No-Go at risk 55 or under 63% · Pass-rate bands: No-Go under 90%, Conditional under 95%',
+    )
+    expect(await marked('[data-band-hold]')).toHaveTextContent('Held back by the pass-rate band: 92.0% is under 95% (Conditional).')
+    expect(document.querySelector('[data-band-policy]')).toHaveTextContent('including its pass-rate bands')
+  })
+
+  it('F1: an 85% run reads No-Go from the red band, and says so', async () => {
+    await renderGate(banded({
+      recommendation: 'NO_GO', pass_rate: 85,
+      release_readiness_band: 'red', band_held_back: true, original_recommendation: 'CONDITIONAL_GO',
+    }))
+    expect(await marked('[data-verdict-thresholds]')).toHaveTextContent('Pass-rate bands: No-Go under 90%, Conditional under 95%')
+    expect(await marked('[data-band-hold]')).toHaveTextContent('Held back by the pass-rate band: 85.0% is under 90% (No-Go).')
+  })
+
+  it('F1: no hold line when the band did not move the verdict', async () => {
+    await renderGate(banded({ recommendation: 'GO', pass_rate: 99.5, release_readiness_band: 'green', band_held_back: false }))
+    expect(await marked('[data-verdict-thresholds]')).toHaveTextContent('Pass-rate bands:')
+    expect(document.querySelector('[data-band-hold]')).toBeNull()
+  })
+
+  it('D-142: a quick look names the policy rules it could not check', async () => {
+    await renderGate(flooredDecision({
+      synthesized: true, policy_level: 'project', policy_version: 2,
+      input_snapshot: {
+        verdict_driver: 'composite_risk',
+        rules_not_checked: [
+          { id: 'r1', name: 'Flaky test limit', type: 'flaky_recurrence' },
+          { id: 'r2', name: 'Slower tests', type: 'perf_regression' },
+        ],
+      },
+    }))
+    expect(await marked('[data-rules-not-checked]')).toHaveTextContent(
+      'Not checked until deep investigation runs: Flaky test limit, Slower tests',
+    )
+  })
+
+  it('D-97: a correction saved after the stored decision is said, with Re-evaluate', async () => {
+    await renderGate(flooredDecision({
+      input_snapshot: STORED_SNAPSHOT,
+      ...({ analysis_changed_since: true, analysis_changed_at: '2026-11-20T12:30:00Z' } as object),
+    }))
+    const note = await marked('[data-analysis-changed]')
+    expect(note).toHaveTextContent(/^A test's category was corrected after this decision \(.+\)\. Re-evaluate to include it\.$/)
+    expect(within(note).getByRole('link', { name: 'Re-evaluate' })).toHaveAttribute('href', '/runs/run-1?tab=analysis')
+    // The stored verdict is shown as it is.
+    expect(screen.getByText('No-Go')).toBeInTheDocument()
+  })
+
+  it('D-97: no note without the flag, and never on a quick look', async () => {
+    await renderGate(flooredDecision({ input_snapshot: STORED_SNAPSHOT }))
+    await screen.findByText(/Evaluated with/)
+    expect(document.querySelector('[data-analysis-changed]')).toBeNull()
+    cleanup()
+
+    await renderGate(flooredDecision({
+      synthesized: true,
+      ...({ analysis_changed_since: true, analysis_changed_at: '2026-11-20T12:30:00Z' } as object),
+    }))
+    await screen.findByText(/Evaluated with/)
+    expect(document.querySelector('[data-analysis-changed]')).toBeNull()
   })
 })

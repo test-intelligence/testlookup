@@ -34593,6 +34593,23 @@
       "ReleaseCouncilResponse": {
         "description": "Extended release decision with council context.",
         "properties": {
+          "analysis_changed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Analysis Changed At"
+          },
+          "analysis_changed_since": {
+            "default": false,
+            "title": "Analysis Changed Since",
+            "type": "boolean"
+          },
           "band_downgrades": {
             "default": [],
             "items": {
@@ -34600,6 +34617,11 @@
             },
             "title": "Band Downgrades",
             "type": "array"
+          },
+          "band_held_back": {
+            "default": false,
+            "title": "Band Held Back",
+            "type": "boolean"
           },
           "band_policy_id": {
             "anyOf": [
@@ -34804,6 +34826,18 @@
               }
             ],
             "title": "Pass Rate"
+          },
+          "pass_rate_bands": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pass Rate Bands"
           },
           "policy_id": {
             "anyOf": [
@@ -43747,6 +43781,20 @@
               }
             ],
             "title": "Input Tokens"
+          },
+          "mode_distribution": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "integer"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mode Distribution"
           },
           "output_tokens": {
             "anyOf": [
@@ -86899,6 +86947,62 @@
       }
     },
     "/api/v1/release-gate-policies/{policy_id}": {
+      "delete": {
+        "description": "Delete a draft that was never published (ADMIN only) (D-141).\n\nA version that was ever published stays: past verdicts and the version\nhistory name it, so it is deactivated instead (409). A draft a stored\nrelease decision points at is kept too (409). Records ``policy.updated``\nwith ``changed: draft deleted`` in the same transaction, the way\ndeactivate records its edit of the active flag.",
+        "operationId": "delete_policy_api_v1_release_gate_policies__policy_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "policy_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Policy Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Delete Policy",
+        "tags": [
+          "Release Gate Policies"
+        ]
+      },
       "get": {
         "description": "Get a single release gate policy by ID.",
         "operationId": "get_policy_api_v1_release_gate_policies__policy_id__get",
