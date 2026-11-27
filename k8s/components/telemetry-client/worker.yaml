@@ -8,6 +8,10 @@ spec:
       containers:
         - name: worker
           env:
+            - name: OTEL_ENABLED
+              value: "true"
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: https://testlookup-otel.testlookup-telemetry.svc:4318
             - name: OTEL_LOGS_ROLE
               value: worker
             - name: OTEL_EXPORTER_OTLP_LOGS_ENDPOINT

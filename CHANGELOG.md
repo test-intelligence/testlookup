@@ -9,6 +9,7 @@ contain breaking changes; [UPGRADING.md](UPGRADING.md) lists them).
 
 ### Added
 
+- Delivery verification checks mounted rule inventories, targeted source security, rendered infrastructure and all Kubernetes application image identities. An optional disposable release gate verifies both worker roles, durable completion and correlated telemetry.
 - Optional API objectives report scoped availability, latency, error budgets and measurement coverage. Retained SQL cohorts expose downstream and AI completion, including missed deadlines, and a disposable benchmark measures telemetry capacity.
 - Pipeline events use a PostgreSQL outbox with stable IDs for MongoDB replay, shared delivery health, and project-scoped recovery. Audit archives support independent integrity verification, and an opt-in identity retention policy preserves SCIM authority events.
 - The durable telemetry profile adds queued OpenTelemetry export, persistent Loki logs and Jaeger traces, Grafana correlation, and queue loss alerts. Kubernetes client overlays support a site-operated mTLS gateway, and the offline Compose bundle can include the durable stack.

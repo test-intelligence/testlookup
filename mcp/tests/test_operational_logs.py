@@ -17,10 +17,14 @@ def test_mcp_operational_log_contains_only_correlation_and_response_metadata(mon
     import operational_logs
 
     records = []
+    monkeypatch.setenv("BUILD_REVISION", "b" * 40)
+    monkeypatch.setenv("TESTLOOKUP_TELEMETRY_INSTALLATION", "synthetic-site")
 
     class Provider:
         def __init__(self, *, resource):
             assert resource.attributes["testlookup.service.role"] == "mcp"
+            assert resource.attributes["testlookup.build.revision"] == "b" * 40
+            assert resource.attributes["testlookup.installation"] == "synthetic-site"
 
         def add_log_record_processor(self, processor):
             pass

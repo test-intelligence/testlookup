@@ -367,6 +367,47 @@ def test_every_action_is_pinned_to_a_full_commit_sha() -> None:
     assert seen >= 80, f"only {seen} action references found; the scan cannot have looked"
 
 
+def test_delivery_policy_checks_gate_the_existing_backend_job() -> None:
+    jobs = _workflow(WORKFLOWS / "ci.yml")["jobs"]
+    steps = {step.get("name"): step for step in jobs["backend-test"]["steps"]}
+    for name, script in (
+        ("Enforce targeted security source policy", "scripts/security/source_policy.py"),
+        ("Check rendered infrastructure profiles", "scripts/security/render_reference_profiles.py"),
+    ):
+        step = steps[name]
+        assert script in step["run"] and '--source-sha "$GITHUB_SHA"' in step["run"]
+        assert step["working-directory"] == "." and not step.get("if") and not step.get("continue-on-error")
+    assert "backend-test" in jobs["build-images"]["needs"]
+    dev = jobs["deploy-dev"]
+    assert dev["needs"] == ["build-images"] and dev["permissions"] == {"contents": "read", "packages": "read"}
+    by_name = {step.get("name"): step for step in dev["steps"]}
+    assert "verified-images-${{ github.sha }}" == by_name["Download verified image manifest"]["with"]["name"]
+    pins = by_name["Pin the verified image digests in kustomization"]
+    assert set(pins["env"]) == {"BACKEND_DIGEST", "FRONTEND_DIGEST", "MCP_DIGEST"}
+    assert 'manifest["images"][component]["source_ref"] != expected' in pins["run"]
+    verified = by_name["Verify all application roles and running digests"]["run"]
+    assert 'verify_kubernetes_rollout.py' in verified and '--inactive-role beat' in verified
+
+
+def test_opted_in_signal_evidence_gates_the_release_manifest() -> None:
+    workflow = _workflow(WORKFLOWS / "release-e2e.yml")
+    triggers = workflow.get("on", workflow.get(True))
+    for event in ("workflow_dispatch", "workflow_call"):
+        signal_input = triggers[event]["inputs"]["verify_signals"]
+        assert signal_input["type"] == "boolean" and signal_input["default"] is False
+    steps = workflow["jobs"]["regression"]["steps"]
+    run = next(step for step in steps if "e2e-runner/monitored_ephemeral.py" in step.get("run", ""))
+    attest = next(step for step in steps if step.get("id") == "attest")
+    assert run["env"]["VERIFY_SIGNALS"] == attest["env"]["VERIFY_SIGNALS"] == "${{ inputs.verify_signals }}"
+    assert steps.index(run) < steps.index(attest)
+    assert 'signal.get("cleanup") != "completed"' in attest["run"]
+    assert 'signal.get("source_sha") != manifest["source_sha"]' in attest["run"]
+    assert 'signal.get("manifest_sha256") != digest' in attest["run"]
+    jobs = _workflow(RELEASE)["jobs"]
+    assert "vars.REQUIRE_RELEASE_SIGNAL_GATE" in jobs["functional-verification"]["with"]["verify_signals"]
+    assert "functional-verification" in jobs["promote"]["needs"]
+
+
 def test_crane_is_checksum_verified_before_it_runs_with_packages_write() -> None:
     promote = _workflow(RELEASE)["jobs"]["promote"]
     assert promote["permissions"].get("packages") == "write"

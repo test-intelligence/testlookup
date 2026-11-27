@@ -177,6 +177,9 @@ def configure_logging() -> None:
             environment=settings.APP_ENV,
             role=settings.OTEL_LOGS_ROLE,
             min_level=level,
+            service_version=settings.APP_VERSION,
+            build_revision=settings.BUILD_REVISION,
+            installation=settings.OBSERVABILITY_INSTALLATION,
         ))
     # The exporter hashes caller IDs before the stdout scrubber can replace a
     # numeric ID. Its independent allowlist does not forward any free text.

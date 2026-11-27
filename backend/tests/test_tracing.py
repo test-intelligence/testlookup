@@ -166,6 +166,24 @@ def test_trace_sampling_respects_site_ratio_and_sampled_parent(monkeypatch):
         provider.shutdown()
 
 
+@pytest.mark.parametrize("revision", ["a" * 40, "synthetic-unverified-revision"])
+def test_trace_resource_tags_verified_build_and_role(monkeypatch, revision):
+    from app.core.config import settings
+
+    _, providers = _spy(monkeypatch)
+    monkeypatch.setattr(settings, "BUILD_REVISION", revision)
+    monkeypatch.setattr(settings, "OBSERVABILITY_INSTALLATION", "synthetic-site")
+    monkeypatch.setenv("OTEL_RESOURCE_ATTRIBUTES", "testlookup.build.revision=" + "f" * 40)
+    tracing.setup_tracing("testlookup", "0.1.0", "production", service_role="worker-children")
+    provider = providers[0]
+    try:
+        assert provider.resource.attributes["testlookup.build.revision"] == (revision if len(revision) == 40 else "")
+        assert provider.resource.attributes["testlookup.installation"] == "synthetic-site"
+        assert provider.resource.attributes["testlookup.service.role"] == "worker-children"
+    finally:
+        provider.shutdown()
+
+
 class _NullProcessor:
     def on_start(self, span, parent_context=None):
         pass

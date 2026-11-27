@@ -1285,6 +1285,7 @@ if [ "$SKIP_BUILD" = false ]; then
   log "Building MCP server image (${BUILD_TAG})..."
   "$CONTAINER_ENGINE" build -t "${PUSH_REGISTRY}/testlookup/mcp:${BUILD_TAG}" \
     ${CA_BUILD_ARG[@]+"${CA_BUILD_ARG[@]}"} \
+    --build-arg BUILD_REVISION="$BUILD_REVISION" \
     -f mcp/Dockerfile mcp/
 
   cleanup_generated_build_inputs "$REPO_ROOT"

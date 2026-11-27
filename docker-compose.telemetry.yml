@@ -16,6 +16,7 @@ x-log-rotation: &log-rotation
 
 x-worker-telemetry: &worker-telemetry
   OTEL_SERVICE_NAME: testlookup
+  OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
   OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: http://otel-collector:4318/v1/logs
 
 services:
@@ -133,6 +134,7 @@ services:
     environment:
       TESTLOOKUP_OTLP_LOGS_ENDPOINT: http://otel-collector:4318/v1/logs
       TESTLOOKUP_TELEMETRY_ENVIRONMENT: ${APP_ENV:-production}
+      TESTLOOKUP_TELEMETRY_INSTALLATION: ${OBSERVABILITY_INSTALLATION:-}
     networks: [telemetry_ingress]
     logging: *log-rotation
 

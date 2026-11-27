@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import re
 import time
 import uuid
@@ -37,12 +38,17 @@ def add_operational_logs(app: ASGIApp, endpoint: str, environment: str) -> ASGIA
             or url.query or url.fragment
         ):
             raise ValueError("expected an HTTPS OTLP/HTTP logs URL")
+        revision = os.environ.get("BUILD_REVISION", "")
+        installation = os.environ.get("TESTLOOKUP_TELEMETRY_INSTALLATION", "")
         resource = Resource({
             "service.name": "testlookup",
             "service.namespace": "testlookup",
+            "service.version": os.environ.get("APP_VERSION", "0.1.0"),
             "deployment.environment.name": environment
             if environment in {"development", "staging", "production"} else "unknown",
             "testlookup.service.role": "mcp",
+            "testlookup.build.revision": revision if re.fullmatch(r"[0-9a-f]{40}", revision) else "",
+            "testlookup.installation": installation if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,62}", installation) else "",
         })
         session = requests.Session()
         session.trust_env = False

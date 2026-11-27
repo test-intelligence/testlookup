@@ -11,6 +11,12 @@ spec:
           env:
             - name: TESTLOOKUP_OTLP_LOGS_ENDPOINT
               value: https://testlookup-otel.testlookup-telemetry.svc:4318/v1/logs
+            - name: TESTLOOKUP_TELEMETRY_INSTALLATION
+              valueFrom:
+                configMapKeyRef:
+                  name: testlookup-config
+                  key: OBSERVABILITY_INSTALLATION
+                  optional: true
             - name: OTEL_EXPORTER_OTLP_CERTIFICATE
               value: /var/run/testlookup-otel/ca.crt
             - name: OTEL_EXPORTER_OTLP_CLIENT_CERTIFICATE

@@ -18,6 +18,7 @@ from typing import Any, Optional
 from urllib.parse import urlsplit
 
 from app.core.request_path import redact_path_credentials
+from app.core.telemetry_identity import telemetry_identity
 from app.services.redaction_service import is_log_secret_name, redact_log_message
 
 logger = logging.getLogger(__name__)
@@ -413,6 +414,8 @@ def setup_tracing(
     service_version: str,
     environment: str,
     otlp_endpoint: Optional[str] = None,
+    *,
+    service_role: str = "api",
 ) -> None:
     """
     Configure and register the global OpenTelemetry TracerProvider.
@@ -441,12 +444,16 @@ def setup_tracing(
         return
 
     try:
+        from app.core.config import settings
+
         resource = Resource.create(
             {
                 "service.name": service_name,
                 "service.version": service_version,
                 "deployment.environment": environment,
                 "service.namespace": "testlookup",
+                "testlookup.service.role": service_role,
+                **telemetry_identity(settings.BUILD_REVISION, settings.OBSERVABILITY_INSTALLATION),
             }
         )
 

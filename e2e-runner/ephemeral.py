@@ -20,7 +20,7 @@ sys.path.insert(0, str(ROOT / "scripts" / "release"))
 from release_manifest import validate_manifest  # noqa: E402 - shared repository validator
 
 
-def prepare(directory, manifest, project, engine="podman", *, host_runner=False):
+def prepare(directory, manifest, project, engine="podman", *, host_runner=False, with_fixtures=True):
     config = yaml.safe_load(
         (ROOT / "docker-compose.release.yml").read_text(encoding="utf-8")
     )
@@ -62,8 +62,9 @@ def prepare(directory, manifest, project, engine="podman", *, host_runner=False)
     }
     allowed_mcp_hosts = "mcp:8002,127.0.0.1:*" if host_runner else "mcp:8002"
     services["mcp"]["environment"].append(f"TESTLOOKUP_MCP_ALLOWED_HOSTS={allowed_mcp_hosts}")
-    configure_fixtures(config, directory, engine, images["backend"]["source_ref"])
-    if host_runner:
+    if with_fixtures:
+        configure_fixtures(config, directory, engine, images["backend"]["source_ref"])
+    if host_runner and with_fixtures:
         services["release-fixture"]["ports"] = ["127.0.0.1::8080"]
     (directory / "compose.json").write_text(json.dumps(config), encoding="utf-8")
     (directory / "scripts").mkdir()

@@ -172,7 +172,8 @@ def _attribute(key, value):
 def _resource():
     return {"attributes": [_attribute("service.name", "testlookup"), _attribute("service.namespace", "testlookup"),
                            _attribute("deployment.environment.name", "test"),
-                           _attribute("testlookup.service.role", "api"), _attribute("private.payload", "synthetic-private-canary")]}
+                           _attribute("testlookup.service.role", "api"), _attribute("testlookup.build.revision", "a" * 40),
+                           _attribute("testlookup.installation", "synthetic-site"), _attribute("private.payload", "synthetic-private-canary")]}
 
 
 def _logs(identifier, *, event="http_request"):
@@ -242,6 +243,9 @@ def test_real_queue_overflow_privacy_and_recovery_after_abrupt_restart(tmp_path)
                 assert "synthetic-private-canary" not in str(message)
                 if hasattr(message, "resource_logs"):
                     for resource in message.resource_logs:
+                        metadata = {item.key: item.value.string_value for item in resource.resource.attributes}
+                        assert metadata["testlookup.build.revision"] == "a" * 40
+                        assert metadata["testlookup.installation"] == "synthetic-site"
                         for scope in resource.scope_logs:
                             for record in scope.log_records:
                                 seen_logs.add(int.from_bytes(record.trace_id, "big"))
@@ -251,6 +255,9 @@ def test_real_queue_overflow_privacy_and_recovery_after_abrupt_restart(tmp_path)
                                 assert body["trace_id"] == record.trace_id.hex()
                 else:
                     for resource in message.resource_spans:
+                        metadata = {item.key: item.value.string_value for item in resource.resource.attributes}
+                        assert metadata["testlookup.build.revision"] == "a" * 40
+                        assert metadata["testlookup.installation"] == "synthetic-site"
                         for scope in resource.scope_spans:
                             for span in scope.spans:
                                 seen_traces.add(int.from_bytes(span.trace_id, "big"))

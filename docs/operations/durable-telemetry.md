@@ -1,6 +1,6 @@
 # Durable logs and traces
 
-The durable profile keeps selected operational logs and API traces searchable across process and container restarts. Prometheus continues to scrape application metrics directly. The platform operator owns collection, storage capacity, Grafana access, and the alerts for telemetry loss.
+The durable profile keeps selected operational logs, API traces and worker execution spans searchable across process and container restarts. Prometheus continues to scrape application metrics directly. The platform operator owns collection, storage capacity, Grafana access, and the alerts for telemetry loss.
 
 | Platform | Collection and storage | Trust and availability |
 |---|---|---|
@@ -35,12 +35,13 @@ printf '%s' "$REQUEST_ID" | sha256sum
   | request_id="<sha256 hex>"
 ```
 
-Search Celery execution records by the same hash in `celery_task_id`. Cases with an active API span include its native OTLP trace and span IDs, plus fields Grafana can link to Jaeger. The Jaeger datasource uses Grafana's v3 option for lookup by trace ID. Service and operation search uses the private Jaeger v2 UI, available through an authorized path on the storage network. App and operational error logs remain available through each service's stdout. The Compose profile rotates those service logs at three 10 MiB files per container.
+Search Celery execution records by the same hash in `celery_task_id`. API and worker records with an active span include its native OTLP trace and span IDs, which can link to Jaeger. The Jaeger datasource uses Grafana's v3 option for lookup by trace ID. Service and operation search uses the private Jaeger v2 UI, available through an authorized path on the storage network. App and operational error logs remain available through each service's stdout. The Compose profile rotates those service logs at three 10 MiB files per container.
 
 ## Data and limits
 
 - Central logs include API request and server error events, Celery task outcomes, and MCP SSE response metadata. The collector rebuilds these records from fixed event names, hashed IDs and bounded status and duration fields before enqueueing. It discards the incoming log body. URLs, payloads, raw exception text, credentials, and product data stay out of the central log projection. Keep business audit and retention evidence in the application stores.
 - Current API traces are sanitized before OTLP export. The collector applies a second attribute allowlist and clears trace status messages and event text. Library span context and timing can reveal infrastructure topology. Limit trace access to operators with that responsibility.
+- Worker tracing starts in the child process when an OTLP endpoint is enabled. A validated W3C `traceparent` links broker delivery to its originating trace. Operational spans contain a fixed operation name and bounded outcome and queue family. Image builds can supply the exact revision and installations can set `OBSERVABILITY_INSTALLATION` for release evidence. Loki stores the validated values as structured metadata. [Release signal gate](release-signal-gate.md).
 - The app log SDK holds 512 records per process in memory and sends batches of up to 64. The collector has a 32 MiB persistent queue per exporter, a 64 MiB per-database ceiling, and up to 10 minutes of retry per dequeued item. Install a filesystem or volume quota that can accommodate both queues and compaction. A collector acknowledgement means it admitted the batch to its durable queue. The downstream store can still refuse it.
 - Reference log search retains 7 days, with asynchronous compaction and deletion. Reference traces retain 72 hours. Badger may preallocate several GiB even with little trace traffic. Reserve separate quota and headroom for each store, measure real intake, and alert on free space and retained volume. Choose retention and backup for the installation's incident and privacy obligations.
 - A single node's disk loss can remove both queued and stored telemetry. For HA use a separately operated collector deployment and shared or replicated stores supported by the vendors. Preserve a separate heartbeat and alert delivery path.

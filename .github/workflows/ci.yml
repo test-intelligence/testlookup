@@ -516,6 +516,31 @@ jobs:
       - name: Lint with ruff
         run: ruff check app/ tests/
 
+      - name: Enforce targeted security source policy
+        id: source-policy
+        working-directory: .
+        run: python scripts/security/source_policy.py --source-sha "$GITHUB_SHA" --out "$RUNNER_TEMP/source-policy.json"
+      - name: Set up Kustomize for profile checks
+        uses: imranismail/setup-kustomize@53f941b41dca13ed61874bbc6b4b6e1562877530 # v3.0.0
+        with:
+          kustomize-version: "5.7.1"
+      - name: Check rendered infrastructure profiles
+        working-directory: .
+        run: python scripts/security/render_reference_profiles.py --source-sha "$GITHUB_SHA" --output "$RUNNER_TEMP/rendered-infrastructure.json"
+      - name: Exercise the release security policy fixtures
+        working-directory: .
+        run: python -m pytest -q scripts/security/tests
+      - name: Retain security policy evidence
+        if: always() && steps.source-policy.outcome != 'skipped'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: security-policy-${{ github.sha }}
+          path: |
+            ${{ runner.temp }}/source-policy.json
+            ${{ runner.temp }}/rendered-infrastructure.json
+          if-no-files-found: ignore
+          retention-days: 14
+
       # Same version as docker-compose.monitoring.yml. The SHA is from the
       # immutable official v3.16.0 sha256sums.txt, checked before extracting or
       # executing the tool. Run within this existing job, without a new matrix.
@@ -547,6 +572,7 @@ jobs:
           for backend_job in "$monitoring/backend-scrape.yml" "$monitoring/backend-scrape-authenticated.yml"; do
             cp "$backend_job" "$scratch/config/backend-scrape.yml"
             printf '%s\n' 'synthetic-test-token' > "$scratch/config/metrics-token"
+            python scripts/monitoring/check_mounted_prometheus.py "$scratch/config/prometheus.yml"
             "$tool" check config "$scratch/config/prometheus.yml"
           done
           cp "$monitoring/objectives/api-slos.yml" "$scratch/config/rules/"
@@ -566,6 +592,7 @@ jobs:
           "$tool" check config "$scratch/config/alerting.yml"
           cp "$monitoring/otel-collector/scrape.yml" "$scratch/config/telemetry-scrape-collector.yml"
           cp "$monitoring/otel-collector/telemetry-rules.yml" "$scratch/config/rules/durable-telemetry.yml"
+          python scripts/monitoring/check_mounted_prometheus.py "$scratch/config/alerting.yml" --alerting --durable --objectives
           "$tool" check config "$scratch/config/alerting.yml"
           # Test firing, resolved and Watchdog delivery to an isolated TLS sink.
           mapfile -t alertmanager_pin < <(python -c '
@@ -581,6 +608,7 @@ jobs:
           printf '%s  %s\n' "${alertmanager_pin[1]}" "$alertmanager_archive" | sha256sum --check --strict
           tar -xzf "$alertmanager_archive" -C "$scratch" "$alertmanager_dir/alertmanager" "$alertmanager_dir/amtool"
           export PROMETHEUS_TEST_BINARY="$scratch/$prometheus_dir/prometheus"
+          export PROMTOOL_TEST_BINARY="$tool"
           export ALERTMANAGER_TEST_BINARY="$scratch/$alertmanager_dir/alertmanager"
           export AMTOOL_TEST_BINARY="$scratch/$alertmanager_dir/amtool"
           # Native processes use loopback and disposable storage in the tests.
@@ -2009,6 +2037,8 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       backend_digest: ${{ steps.build-backend.outputs.digest }}
+      frontend_digest: ${{ steps.build-frontend.outputs.digest }}
+      mcp_digest: ${{ steps.build-mcp.outputs.digest }}
     # The docs jobs gate this too. They are cheap and they guard something a
     # test suite cannot see: `mermaid-check` that every diagram parses, and
     # `docs-diagram-render` that the diagrams actually DRAW and their labels
@@ -2192,6 +2222,8 @@ jobs:
         with:
           context: ./mcp
           file: ./mcp/Dockerfile
+          build-args: |
+            BUILD_REVISION=${{ github.sha }}
           push: true
           sbom: true
           provenance: mode=max
@@ -2262,6 +2294,9 @@ jobs:
     needs: [build-images]
     if: github.ref == 'refs/heads/main'
     environment: development
+    permissions:
+      contents: read
+      packages: read
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -2295,46 +2330,88 @@ jobs:
         env:
           KUBE_CONFIG_DEV: ${{ secrets.KUBE_CONFIG_DEV }}
         run: |
-          mkdir -p /tmp
-          printf '%s' "$KUBE_CONFIG_DEV" | base64 -d > /tmp/kubeconfig
+          umask 077
+          kubeconfig="$RUNNER_TEMP/testlookup-dev.kubeconfig"
+          printf '%s' "$KUBE_CONFIG_DEV" | base64 -d > "$kubeconfig"
           # Verify the decoded file is valid YAML with a server entry
-          if ! grep -q "server:" /tmp/kubeconfig; then
+          if ! grep -q "server:" "$kubeconfig"; then
             echo "ERROR: Decoded kubeconfig does not contain a 'server:' entry."
             echo "       Ensure KUBE_CONFIG_DEV is a valid base64-encoded kubeconfig."
             exit 1
           fi
-          echo "KUBECONFIG=/tmp/kubeconfig" >> $GITHUB_ENV
+          printf 'KUBECONFIG=%s\n' "$kubeconfig" >> "$GITHUB_ENV"
           echo "✓ kubeconfig configured"
 
       - name: Verify cluster connectivity
         if: steps.check-secret.outputs.skip != 'true'
         run: |
-          kubectl cluster-info
-          kubectl get nodes --request-timeout=10s
+          for resource in deployments.apps replicasets.apps pods; do
+            kubectl --namespace=testlookup-dev --request-timeout=10s auth can-i list "$resource" --quiet
+          done
 
-      - name: Update image tags in kustomization
+      - name: Download verified image manifest
         if: steps.check-secret.outputs.skip != 'true'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: verified-images-${{ github.sha }}
+          path: verified-images
+
+      - name: Pin the verified image digests in kustomization
+        if: steps.check-secret.outputs.skip != 'true'
+        env:
+          BACKEND_DIGEST: ${{ needs.build-images.outputs.backend_digest }}
+          FRONTEND_DIGEST: ${{ needs.build-images.outputs.frontend_digest }}
+          MCP_DIGEST: ${{ needs.build-images.outputs.mcp_digest }}
         run: |
+          python3 scripts/release/release_manifest.py validate --manifest verified-images/release-manifest.json --expected-source-sha "$GITHUB_SHA"
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          manifest = json.loads(Path("verified-images/release-manifest.json").read_bytes())
+          root = f"{os.environ['REGISTRY']}/{os.environ['IMAGE_PREFIX']}"
+          for component in ("backend", "frontend", "mcp"):
+              expected = f"{root}/{component}@{os.environ[component.upper() + '_DIGEST']}"
+              if manifest["images"][component]["source_ref"] != expected:
+                  raise SystemExit("Build output and verified image manifest disagree")
+          PY
           cd k8s/overlays/dev
           kustomize edit set image \
-            ghcr.io/test-intelligence/testlookup/backend=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/backend@${{ needs.build-images.outputs.backend_digest }} \
-            ghcr.io/test-intelligence/testlookup/frontend=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/frontend:${{ github.sha }} \
-            ghcr.io/test-intelligence/testlookup/mcp=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/mcp:${{ github.sha }}
+            "ghcr.io/test-intelligence/testlookup/backend=$REGISTRY/$IMAGE_PREFIX/backend@$BACKEND_DIGEST" \
+            "ghcr.io/test-intelligence/testlookup/frontend=$REGISTRY/$IMAGE_PREFIX/frontend@$FRONTEND_DIGEST" \
+            "ghcr.io/test-intelligence/testlookup/mcp=$REGISTRY/$IMAGE_PREFIX/mcp@$MCP_DIGEST"
+
+      - name: Authenticate read-only registry inspection
+        if: steps.check-secret.outputs.skip != 'true'
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
 
       - name: Migrate, then apply manifests
         if: steps.check-secret.outputs.skip != 'true'
         run: |
           bash scripts/prepare-live-fanout-cutover.sh testlookup-dev
-          bash scripts/run-k8s-migrations.sh testlookup-dev             "${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/backend@${{ needs.build-images.outputs.backend_digest }}"             "${{ github.sha }}"
-          # --validate=false skips server-side schema validation (safe for apply operations)
-          # Remove this flag once the cluster API server is reachable for openapi schema download
+          bash scripts/run-k8s-migrations.sh testlookup-dev \
+            "${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/backend@${{ needs.build-images.outputs.backend_digest }}" \
+            "$GITHUB_SHA"
+          # --validate=false skips server-side schema validation on this cluster.
           kubectl apply -k k8s/overlays/dev --validate=false
 
-      - name: Wait for rollout
+      - name: Verify all application roles and running digests
         if: steps.check-secret.outputs.skip != 'true'
         run: |
-          kubectl rollout status deployment/testlookup-backend -n testlookup-dev --timeout=120s
-          kubectl rollout status deployment/testlookup-frontend -n testlookup-dev --timeout=60s
+          python3 scripts/release/verify_kubernetes_rollout.py \
+            --manifest verified-images/release-manifest.json --source-sha "$GITHUB_SHA" \
+            --namespace testlookup-dev --inactive-role beat --output rollout-evidence.json
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: steps.check-secret.outputs.skip != 'true'
+        with:
+          name: development-rollout-${{ github.sha }}
+          path: rollout-evidence.json
+          if-no-files-found: error
+          retention-days: 14
 
       - name: Deploy skipped — add KUBE_CONFIG_DEV to enable
         if: steps.check-secret.outputs.skip == 'true'

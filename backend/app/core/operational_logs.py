@@ -20,6 +20,8 @@ from opentelemetry.sdk._logs import LoggerProvider
 from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.util.types import AttributeValue
+
+from app.core.telemetry_identity import telemetry_identity
 from structlog.types import EventDict, WrappedLogger
 
 logger = logging.getLogger(__name__)
@@ -53,13 +55,16 @@ class OperationalLogExport:
 
     def __init__(
         self, *, endpoint: str, service: str, environment: str, role: str, min_level: int = logging.INFO,
+        service_version: str = "", build_revision: str = "", installation: str = "",
     ) -> None:
         self._endpoint = endpoint
         self._attributes = {
             "service.name": service,
             "service.namespace": "testlookup",
+            "service.version": service_version,
             "deployment.environment.name": environment,
             "testlookup.service.role": role,
+            **telemetry_identity(build_revision, installation),
         }
         self._role = role
         self._min_level = min_level
@@ -159,7 +164,9 @@ class OperationalLogExport:
 @lru_cache(maxsize=1)
 def operational_log_export(
     *, endpoint: str, service: str, environment: str, role: str, min_level: int,
+    service_version: str = "", build_revision: str = "", installation: str = "",
 ) -> OperationalLogExport:
     return OperationalLogExport(
         endpoint=endpoint, service=service, environment=environment, role=role, min_level=min_level,
+        service_version=service_version, build_revision=build_revision, installation=installation,
     )

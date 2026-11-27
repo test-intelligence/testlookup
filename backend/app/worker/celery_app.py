@@ -1168,3 +1168,16 @@ def _close_worker_loop(**_kwargs: object) -> None:
         shutdown_worker_loop()
     except Exception:  # noqa: BLE001 -- never block worker shutdown
         pass
+
+
+# Register completion last so the operational execution log observes the
+# consumer span before its context is restored. No Celery instrumentation
+# package or task wrapper is required.
+from app.worker.tracing import (  # noqa: E402
+    finish_task_trace, initialize_worker_tracing, propagate_traceparent, start_task_trace,
+)
+
+worker_process_init.connect(initialize_worker_tracing, weak=False)
+before_task_publish.connect(propagate_traceparent, weak=False)
+task_prerun.connect(start_task_trace, weak=False)
+task_postrun.connect(finish_task_trace, weak=False)

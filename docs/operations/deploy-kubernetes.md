@@ -209,6 +209,8 @@ It creates a daily CronJob (`testlookup-backup`, 02:17) that writes `pg_dump`, `
 
 ## Verify the rollout
 
+Use the [release assurance verifier](release-assurance.md#verify-a-kubernetes-rollout) to record every application role's verified image identity against the release manifest.
+
 ```bash
 make k8s-rollout-async K8S_NAMESPACE=testlookup
 kubectl -n testlookup get pods,svc,ingress

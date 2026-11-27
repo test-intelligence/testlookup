@@ -1,0 +1,33 @@
+# Release assurance and rollout evidence
+
+Use the exact candidate commit and the verified release manifest throughout the release. Save the source SHA, manifest hash, image digests, profile, test tier and evidence from the same run. The manifest binds application images to a commit. GitHub release verification and promotion use the manifest produced by the trusted image build. [Release procedure](../../RELEASING.md), [NIST Secure Software Development Framework](https://csrc.nist.gov/pubs/sp/800/218/final).
+
+## Source and infrastructure gates
+
+- GitHub CodeQL default setup is configured on the public upstream and the latest analysis records for Python and JavaScript/TypeScript completed without a reported analysis error at review time. Effective main rules require the Gitleaks scan, backend and frontend tests, cross-cutting quality guards, datastore integration, dependency scanning, and DCO. CodeQL severity merge protection requires a separate account rule. Inspect active main rules and CodeQL status when verifying a release's account settings. [GitHub active branch rules](https://docs.github.com/en/rest/repos/rules#get-rules-for-a-branch), [CodeQL default setup](https://docs.github.com/en/code-security/how-tos/find-and-fix-code-vulnerabilities/configure-code-scanning/configure-code-scanning).
+- The backend CI job applies a narrow, pinned source policy and renders supported reference deployment profiles for infrastructure policy checks. Its artifact retains sanitized policy evidence for the candidate SHA. Runtime security controls are exercised by the existing disposable release campaign.
+- Publication and promotion require an independent successful Gitleaks conclusion for the same main SHA. A successful CI conclusion alone leaves that authorization incomplete. The verification helper rejects missing, unrelated, failed or pending evidence at its deadline. Keep the account-level Gitleaks check required and review this configuration after ruleset changes.
+
+The existing release verification workflow accepts `verify_signals=true` to run the disposable monitored Compose profile against a capable candidate. The promotion workflow uses the repository variable `REQUIRE_RELEASE_SIGNAL_GATE` to request that gate. Enable it after the first monitored candidate and its cleanup pass the release rehearsal. When enabled, the workflow verifies signal status, cleanup, source SHA and manifest bytes before emitting its promotion evidence. [Disposable monitored profile](disposable-signal-proof.md), [Release signal gate](release-signal-gate.md).
+
+## Verify a Kubernetes rollout
+
+The GitHub development deployment pins the API, frontend and MCP images to the manifest's immutable references. It checks the rollout controller and the Ready pods for API, frontend, MCP, all four parent queue deployments and the child worker. It also verifies the development profile's deliberately inactive beat deployment has zero active replicas and the candidate pod template. The emitted evidence includes role counts, observed runtime digests and the release manifest hash. A development run with its kubeconfig secret absent is recorded as skipped in the workflow.
+
+An operator can run the verifier against a selected namespace. The credential needs read access to Deployments, ReplicaSets and Pods. Authenticate Docker to the release registry for private images. The tool reads the exact manifest and resolves the platform image and config digests from digest-verified registry objects. The reference release runtime is Linux amd64. The gate checks current generation, readiness, pod ownership, and image identity, including every active pod selected by each app Deployment.
+
+```sh
+python scripts/release/verify_kubernetes_rollout.py \
+  --manifest verified-images/release-manifest.json --source-sha "$SOURCE_SHA" \
+  --context "$CONTEXT" --namespace "$NAMESPACE" --output rollout-evidence.json
+```
+
+For the reviewed development profile, add `--inactive-role beat`. In a production profile with scheduled work, verify beat's running pod and exercise a representative due job. K3s's local installer already verifies rollout readiness, exact pushed digests, the serving backend revision and its degraded exit status. Keep those checks and use the release signal gate for monitoring and receiver acceptance. [K3s deployment](deploy-k3s.md), [Kubernetes deployments](https://kubernetes.io/docs/concepts/workloads/controllers/deployment/), [Kubernetes image identity](https://kubernetes.io/docs/concepts/containers/images/).
+
+## Rehearse the release on a disposable candidate
+
+1. Record the candidate, control, platform and owner before the trial. Use the same supported application features, workload mix and observation cadence for both runs. Compare latency, response errors, worker queue age, durable completions, telemetry loss, and CPU and memory. Choose thresholds from the measured baseline and include an independently observed readiness and reachability check. [Google SRE canarying releases](https://sre.google/workbook/canarying-releases/).
+2. Run a known upload and verify its persisted result. Exercise both the parent worker and child worker paths. Inspect authenticated metrics, allowlisted operational logs and related traces using the candidate's revision, installation and correlation identifiers. Confirm the alert reaches the authorized test receiver and resolves after recovery. Record disabled feature roles explicitly. [Release signal gate](release-signal-gate.md), [Alert routing](alert-routing.md).
+3. For a scheduled feature, exercise one enabled expected slot and verify durable completion or a visible overdue state. Observe log and trace retention settings, sample selection, exporter loss and private access on the actual deployment. Exercise a safely isolated capacity or receiver failure and compare the result with the incident runbook. [Telemetry capacity](telemetry-capacity.md).
+4. Rehearse previous-build recovery using the approved baseline, compatible schema and isolated backup. Verify storage checksums, the restored revision, datastore readiness and a representative product journey. Confirm which current operations, migrations and data require a documented rollback window. Record the elapsed recovery time and the tested restore scope. [Upgrade and rollback campaign](../../e2e-runner/upgrade_README.md).
+5. Save the candidate-linked rollout, functional, telemetry, alert and restore evidence. Record the release owner, responder handoff and any missing platform proof. A deployment owner's approval and the site's own monitored rollout govern production adoption.

@@ -52,7 +52,9 @@ processors:
       - context: resource
         statements:
           - 'set(attributes["deployment.environment.name"], attributes["deployment.environment"]) where attributes["deployment.environment.name"] == nil'
-          - 'keep_keys(attributes, ["service.name", "service.namespace", "service.version", "service.instance.id", "deployment.environment.name", "testlookup.installation", "testlookup.service.role"])'
+          - 'keep_keys(attributes, ["service.name", "service.namespace", "service.version", "service.instance.id", "deployment.environment.name", "testlookup.installation", "testlookup.service.role", "testlookup.build.revision"])'
+          - 'delete_key(attributes, "testlookup.build.revision") where not IsMatch(String(attributes["testlookup.build.revision"]), "^[0-9a-f]{40}$")'
+          - 'delete_key(attributes, "testlookup.installation") where not IsMatch(String(attributes["testlookup.installation"]), "^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$")'
           - 'truncate_all(attributes, 128)'
       - context: scope
         statements:
@@ -75,7 +77,9 @@ processors:
       - context: resource
         statements:
           - 'set(attributes["deployment.environment.name"], attributes["deployment.environment"]) where attributes["deployment.environment.name"] == nil'
-          - 'keep_keys(attributes, ["service.name", "service.namespace", "service.version", "service.instance.id", "deployment.environment.name", "testlookup.installation", "testlookup.service.role"])'
+          - 'keep_keys(attributes, ["service.name", "service.namespace", "service.version", "service.instance.id", "deployment.environment.name", "testlookup.installation", "testlookup.service.role", "testlookup.build.revision"])'
+          - 'delete_key(attributes, "testlookup.build.revision") where not IsMatch(String(attributes["testlookup.build.revision"]), "^[0-9a-f]{40}$")'
+          - 'delete_key(attributes, "testlookup.installation") where not IsMatch(String(attributes["testlookup.installation"]), "^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$")'
           - 'truncate_all(attributes, 128)'
       - context: scope
         statements:
