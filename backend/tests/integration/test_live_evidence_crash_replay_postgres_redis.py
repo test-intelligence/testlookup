@@ -144,5 +144,19 @@ async def test_postgres_commit_then_redis_cleanup_crash_replays_once(monkeypatch
         finally:
             try:
                 await client.aclose()
+                await _release_shared_redis_pool()
             finally:
                 await engine.dispose()
+
+
+async def _release_shared_redis_pool() -> None:
+    """Close the app's cached Valkey pool if a code path under test bound it.
+
+    It binds to this test's event loop; left open, the next module that closes
+    it does so on another loop and fails with "Event loop is closed" on Windows
+    (found running the service suites locally, 2026-11-26).
+    """
+    from app.db import redis_client
+
+    if redis_client._pool is not None:
+        await redis_client.close_redis()
