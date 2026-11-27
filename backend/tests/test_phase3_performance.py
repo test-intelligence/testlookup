@@ -3,7 +3,7 @@ Unit tests for Phase 3: Performance Optimization.
 
 Covers:
   P3-1: Parallelized run intelligence queries
-  P3-2: Redis membership caching + invalidation
+  P3-2: Legacy Redis membership cleanup
   P3-3: Composite index existence in ORM model
   P3-4: Pagination on list endpoints
   P3-5: Pool configuration
@@ -27,13 +27,6 @@ from app.streams.producer import (  # noqa: E402
     StreamBackpressureError,
     _BACKPRESSURE_RATIO,
 )
-
-
-class TestMembershipCacheTTL:
-    def test_ttl_is_300_seconds(self):
-        # Lazy import to avoid pulling in bcrypt/PyJWT on systems without them
-        deps = pytest.importorskip("app.core.deps")
-        assert deps._MEMBERSHIP_CACHE_TTL == 300
 
 
 class TestInvalidateMembershipCache:

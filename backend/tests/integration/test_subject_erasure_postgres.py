@@ -651,8 +651,8 @@ async def _prove(sessions: Any, storage: Any, redis: Any, P: SimpleNamespace, id
     assert dispatched == [str(job_id)] and response.json()["phase"] == "lockout"
     pseudonym = svc.pseudonym_for(ids.subject)
     assert preview.json()["pseudonym"] == pseudonym
-    # the lock-out dropped the membership cache after its commit; a request in flight may refill it before the
-    # worker runs — the redis phase is that backstop, so the cache is refilled here and must be counted there
+    # The lock-out drops any legacy membership cache after its commit. Seed a residual value, as an older worker
+    # in a rolling deployment might, to prove the Redis erasure phase remains a cleanup backstop and counts it.
     membership = f"membership:{ids.subject}"
     assert not await redis.exists(membership), "the lock-out drops the membership cache"
     await redis.set(membership, json.dumps([str(uuid.uuid4())]), ex=300)
