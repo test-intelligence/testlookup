@@ -5,13 +5,14 @@ from typing import Optional
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.deps import (
     get_current_active_user,
     require_knowledge_source_access,
     require_role,
 )
 from app.db.postgres import get_db
-from app.models.postgres import User, UserRole
+from app.models.postgres import KnowledgeSourceType, User, UserRole
 from app.models.schemas import (
     ConnectorConfigTestRequest,
     ConnectorTestResult,
@@ -29,6 +30,12 @@ from app.services import knowledge_source_service as svc
 from app.services.activity.service import ActorRef, record as record_activity
 
 router = APIRouter(prefix="/api/v1/knowledge-sources", tags=["Knowledge Sources"])
+
+_OFFLINE_CONNECTION_TEST_TYPES: frozenset[str] = frozenset({
+    KnowledgeSourceType.JIRA_ISSUE.value,
+    KnowledgeSourceType.JIRA_EPIC.value,
+    KnowledgeSourceType.CONFLUENCE_PAGE.value,
+})
 
 
 # ── RAG-1: Source CRUD ────────────────────────────────────────────────────────
@@ -206,6 +213,13 @@ async def test_connector(
     # it may be tested while RAG is on for any project (allow-lists apply
     # to the project-scoped endpoints, not to this one).
     await svc.require_rag_enabled_async(db, any_scope=True)
+    if settings.AI_OFFLINE_MODE and payload.source_type in _OFFLINE_CONNECTION_TEST_TYPES:
+        return ConnectorTestResult(
+            success=False,
+            latency_ms=0,
+            error="offline_mode",
+            detail="AI_OFFLINE_MODE is enabled — outbound calls are disabled",
+        )
     from app.services.connectors.registry import bind_to_deployment, get_connector
     try:
         connector = get_connector(payload.source_type)

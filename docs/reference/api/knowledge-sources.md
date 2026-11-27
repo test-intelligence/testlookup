@@ -10,7 +10,7 @@ List Knowledge Sources
 
 
 
-Source: [backend/app/routers/knowledge_sources.py:37](../../../backend/app/routers/knowledge_sources.py#L37).
+Source: [backend/app/routers/knowledge_sources.py:44](../../../backend/app/routers/knowledge_sources.py#L44).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -172,7 +172,7 @@ Create Knowledge Source
 
 
 
-Source: [backend/app/routers/knowledge_sources.py:60](../../../backend/app/routers/knowledge_sources.py#L60).
+Source: [backend/app/routers/knowledge_sources.py:67](../../../backend/app/routers/knowledge_sources.py#L67).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -263,7 +263,7 @@ Test Connector
 
 
 
-Source: [backend/app/routers/knowledge_sources.py:195](../../../backend/app/routers/knowledge_sources.py#L195).
+Source: [backend/app/routers/knowledge_sources.py:202](../../../backend/app/routers/knowledge_sources.py#L202).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -344,7 +344,7 @@ Get Confluence Space Scope
 
 
 
-Source: [backend/app/routers/knowledge_sources.py:255](../../../backend/app/routers/knowledge_sources.py#L255).
+Source: [backend/app/routers/knowledge_sources.py:269](../../../backend/app/routers/knowledge_sources.py#L269).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -421,7 +421,7 @@ Update Confluence Space Scope
 
 
 
-Source: [backend/app/routers/knowledge_sources.py:267](../../../backend/app/routers/knowledge_sources.py#L267).
+Source: [backend/app/routers/knowledge_sources.py:281](../../../backend/app/routers/knowledge_sources.py#L281).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -508,7 +508,7 @@ Get Domain Allowlist
 
 
 
-Source: [backend/app/routers/knowledge_sources.py:222](../../../backend/app/routers/knowledge_sources.py#L222).
+Source: [backend/app/routers/knowledge_sources.py:236](../../../backend/app/routers/knowledge_sources.py#L236).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -585,7 +585,7 @@ Update Domain Allowlist
 
 
 
-Source: [backend/app/routers/knowledge_sources.py:234](../../../backend/app/routers/knowledge_sources.py#L234).
+Source: [backend/app/routers/knowledge_sources.py:248](../../../backend/app/routers/knowledge_sources.py#L248).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -672,7 +672,7 @@ Delete Knowledge Source
 
 
 
-Source: [backend/app/routers/knowledge_sources.py:114](../../../backend/app/routers/knowledge_sources.py#L114).
+Source: [backend/app/routers/knowledge_sources.py:121](../../../backend/app/routers/knowledge_sources.py#L121).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_knowledge_source_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -746,7 +746,7 @@ Get Knowledge Source
 
 
 
-Source: [backend/app/routers/knowledge_sources.py:84](../../../backend/app/routers/knowledge_sources.py#L84).
+Source: [backend/app/routers/knowledge_sources.py:91](../../../backend/app/routers/knowledge_sources.py#L91).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_knowledge_source_access.<locals>._check`.
 
@@ -827,7 +827,7 @@ Update Knowledge Source
 
 
 
-Source: [backend/app/routers/knowledge_sources.py:94](../../../backend/app/routers/knowledge_sources.py#L94).
+Source: [backend/app/routers/knowledge_sources.py:101](../../../backend/app/routers/knowledge_sources.py#L101).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_knowledge_source_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -918,7 +918,7 @@ Get Freshness
 
 
 
-Source: [backend/app/routers/knowledge_sources.py:178](../../../backend/app/routers/knowledge_sources.py#L178).
+Source: [backend/app/routers/knowledge_sources.py:185](../../../backend/app/routers/knowledge_sources.py#L185).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_knowledge_source_access.<locals>._check`.
 
@@ -999,7 +999,7 @@ Trigger Sync
 
 
 
-Source: [backend/app/routers/knowledge_sources.py:139](../../../backend/app/routers/knowledge_sources.py#L139).
+Source: [backend/app/routers/knowledge_sources.py:146](../../../backend/app/routers/knowledge_sources.py#L146).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_knowledge_source_access.<locals>._check`, `require_role.<locals>._check`.
 
@@ -1080,7 +1080,7 @@ Get Sync History
 
 
 
-Source: [backend/app/routers/knowledge_sources.py:160](../../../backend/app/routers/knowledge_sources.py#L160).
+Source: [backend/app/routers/knowledge_sources.py:167](../../../backend/app/routers/knowledge_sources.py#L167).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_knowledge_source_access.<locals>._check`.
 

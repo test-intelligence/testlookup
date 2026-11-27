@@ -102,6 +102,14 @@ class JiraKnowledgeConnector(KnowledgeConnectorBase):
         )
 
     async def test_connection(self) -> dict:
+        if settings.AI_OFFLINE_MODE:
+            return {
+                "success": False,
+                "latency_ms": 0,
+                "error": "offline_mode",
+                "detail": "AI_OFFLINE_MODE is enabled — outbound calls are disabled",
+            }
+
         t_start = time.monotonic()
         try:
             if not (
