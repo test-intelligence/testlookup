@@ -93,20 +93,22 @@ def test_archive_uses_exact_sha_and_never_a_site_environment_file(tmp_path, monk
 
 
 def test_gate_container_uses_backend_digest_and_exact_private_query_networks(tmp_path):
-    argv = harness.gate_container("podman", PROJECT, MANIFEST["images"]["backend"]["source_ref"], tmp_path / "source", tmp_path / "proof", tmp_path / "private.env")
+    argv = harness.gate_container("podman", PROJECT, MANIFEST["images"]["backend"]["source_ref"], tmp_path / "source", tmp_path / "proof")
     assert {argv[index + 1] for index, value in enumerate(argv) if value == "--network"} == {
         PROJECT + "_testlookup_net", PROJECT + "_telemetry_storage", PROJECT + "_telemetry_metrics",
     }
     assert "--read-only" in argv and "--cap-drop=ALL" in argv
     assert MANIFEST["images"]["backend"]["source_ref"] in argv
     assert not any("TESTLOOKUP_API_KEY=" in value for value in argv)
-    assert str(tmp_path / "private.env") in argv
+    assert "--env-file" not in argv
+    assert [argv[index + 1] for index, value in enumerate(argv) if value == "--env"] == list(harness.GATE_ENV_KEYS)
+    assert all("=" not in argv[index + 1] for index, value in enumerate(argv) if value == "--env")
 
 
 def test_rootless_podman_keeps_caller_identity_for_private_bind_mounts(tmp_path, monkeypatch):
     monkeypatch.setattr(harness.os, "getuid", lambda: 1234, raising=False)
     monkeypatch.setattr(harness.os, "getgid", lambda: 1234, raising=False)
-    args = (PROJECT, MANIFEST["images"]["backend"]["source_ref"], tmp_path / "source", tmp_path / "proof", tmp_path / "private.env")
+    args = (PROJECT, MANIFEST["images"]["backend"]["source_ref"], tmp_path / "source", tmp_path / "proof")
     podman = harness.gate_container("podman", *args)
     docker = harness.gate_container("docker", *args)
     assert "--userns=keep-id" in podman
@@ -258,12 +260,27 @@ def test_preflight_checks_only_fixed_private_read_endpoints():
 
 
 @pytest.mark.parametrize("fail_stage", [None, "startup", "seed", "runtime_identity", "signal_gate", "cleanup"])
-def test_main_keeps_sanitized_result_and_runs_cleanup_after_every_started_path(tmp_path, monkeypatch, fail_stage):
+@pytest.mark.parametrize("api_key", [
+    pytest.param("synthetic-" + uuid.uuid4().hex, id="plain"),
+    pytest.param("synthetic-" + uuid.uuid4().hex + ' with=quoted"\\value', id="whitespace-quotes-backslash"),
+])
+def test_main_keeps_sanitized_result_and_runs_cleanup_after_every_started_path(tmp_path, monkeypatch, fail_stage, api_key):
     manifest_file = tmp_path / "manifest.json"
     manifest_file.write_text(json.dumps(MANIFEST), encoding="utf-8")
     out = tmp_path / "release-results/signal-gate.json"
     calls = []
     private_project = []
+    private_files = []
+    key_marker = api_key.split(" ", 1)[0]
+    actual_private_file = harness.private_file
+    monkeypatch.setenv("TESTLOOKUP_API_KEY", "unrelated-caller-key")
+    monkeypatch.setenv("UNRELATED_CALLER_ENV", "unrelated-caller-value")
+
+    def private_file(path, value, **kwargs):
+        payload = value.encode() if isinstance(value, str) else value
+        assert key_marker.encode("utf-8") not in payload, "the gate key must remain in process memory"
+        private_files.append(path.name)
+        return actual_private_file(path, value, **kwargs)
 
     def archive(_sha, target):
         (target / "e2e-runner").mkdir()
@@ -282,7 +299,7 @@ def test_main_keeps_sanitized_result_and_runs_cleanup_after_every_started_path(t
         if b"def seed" in kwargs.get("input", b""):
             if fail_stage == "seed":
                 raise harness.HarnessError("synthetic_seed_failure")
-            return SimpleNamespace(stdout=json.dumps({"project_id": str(uuid.uuid4()), "api_key": "synthetic-private-key"}).encode(), returncode=0)
+            return SimpleNamespace(stdout=json.dumps({"project_id": str(uuid.uuid4()), "api_key": api_key}).encode(), returncode=0)
         return SimpleNamespace(stdout=b"", returncode=0)
 
     def command(argv, **kwargs):
@@ -303,6 +320,12 @@ def test_main_keeps_sanitized_result_and_runs_cleanup_after_every_started_path(t
             from pathlib import Path
             Path(target).write_text(json.dumps({"schema_version": 1, "synthetic_unit_fixture": True}), encoding="utf-8")
         if "--entrypoint" in argv:
+            assert kwargs["env"]["TESTLOOKUP_API_KEY"] == api_key
+            assert kwargs["env"]["CELERY_BROKER_URL"] == "redis://synthetic-broker"
+            assert kwargs["env"]["CELERY_RESULT_BACKEND"] == "redis://synthetic-results"
+            assert "UNRELATED_CALLER_ENV" not in kwargs["env"]
+            assert set(harness.GATE_ENV_KEYS) <= kwargs["env"].keys()
+            assert "--env-file" not in argv
             if fail_stage == "signal_gate":
                 raise harness.HarnessError("synthetic_signal_failure")
             from pathlib import Path
@@ -318,14 +341,17 @@ def test_main_keeps_sanitized_result_and_runs_cleanup_after_every_started_path(t
     monkeypatch.setattr(harness, "prepare", prepare)
     monkeypatch.setattr(harness.subprocess, "run", run)
     monkeypatch.setattr(harness, "command", command)
+    monkeypatch.setattr(harness, "private_file", private_file)
     code = harness.main(["--manifest", str(manifest_file), "--out", str(out), "--engine", "podman"])
     result = json.loads(out.read_text())
     assert code == (0 if fail_stage is None else 1)
     assert result["status"] == ("passed" if fail_stage is None else "failed" if fail_stage == "cleanup" else "blocked")
     assert result["cleanup"] == ("failed" if fail_stage == "cleanup" else "completed")
     assert any("down" in argv for argv in calls)
-    assert "synthetic-private-key" not in out.read_text()
-    assert not any("synthetic-private-key" in " ".join(argv) for argv in calls)
+    assert key_marker not in out.read_text()
+    assert not any(key_marker in " ".join(argv) for argv in calls)
+    assert "gate.env" not in private_files
+    assert os.environ["TESTLOOKUP_API_KEY"] == "unrelated-caller-key"
 
 
 def test_successful_child_result_must_match_both_proof_files_and_candidate():

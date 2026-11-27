@@ -36,6 +36,12 @@ SAFE_ENGINE_ENV = (
     "DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_CONFIG", "CONTAINER_HOST", "CONTAINER_CONNECTION",
     "CONTAINERS_CONF", "CONTAINERS_STORAGE_CONF", "REGISTRY_AUTH_FILE", "SSH_AUTH_SOCK",
 )
+GATE_ENV_KEYS = (
+    "TESTLOOKUP_DISPOSABLE_SIGNAL_GATE", "TESTLOOKUP_API_URL", "TESTLOOKUP_PROMETHEUS_URL",
+    "TESTLOOKUP_LOKI_URL", "TESTLOOKUP_JAEGER_URL", "TESTLOOKUP_MCP_URL", "TESTLOOKUP_API_KEY",
+    "TESTLOOKUP_SIGNAL_PROJECT_ID", "OBSERVABILITY_INSTALLATION", "APP_ENV",
+    "CELERY_BROKER_URL", "CELERY_RESULT_BACKEND",
+)
 
 
 class HarnessError(Exception):
@@ -183,7 +189,7 @@ def restrict_rendered(config: dict, directory: Path, manifest: dict, project: st
     return config
 
 
-def gate_container(engine: str, project: str, candidate: str, source: Path, proof: Path, env_file: Path) -> list[str]:
+def gate_container(engine: str, project: str, candidate: str, source: Path, proof: Path) -> list[str]:
     result = [engine, "run", "--rm", "--name", project + "-signal-gate", "--read-only", "--cap-drop=ALL", "--security-opt=no-new-privileges", "--memory=512m", "--cpus=1", "--pids-limit=64", "--tmpfs", "/tmp:rw,noexec,nosuid,size=64m", "--label", "com.docker.compose.project=" + project]
     for network in ("testlookup_net", "telemetry_storage", "telemetry_metrics"):
         result.extend(["--network", project + "_" + network])
@@ -191,7 +197,11 @@ def gate_container(engine: str, project: str, candidate: str, source: Path, proo
         if engine == "podman":
             result.append("--userns=keep-id")
         result.extend(["--user", f"{os.getuid()}:{os.getgid()}"])
-    result.extend(["--env-file", str(env_file), "-v", f"{source}:/signal-source:ro", "-v", f"{proof}:/proof", "--entrypoint", "python", candidate,
+    # The engine copies only these named values from its process environment.
+    # Pass gate credentials without another file or credential values in argv.
+    for key in GATE_ENV_KEYS:
+        result.extend(["--env", key])
+    result.extend(["-v", f"{source}:/signal-source:ro", "-v", f"{proof}:/proof", "--entrypoint", "python", candidate,
                    "/signal-source/e2e-runner/monitored_signal_entry.py", "--manifest", "/proof/release-manifest.json", "--runtime-proof", "/proof/runtime-proof.json", "--out", "/proof/release-signal-proof.json"])
     return result
 
@@ -301,9 +311,8 @@ def main(argv=None):
                 "CELERY_BROKER_URL": config["services"]["backend"]["environment"]["CELERY_BROKER_URL"],
                 "CELERY_RESULT_BACKEND": config["services"]["backend"]["environment"]["CELERY_RESULT_BACKEND"],
             }
-            private_file(private / "gate.env", "".join(f"{key}={value}\n" for key, value in gate_env.items()))
             stage = "signal_gate"
-            command(gate_container(args.engine, project, manifest["images"]["backend"]["source_ref"], source, proof, private / "gate.env"), cwd=directory, env=env, timeout=1800)
+            command(gate_container(args.engine, project, manifest["images"]["backend"]["source_ref"], source, proof), cwd=directory, env={**env, **gate_env}, timeout=1800)
             signal = json.loads((proof / "release-signal-proof.json").read_bytes())
             validate_signal_result(signal, manifest, raw, (proof / "runtime-proof.json").read_bytes())
             result["status"] = "passed"

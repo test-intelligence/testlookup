@@ -163,14 +163,14 @@ def main(argv=None) -> int:
     parser.add_argument("--poll-seconds", type=float, default=10)
     args = parser.parse_args(argv)
     try:
-        evidence = verify_secret_scan(
+        verify_secret_scan(
             args.repository, args.source_sha,
             timeout_seconds=args.timeout_seconds, poll_seconds=args.poll_seconds,
         )
     except SecretScanVerificationError as exc:
         print(f"Secret-scan authorization refused: {exc}", file=sys.stderr)
         return 1
-    print(json.dumps(evidence, sort_keys=True))
+    print(f"Exact-SHA scan authorized {args.source_sha}")
     return 0
 
 

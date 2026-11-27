@@ -219,12 +219,12 @@ def test_incomplete_or_inconsistent_listing_never_authorizes():
             _verify(respond)
 
 
-def test_cli_refuses_failed_verification_and_prints_only_validated_evidence(monkeypatch, capsys):
-    evidence = {"source_sha": SHA, "run_id": 101}
+def test_cli_refuses_failed_verification_and_keeps_evidence_out_of_logs(monkeypatch, capsys):
+    evidence = {"source_sha": SHA, "run_id": 101, "internal": "synthetic-private-detail"}
     monkeypatch.setattr(verifier, "verify_secret_scan", lambda *args, **kwargs: evidence)
     arguments = ["--repository", REPOSITORY, "--source-sha", SHA]
     assert verifier.main(arguments) == 0
-    assert '"run_id": 101' in capsys.readouterr().out
+    assert capsys.readouterr().out == f"Exact-SHA scan authorized {SHA}\n"
 
     def refused(*args, **kwargs):
         raise verifier.SecretScanVerificationError("The latest exact-SHA secret scan did not succeed")
@@ -262,10 +262,10 @@ def test_release_authorization_rechecks_secret_scan_without_weakening_manifest_g
     manifest = next(s for s in steps if s.get("id") == "verify")
     gate = next(s for s in steps if "verify_secret_scan.py" in s.get("run", ""))
     checkout = next(s for s in steps if "actions/checkout@" in s.get("uses", ""))
-    assert checkout["with"]["ref"] == "${{ inputs.source_sha }}"
+    assert checkout["with"]["ref"] == "refs/heads/main"
     assert checkout["with"]["persist-credentials"] is False
     assert gate["env"]["SOURCE_SHA"] == "${{ inputs.source_sha }}"
-    assert steps.index(manifest) < steps.index(gate)
+    assert steps.index(manifest) < steps.index(checkout) < steps.index(gate)
     assert "verified-images-$SOURCE_SHA" in manifest["run"]
     assert "Expected exactly one successful main ci.yml run" in manifest["run"]
     assert not gate.get("if") and not gate.get("continue-on-error")

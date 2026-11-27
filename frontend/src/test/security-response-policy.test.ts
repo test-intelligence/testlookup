@@ -29,6 +29,25 @@ describe('isolated release response controls', () => {
     expect(() => verifySecurityResponse(headers, '<!-- ' + html + ' -->')).toThrow('security_control_failed:meta_csp_default-src')
   })
 
+  it.each(['script', 'style', 'template', 'noscript', 'textarea'])('ignores policy examples inside %s content', tag => {
+    expect(() => verifySecurityResponse(headers, `<${tag}>${html}</${tag}>`)).toThrow('security_control_failed:meta_csp_default-src')
+  })
+
+  it('requires the policy in the document head', () => {
+    expect(() => verifySecurityResponse(headers, `<html><head></head><body>${html}</body></html>`)).toThrow('security_control_failed:meta_csp_default-src')
+  })
+
+  it('reads parsed attributes, entities and quoted greater-than characters', () => {
+    const policy = html.replace('http-equiv="Content-Security-Policy"', 'data-note="a > b" HTTP-EQUIV=Content-Security-Policy')
+      .replace(/'/g, '&#39;')
+    expect(verifySecurityResponse(headers, policy)).toContain('meta_csp_baseline')
+  })
+
+  it('rejects duplicate meta policies including a first policy without content', () => {
+    expect(() => verifySecurityResponse(headers, html + html)).toThrow('security_control_failed:single_meta_csp')
+    expect(() => verifySecurityResponse(headers, '<meta http-equiv=Content-Security-Policy>' + html)).toThrow('security_control_failed:single_meta_csp')
+  })
+
   it('rejects a missing script policy and duplicate directives with safe control IDs', () => {
     expect(() => verifySecurityResponse(headers, html.replace("script-src 'self';", ''))).toThrow('security_control_failed:meta_csp_script-src')
     expect(() => verifySecurityResponse(headers, html.replace("script-src 'self';", "script-src 'self'; script-src 'self';"))).toThrow('security_control_failed:duplicate_csp_directive')

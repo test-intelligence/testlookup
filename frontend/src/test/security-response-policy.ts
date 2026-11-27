@@ -1,4 +1,6 @@
 /** Fixed response controls for the isolated release acceptance lane. */
+import { parse, type DefaultTreeAdapterTypes } from 'parse5'
+
 function requireControl(condition: boolean, code: string): void {
   // A failed check exposes the control ID, never response bodies or headers.
   if (!condition) throw new Error('security_control_failed:' + code)
@@ -15,6 +17,12 @@ function directives(value: string): Map<string, string[]> {
   return result
 }
 
+function elements(parent: DefaultTreeAdapterTypes.ParentNode, name: string): DefaultTreeAdapterTypes.Element[] {
+  return parent.childNodes.filter((node): node is DefaultTreeAdapterTypes.Element =>
+    'tagName' in node && node.tagName === name && node.namespaceURI === 'http://www.w3.org/1999/xhtml',
+  )
+}
+
 export function verifySecurityResponse(headers: Record<string, string>, html: string): string[] {
   const normalized = Object.fromEntries(Object.entries(headers).map(([key, value]) => [key.toLowerCase(), value]))
   requireControl(normalized['x-frame-options']?.toUpperCase() === 'DENY', 'frame_options')
@@ -26,15 +34,17 @@ export function verifySecurityResponse(headers: Record<string, string>, html: st
   requireControl(JSON.stringify(header.get('frame-ancestors')) === JSON.stringify(["'none'"]), 'csp_frame_ancestors')
   requireControl((normalized['cache-control'] ?? '').toLowerCase().includes('no-store'), 'login_document_no_store')
   requireControl(html.length <= 262_144, 'login_document_bound')
-  const document = html.replace(/<!--[\s\S]*?-->/g, '').replace(/<(script|style)\b[^>]*>[\s\S]*?<\/\1\s*>/gi, '')
-  const tags = document.match(/<meta\s+[^>]*>/gi) ?? []
+  // The release lane runs in Node. Parse inertly with HTML's actual comment,
+  // raw-text, template and attribute rules; no script executes or resource loads.
+  const root = elements(parse(html, { scriptingEnabled: true }), 'html')[0]
+  const head = root ? elements(root, 'head')[0] : undefined
+  const tags = head ? elements(head, 'meta') : []
   let meta: string | undefined
   for (const tag of tags) {
-    const attrs = new Map<string, string>()
-    for (const match of tag.matchAll(/([\w-]+)\s*=\s*(["'])(.*?)\2/g)) attrs.set(match[1].toLowerCase(), match[3])
+    const attrs = new Map(tag.attrs.map(attribute => [attribute.name, attribute.value]))
     if (attrs.get('http-equiv')?.toLowerCase() === 'content-security-policy') {
       requireControl(meta === undefined, 'single_meta_csp')
-      meta = attrs.get('content')
+      meta = attrs.get('content') ?? ''
     }
   }
   const policy = directives(meta ?? '')

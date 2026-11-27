@@ -227,7 +227,11 @@ jobs:
       # the rest of what e2e-runner/Dockerfile installs).
       - run: python -m pip install --require-hashes -r e2e-runner/requirements-lock.txt
       - name: Verify release job and upgrade decision
-        run: python -m pytest e2e-runner/test_policy.py e2e-runner/test_merge_upgrade.py e2e-runner/upgrade_test.py e2e-runner/test_release_campaign.py e2e-runner/test_fixture_probe.py e2e-runner/test_bootstrap_admin.py
+        run: >-
+          python -m pytest e2e-runner/test_policy.py e2e-runner/test_merge_upgrade.py
+          e2e-runner/upgrade_test.py e2e-runner/test_release_campaign.py
+          e2e-runner/test_fixture_probe.py e2e-runner/test_bootstrap_admin.py
+          e2e-runner/test_monitored_ephemeral.py
       - name: Build the reporter loaded by the Playwright fixture config
         working-directory: client/js
         run: |

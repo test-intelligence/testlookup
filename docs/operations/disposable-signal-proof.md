@@ -55,8 +55,9 @@ revision to make candidate checks pass.
 
 Credentials are generated for this private stack. Separate read-only metrics
 token files serve the API and Prometheus runtime UIDs, under a 0700 host directory.
-The expanded Compose configuration, API key and generated environment stay in
-temporary scratch and are excluded from public evidence. No Docker socket or
+The expanded Compose configuration and generated stack environment stay in
+temporary scratch and are excluded from public evidence. The project API key
+stays in process memory and the gate container's environment. No Docker socket or
 host logs are mounted. Image pulls may populate the operator engine's ordinary
 image cache, which cleanup deliberately preserves.
 
@@ -66,8 +67,11 @@ The existing bootstrap completes the fresh administrator's forced password
 reset inside the private backend. The seed then uses normal authenticated HTTP
 routes to create a `release-signal-*` project, resolve a synthetic QA_ENGINEER,
 grant that project's membership and mint a one-day project-bound key with only
-`project:write` and `stream:write`. The gate receives the key through a private
-environment file. It never appears in the engine command arguments or reports.
+`project:write` and `stream:write`. The gate receives the key through the engine
+process environment. Its command lists a fixed set of environment variable
+names, using the documented [Docker](https://docs.docker.com/reference/cli/docker/container/run/#env)
+and [Podman](https://docs.podman.io/en/stable/markdown/podman-run.1.html#env-e-env)
+behavior. The key is excluded from temporary files, command arguments and reports.
 
 A real Beat service runs the candidate's existing
 `app.worker.tasks.relay_run_downstream_outbox` schedule entry. The selected entry

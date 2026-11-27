@@ -50,7 +50,7 @@ True
 
 ## queue_delivery_probe
 
-[backend/app/worker/celery_app.py:65](../../backend/app/worker/celery_app.py#L65)
+[backend/app/worker/celery_app.py:66](../../backend/app/worker/celery_app.py#L66)
 
 Return transport attribution for the release queue-consumption proof.
 

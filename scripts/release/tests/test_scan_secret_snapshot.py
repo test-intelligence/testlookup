@@ -128,17 +128,23 @@ class SnapshotTests(unittest.TestCase):
         sha = self.commit()
         calls = []
         original = subprocess.run
+        executable = str(Path(sys.executable).resolve())
 
         def run(command, **options):
-            if command[0] == sys.executable:
+            if command[0] == executable:
                 calls.append((command, options))
                 self.assertEqual((options["cwd"] / "safe.txt").read_text(), "safe")
                 self.assertTrue((options["cwd"] / ".gitleaks.toml").is_file())
                 return subprocess.CompletedProcess(command, 0)
             return original(command, **options)
 
-        with patch.object(snapshot.subprocess, "run", side_effect=run):
-            self.assertEqual(snapshot.scan_snapshot(self.repo, sha, gitleaks=sys.executable), 2)
+        # setup-python's Linux executable can be a symlink. Also exercise a
+        # noncanonical spelling on platforms whose Python path is already real.
+        alias = os.path.join(str(Path(sys.executable).parent), ".", Path(sys.executable).name)
+        for scanner in (sys.executable, alias):
+            with self.subTest(scanner_alias=scanner != executable), patch.object(snapshot.subprocess, "run", side_effect=run):
+                self.assertEqual(snapshot.scan_snapshot(self.repo, sha, gitleaks=scanner), 2)
+        self.assertEqual(len(calls), 2)
         command, options = calls[0]
         self.assertEqual(command[1:5], ["dir", ".", "--config", ".gitleaks.toml"])
         self.assertIn("--redact", command)
@@ -147,9 +153,13 @@ class SnapshotTests(unittest.TestCase):
     def test_scanner_failure_and_timeout_both_fail_closed(self):
         sha = self.commit()
         original = subprocess.run
+        executable = str(Path(sys.executable).resolve())
         for fail_with_timeout in (False, True):
+            calls = []
+
             def run(command, **options):
-                if command[0] == sys.executable:
+                if command[0] == executable:
+                    calls.append(command)
                     if fail_with_timeout:
                         raise subprocess.TimeoutExpired(command, options["timeout"])
                     return subprocess.CompletedProcess(command, 7)
@@ -158,6 +168,7 @@ class SnapshotTests(unittest.TestCase):
             with self.subTest(timeout=fail_with_timeout), patch.object(snapshot.subprocess, "run", side_effect=run):
                 with self.assertRaises(snapshot.SnapshotScanError):
                     snapshot.scan_snapshot(self.repo, sha, gitleaks=sys.executable)
+            self.assertEqual(len(calls), 1)
 
     @unittest.skipUnless(SCANNER, "set GITLEAKS_TEST_BINARY to the pinned scanner")
     def test_failed_A_then_unrelated_B_still_blocks_the_unchanged_canary(self):

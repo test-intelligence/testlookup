@@ -249,6 +249,7 @@ def _routing_stack(tmp_path, *, independent_watchdog=False):
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Sink)
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
     context.load_cert_chain(cert_path, key_path)
     server.socket = context.wrap_socket(server.socket, server_side=True)
     server_thread = threading.Thread(target=server.serve_forever, daemon=True)

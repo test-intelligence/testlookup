@@ -38,7 +38,7 @@ jobs:
           set -euo pipefail
           [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "source_sha must be a lowercase full Git SHA" >&2; exit 1; }
           artifact_name="verified-images-$SOURCE_SHA"
-          # Contract: the artifact is named verified-images-${{ inputs.source_sha }}.
+          # The artifact name is bound to the validated candidate SHA.
           artifact_json="$(gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts?name=$artifact_name&per_page=100")"
           mapfile -t candidates < <(jq -r '.artifacts[] | select(.expired == false) | .workflow_run.id' <<<"$artifact_json" | sort -u)
           matches=()
@@ -49,9 +49,12 @@ jobs:
           [[ "${#matches[@]}" -eq 1 ]] || { echo "Expected exactly one successful main ci.yml run for $SOURCE_SHA" >&2; exit 1; }
           ci_run_id="${matches[0]}"
           printf 'source_sha=%s\nci_run_id=%s\nartifact_name=%s\n' "$SOURCE_SHA" "$ci_run_id" "$artifact_name" >> "$GITHUB_OUTPUT"
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check out the protected release verifier
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.source_sha }}
+          # The candidate SHA is evidence to verify. The verifier comes from
+          # the protected branch and cannot be selected by a workflow input.
+          ref: refs/heads/main
           persist-credentials: false
       - name: Require successful exact-SHA secret scan before release authorization
         env:

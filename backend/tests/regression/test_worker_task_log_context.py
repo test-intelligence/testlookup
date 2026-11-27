@@ -73,6 +73,17 @@ def test_prerun_discards_leftover_context_even_without_a_prior_postrun():
     _send(task_postrun, current, state="SUCCESS")
 
 
+@pytest.mark.parametrize("task", [None, SimpleNamespace(), SimpleNamespace(request=None)])
+def test_missing_request_context_is_cleared_without_an_eager_parent(task):
+    bind_contextvars(request_id="previous-request", project_id="previous-project")
+    worker._bind_task_log_context(task=task, task_id="current")
+    assert get_contextvars() == {
+        "celery_task_id": "current", "celery_task_name": "unknown", "celery_retry": 0,
+    }
+    worker._clear_task_log_context(task=task, state="SUCCESS")
+    assert get_contextvars() == {}
+
+
 @pytest.mark.parametrize("invalid", ["bad\nrequest", "bad request", "x" * 129, {"secret": "value"}])
 def test_only_well_formed_allowlisted_correlation_headers_are_bound(invalid):
     current = _task("current", headers={

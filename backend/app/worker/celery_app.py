@@ -828,7 +828,7 @@ def _bind_task_log_context(task_id=None, task=None, **_kwargs: object) -> None:
     from structlog.contextvars import bind_contextvars, clear_contextvars, get_contextvars
 
     request = getattr(task, "request", None)
-    if getattr(request, "is_eager", False):
+    if request is not None and getattr(request, "is_eager", False):
         # Eager tasks run inside the caller's request/context rather than a
         # worker child. Restore that caller after this execution completes.
         request._testlookup_parent_log_context = get_contextvars()
@@ -956,7 +956,7 @@ def _clear_task_log_context(task=None, state=None, **_kwargs: object) -> None:
         clear_contextvars()
         request = getattr(task, "request", None)
         parent_context = getattr(request, "_testlookup_parent_log_context", None)
-        if getattr(request, "is_eager", False) and isinstance(parent_context, dict):
+        if request is not None and getattr(request, "is_eager", False) and isinstance(parent_context, dict):
             del request._testlookup_parent_log_context
             bind_contextvars(**parent_context)
 

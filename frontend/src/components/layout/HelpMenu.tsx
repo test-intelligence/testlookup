@@ -1,9 +1,13 @@
-import { useRef, useState } from 'react'
+import { lazy, Suspense, useRef, useState } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { BookOpen, ChartLine, CircleHelp, LifeBuoy, PanelRightOpen, Rocket } from 'lucide-react'
 import { HeaderPopover } from '@/components/ui/HeaderPopover'
 import { openHelp } from '@/store/helpStore'
-import AppVersionBadge from './AppVersionBadge'
+import { ErrorBoundary } from '@/components/ErrorBoundary'
+
+// Build details are shown only inside the open menu. Keep their clipboard and
+// identity formatting code out of the bundle fetched before the first render.
+const AppVersionBadge = lazy(() => import('./AppVersionBadge'))
 
 const ITEM =
   'flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] hover:text-[var(--color-text)] transition-colors'
@@ -71,7 +75,11 @@ export default function HelpMenu() {
           {/* `empty:hidden`: the badge renders nothing until the backend has
               reported a version, and an empty footer is a dangling rule. */}
           <div data-help-build="" className="mt-1 border-t border-[var(--color-border)] px-0 pb-1 pt-1.5 empty:hidden">
-            <AppVersionBadge />
+            <ErrorBoundary fallback={() => null}>
+              <Suspense fallback={null}>
+                <AppVersionBadge />
+              </Suspense>
+            </ErrorBoundary>
           </div>
         </div>
       </HeaderPopover>
