@@ -459,9 +459,19 @@ def setup_tracing(
                 )
 
                 trace_endpoint = _otlp_trace_endpoint(otlp_endpoint)
-                exporter = OTLPSpanExporter(endpoint=trace_endpoint, timeout=10)
+                if urlsplit(trace_endpoint).hostname in {
+                    "otel-collector", "testlookup-otel.testlookup-telemetry.svc",
+                }:
+                    import requests
+
+                    session = requests.Session()
+                    session.trust_env = False
+                    session.max_redirects = 0
+                    exporter = OTLPSpanExporter(endpoint=trace_endpoint, timeout=10, session=session)
+                else:
+                    exporter = OTLPSpanExporter(endpoint=trace_endpoint, timeout=10)
                 _add_exporter(provider, exporter)
-                logger.info("OTEL tracing enabled → %s", trace_endpoint)
+                logger.info("OTEL tracing enabled")
             except ImportError:
                 if environment == "development":
                     logger.warning(

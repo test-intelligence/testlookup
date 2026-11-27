@@ -286,6 +286,8 @@ Source declarations only; no `.env` or running secrets are read. Compose/Helm/Ku
 | `OTEL_ENABLED` | `bool` | `True` |
 | `OTEL_SERVICE_NAME` | `str` | `'testlookup'` |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `Optional[str]` | `None` |
+| `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` | `str` | `''` |
+| `OTEL_LOGS_ROLE` | `Literal['api', 'worker', 'worker-children', 'beat']` | `'api'` |
 | `METRICS_ENABLED` | `bool` | `True` |
 | `METRICS_TOKEN` | `str` | `''` |
 | `METRICS_TOKEN_FILE` | `str` | `''` |

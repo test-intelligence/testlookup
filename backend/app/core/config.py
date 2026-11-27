@@ -970,6 +970,11 @@ class Settings(BaseSettings):
     # When empty: stdout in development only; elsewhere nothing is exported
     # and one warning is logged (core/tracing.py, re-audit N22)
     OTEL_EXPORTER_OTLP_ENDPOINT: Optional[str] = None
+    # Signal-specific OTLP/HTTP URL, including /v1/logs. Unset keeps stdout
+    # as the only log destination. The reference profile uses a private
+    # Compose network; remote and platform-managed endpoints use HTTPS.
+    OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: str = ""
+    OTEL_LOGS_ROLE: Literal["api", "worker", "worker-children", "beat"] = "api"
     # Prometheus metrics endpoint
     METRICS_ENABLED: bool = True
     # Optional bearer token for GET /metrics. Empty (the default) leaves the

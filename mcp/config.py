@@ -47,6 +47,8 @@ class Settings(BaseSettings):
     # exact hosts/origins; ``:*`` is supported for local ephemeral ports.
     mcp_allowed_hosts: str = "127.0.0.1:*,localhost:*,[::1]:*"
     mcp_allowed_origins: str = ""
+    otlp_logs_endpoint: str = ""
+    telemetry_environment: str = "production"
 
     model_config = SettingsConfigDict(
         env_prefix="TESTLOOKUP_",

@@ -27,6 +27,7 @@
 #   --created-at <iso>  ISO-8601 UTC timestamp recorded in MANIFEST.json.
 #                       PASS THIS from your release pipeline — see "Determinism".
 #   --with-llm          also bundle the optional Ollama + ChromaDB images
+#   --with-telemetry    also bundle the optional durable Compose monitoring stack
 #   --skip-build        don't build the app images (must already exist locally)
 #   --skip-pull         don't pull infra images (must already exist locally)
 #   --skip-k8s-render   don't render the k8s manifests (no kustomize on host)
@@ -57,7 +58,7 @@ DOCKER="${DOCKER:-docker}"
 
 # ── Flags ───────────────────────────────────────────────────────────────────
 VERSION=""; OUTPUT_DIR="$REPO_ROOT/dist"; CREATED_AT=""
-WITH_LLM=false; SKIP_BUILD=false; SKIP_PULL=false; SKIP_K8S=false
+WITH_LLM=false; WITH_TELEMETRY=false; SKIP_BUILD=false; SKIP_PULL=false; SKIP_K8S=false
 KEEP_STAGING=false; DRY_RUN=false
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -65,6 +66,7 @@ while [ $# -gt 0 ]; do
     --output)          OUTPUT_DIR="${2:?--output needs a value}"; shift 2 ;;
     --created-at)      CREATED_AT="${2:?--created-at needs a value}"; shift 2 ;;
     --with-llm)        WITH_LLM=true; shift ;;
+    --with-telemetry)  WITH_TELEMETRY=true; shift ;;
     --skip-build)      SKIP_BUILD=true; shift ;;
     --skip-pull)       SKIP_PULL=true; shift ;;
     --skip-k8s-render) SKIP_K8S=true; shift ;;
@@ -100,6 +102,7 @@ TARBALL="$OUTPUT_DIR/${BUNDLE_NAME}.tar.gz"
 
 BUNDLE_FILTER="core"
 [ "$WITH_LLM" = true ] && BUNDLE_FILTER="core,llm"
+[ "$WITH_TELEMETRY" = true ] && BUNDLE_FILTER="$BUNDLE_FILTER,telemetry"
 
 # ── sha256: hard requirement, never silently degraded ───────────────────────
 # A bundle whose checksums are "unavailable" is a bundle nobody can verify on
@@ -118,6 +121,8 @@ ALL_REFS="$(printf '%s\n%s\n' "$APP_REFS" "$INFRA_REFS" | grep -v '^$')"
 # (bundle class `external` in the manifest — today MongoDB, SSPL-1.0). They are
 # listed in the plan, README.md and MANIFEST.json so the operator mirrors them.
 EXTERNAL_REFS="$(manifest_refs any infra external)"
+TELEMETRY_EXTERNAL_REFS=""
+[ "$WITH_TELEMETRY" = true ] && TELEMETRY_EXTERNAL_REFS="$(manifest_refs telemetry infra telemetry-external)"
 
 header "Plan"
 echo "  version      : $VERSION"
@@ -125,12 +130,17 @@ echo "  created_at   : $CREATED_AT"
 echo "  git sha      : $GIT_SHA"
 echo "  container CLI: $DOCKER"
 echo "  llm images   : $WITH_LLM"
+echo "  telemetry    : $WITH_TELEMETRY"
 echo "  output       : $TARBALL"
 echo "  images       :"
 printf '                 %s\n' $ALL_REFS
 if [ -n "$EXTERNAL_REFS" ]; then
   echo "  NOT bundled  : (external prerequisites — the operator mirrors these)"
   printf '                 %s\n' $EXTERNAL_REFS
+fi
+if [ -n "$TELEMETRY_EXTERNAL_REFS" ]; then
+  echo "  operator-provided telemetry images:"
+  printf '                 %s\n' $TELEMETRY_EXTERNAL_REFS
 fi
 
 if [ "$DRY_RUN" = true ]; then
@@ -211,15 +221,21 @@ command -v syft >/dev/null 2>&1 && HAVE_SYFT=true
 : > "$STAGING/images.list"
 IMAGE_JSON=""
 for ref in $ALL_REFS; do
+  archive_ref="$(manifest_archive_ref "$ref")"
+  if [ "$archive_ref" != "$ref" ]; then
+    source_id="$("$DOCKER" image inspect --format '{{.Id}}' "$ref")" || error "Pinned image $ref is missing"
+    [ -n "$source_id" ] || error "Pinned image $ref has no local image ID"
+    "$DOCKER" tag "$source_id" "$archive_ref" || error "Could not tag the pinned image $ref for offline use"
+  fi
   slug="$(manifest_ref_slug "$ref")"
   tar_rel="images/${slug}.tar"
   log "save $ref -> $tar_rel"
-  "$DOCKER" save -o "$STAGING/$tar_rel" "$ref" || error "docker save failed for $ref"
+  "$DOCKER" save -o "$STAGING/$tar_rel" "$archive_ref" || error "docker save failed for $ref"
   [ -s "$STAGING/$tar_rel" ] || error "docker save produced an empty tar for $ref"
 
   # images.list is what import-bundle.sh reads — plain "<tar>\t<ref>" so the
   # import side needs no JSON parser.
-  printf '%s\t%s\n' "$tar_rel" "$ref" >> "$STAGING/images.list"
+  printf '%s\t%s\n' "$tar_rel" "$archive_ref" >> "$STAGING/images.list"
 
   size="$(wc -c < "$STAGING/$tar_rel" | tr -d '[:space:]')"
   sha="$(SHA_CMD "$STAGING/$tar_rel")"
@@ -238,7 +254,7 @@ for ref in $ALL_REFS; do
   #   2. otherwise -> an explicit "unavailable" record with the reason.
   # We never imply an SBOM exists when it does not.
   if [ "$HAVE_SYFT" = true ]; then
-    if syft "${DOCKER}:${ref}" -o spdx-json > "$STAGING/sbom/${slug}.spdx.json" 2>/dev/null \
+    if syft "${DOCKER}:${archive_ref}" -o spdx-json > "$STAGING/sbom/${slug}.spdx.json" 2>/dev/null \
        || syft "$ref" -o spdx-json > "$STAGING/sbom/${slug}.spdx.json" 2>/dev/null; then
       sbom_json="{\"status\":\"present\",\"tool\":\"syft\",\"format\":\"spdx-json\",\"file\":\"sbom/${slug}.spdx.json\"}"
     else
@@ -250,7 +266,7 @@ for ref in $ALL_REFS; do
     sbom_json="{\"status\":\"unavailable\",\"reason\":\"syft was not installed on the build host; docker save does not carry BuildKit SBOM attestations (they live in the registry manifest, see .github/workflows/release.yml)\"}"
   fi
 
-  entry="{\"ref\":\"$ref\",\"role\":\"$role\",\"file\":\"$tar_rel\",\"bytes\":$size,\"sha256\":\"$sha\",\"image_id\":\"$image_id\",\"repo_digest\":\"$repo_digest\",\"sbom\":$sbom_json}"
+  entry="{\"ref\":\"$ref\",\"archive_ref\":\"$archive_ref\",\"role\":\"$role\",\"file\":\"$tar_rel\",\"bytes\":$size,\"sha256\":\"$sha\",\"image_id\":\"$image_id\",\"repo_digest\":\"$repo_digest\",\"sbom\":$sbom_json}"
   if [ -z "$IMAGE_JSON" ]; then IMAGE_JSON="    $entry"; else IMAGE_JSON="$IMAGE_JSON,
     $entry"; fi
 done
@@ -263,6 +279,25 @@ cp "$REPO_ROOT/.env.example"               "$STAGING/compose/" 2>/dev/null || wa
 cp "$REPO_ROOT/scripts/gen-dev-env.sh"     "$STAGING/compose/scripts/" 2>/dev/null || true
 cp "$REPO_ROOT/scripts/init-db.sql"        "$STAGING/compose/scripts/"
 log "compose/: release + airgap override + .env.example + init-db.sql"
+if [ "$WITH_TELEMETRY" = true ]; then
+  mkdir -p "$STAGING/compose/infra" "$STAGING/compose/scripts/monitoring"
+  # Only the committed configuration is eligible for an offline package.
+  # Operator receiver credentials, local overrides and data directories may
+  # live alongside it and must never be copied from the working tree.
+  git -C "$REPO_ROOT" archive "$GIT_SHA" infra/monitoring | tar -xf - -C "$STAGING/compose"
+  cp "$REPO_ROOT/scripts/monitoring/configure_alerting.py" "$STAGING/compose/scripts/monitoring/"
+  cp "$REPO_ROOT/docker-compose.monitoring-auth.yml" "$STAGING/compose/"
+  for overlay in monitoring telemetry alerting; do
+    file="docker-compose.$overlay.yml"
+    sed -E 's|^([[:space:]]*image:[[:space:]]+)([^[:space:]@]+)@sha256:[a-f0-9]{64}$|\1localhost/testlookup-telemetry/\2|' \
+      "$REPO_ROOT/$file" > "$STAGING/compose/$file"
+  done
+  : > "$STAGING/compose/telemetry-prerequisites.list"
+  for ref in $TELEMETRY_EXTERNAL_REFS; do
+    printf '%s\t%s\n' "$ref" "$(manifest_archive_ref "$ref")" >> "$STAGING/compose/telemetry-prerequisites.list"
+  done
+  log "compose/: attached private telemetry overlays, image aliases, and monitoring configuration"
+fi
 
 # ── Step 5 — Kubernetes manifests ───────────────────────────────────────────
 # The openshift-artifactory overlay is the air-gap-ready one: its images: block
@@ -324,6 +359,11 @@ for ref in $EXTERNAL_REFS; do EXTERNAL_MD="${EXTERNAL_MD}* \`$ref\`
 "; done
 [ -n "$EXTERNAL_MD" ] || EXTERNAL_MD="* (none)
 "
+TELEMETRY_EXTERNAL_JSON=""
+for ref in $TELEMETRY_EXTERNAL_REFS; do
+  [ -z "$TELEMETRY_EXTERNAL_JSON" ] || TELEMETRY_EXTERNAL_JSON="$TELEMETRY_EXTERNAL_JSON, "
+  TELEMETRY_EXTERNAL_JSON="$TELEMETRY_EXTERNAL_JSON\"$ref\""
+done
 
 SBOM_MODE="unavailable"; [ "$HAVE_SYFT" = true ] && SBOM_MODE="syft"
 cat > "$STAGING/MANIFEST.json" <<JSON
@@ -334,6 +374,7 @@ cat > "$STAGING/MANIFEST.json" <<JSON
   "created_at": "$CREATED_AT",
   "git_sha": "$GIT_SHA",
   "includes_llm_images": $WITH_LLM,
+  "includes_telemetry_images": $WITH_TELEMETRY,
   "app_image_tag": "$VERSION",
   "registry_layout": {
     "infra": "<registry>/<image>:<tag>",
@@ -342,6 +383,7 @@ cat > "$STAGING/MANIFEST.json" <<JSON
   "sbom_mode": "$SBOM_MODE",
   "k8s_manifests": $K8S_STATUS,
   "external_prerequisites": [$EXTERNAL_JSON],
+  "telemetry_external_prerequisites": [$TELEMETRY_EXTERNAL_JSON],
   "images": [
 $IMAGE_JSON
   ]

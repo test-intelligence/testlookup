@@ -190,6 +190,8 @@ Provision a Secret named `testlookup-metrics-auth` with key `token` in the appli
 
 In the selected Prometheus, confirm discovery for each API and worker pod and verify `up{job="testlookup-backend"} == 1`. A direct API scrape from the private network should return 401 with missing or mismatched credentials and return samples with the mounted token. Worker port 9100 relies on the monitoring namespace NetworkPolicy. On platforms with an external scraper, supply a site-specific policy and TLS before crossing a trust boundary.
 
+The [durable telemetry adapters](durable-telemetry.md#kubernetes-and-managed-gateways) add client-authenticated OTLP export for API, workers and MCP to a site-operated gateway.
+
 Rotate the Secret, wait for the Operator to reconcile its scrape configuration, and roll the backend deployment so each API process loads the new token. A rolling transition can produce temporary 401s from pods using different token generations. Verify every API target returns samples after the rollout and the old credential receives 401. Keep token values out of rendered manifests, commands and verification records.
 
 ## Backups

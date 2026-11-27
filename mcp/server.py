@@ -240,12 +240,22 @@ templates.register(mcp)
 
 def sse_app():
     """The SSE ASGI app WITH this server's transport security (the tests and any embedding use this)."""
-    return mcp.sse_app(transport_security=TRANSPORT_SECURITY, host=SSE_HOST)
+    app = mcp.sse_app(transport_security=TRANSPORT_SECURITY, host=SSE_HOST)
+    if settings.otlp_logs_endpoint:
+        from operational_logs import add_operational_logs
+
+        app = add_operational_logs(app, settings.otlp_logs_endpoint, settings.telemetry_environment)
+    return app
 
 
 def run_sse(port: int) -> None:
     """Serve SSE on ``SSE_HOST:port`` WITH this server's transport security (the image's CMD)."""
-    mcp.run(transport="sse", host=SSE_HOST, port=port, transport_security=TRANSPORT_SECURITY)
+    if settings.otlp_logs_endpoint:
+        import uvicorn
+
+        uvicorn.run(sse_app(), host=SSE_HOST, port=port, access_log=False)
+    else:
+        mcp.run(transport="sse", host=SSE_HOST, port=port, transport_security=TRANSPORT_SECURITY)
 
 
 if __name__ == "__main__":

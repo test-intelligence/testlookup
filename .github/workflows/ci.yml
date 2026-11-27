@@ -560,6 +560,9 @@ jobs:
             python scripts/monitoring/configure_alerting.py \
               --output "$scratch/config/alerting.yml" --installation fixture --environment ci --owner platform
           "$tool" check config "$scratch/config/alerting.yml"
+          cp "$monitoring/otel-collector/scrape.yml" "$scratch/config/telemetry-scrape-collector.yml"
+          cp "$monitoring/otel-collector/telemetry-rules.yml" "$scratch/config/rules/durable-telemetry.yml"
+          "$tool" check config "$scratch/config/alerting.yml"
           # Test firing, resolved and Watchdog delivery to an isolated TLS sink.
           mapfile -t alertmanager_pin < <(python -c '
           import json
@@ -576,8 +579,33 @@ jobs:
           export PROMETHEUS_TEST_BINARY="$scratch/$prometheus_dir/prometheus"
           export ALERTMANAGER_TEST_BINARY="$scratch/$alertmanager_dir/alertmanager"
           export AMTOOL_TEST_BINARY="$scratch/$alertmanager_dir/amtool"
+          # Native processes use loopback and disposable storage in the tests.
+          fetch_monitoring_archive() {
+            local lock="$1" output="$2"
+            local -a pin
+            mapfile -t pin < <(python -c '
+          import json
+          from pathlib import Path
+          import sys
+          pin = json.loads(Path(sys.argv[1]).read_text())["release_binaries"]["linux-amd64"]
+          print(pin["url"], pin["sha256"], sep="\n")
+          ' "$lock")
+            curl --fail --location --silent --show-error --retry 3 --max-time 180 \
+              --output "$output" "${pin[0]}"
+            printf '%s  %s\n' "${pin[1]}" "$output" | sha256sum --check --strict
+          }
+          fetch_monitoring_archive "$monitoring/otel-collector/image-lock.json" "$scratch/otelcol.tar.gz"
+          fetch_monitoring_archive "$monitoring/loki/image-lock.json" "$scratch/loki.zip"
+          fetch_monitoring_archive "$monitoring/jaeger-image-lock.json" "$scratch/jaeger.tar.gz"
+          tar -xzf "$scratch/otelcol.tar.gz" -C "$scratch" otelcol-contrib
+          unzip -q "$scratch/loki.zip" loki-linux-amd64 -d "$scratch"
+          tar -xzf "$scratch/jaeger.tar.gz" -C "$scratch" jaeger-2.23.0-linux-amd64/jaeger
+          export OTELCOL_TEST_BINARY="$scratch/otelcol-contrib"
+          export LOKI_TEST_BINARY="$scratch/loki-linux-amd64"
+          export JAEGER_TEST_BINARY="$scratch/jaeger-2.23.0-linux-amd64/jaeger"
           export PYTEST_DISABLE_PLUGIN_AUTOLOAD=1
           python -m pytest scripts/monitoring/tests -q
+          python -m pytest scripts/test_jaeger_persistence.py -q
 
       # Blocking, as a ratchet (re-audit M24). mypy reports 391 pre-existing
       # errors in 117 files; backend/mypy-baseline.txt holds the per-file

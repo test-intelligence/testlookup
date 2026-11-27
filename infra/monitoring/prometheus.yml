@@ -12,6 +12,7 @@ rule_files:
 
 scrape_config_files:
   - backend-scrape.yml
+  - telemetry-scrape-*.yml
 
 scrape_configs:
   # ── Celery worker (via prometheus-client multiprocess) ───────────────────────

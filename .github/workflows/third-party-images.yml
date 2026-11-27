@@ -23,6 +23,7 @@ on:
       - deploy/images.manifest.txt
       - docker-compose.monitoring.yml
       - docker-compose.alerting.yml
+      - docker-compose.telemetry.yml
       - .github/workflows/third-party-images.yml
   # A pull request that changes an image or this workflow sees the report
   # before it merges.
@@ -31,6 +32,7 @@ on:
       - deploy/images.manifest.txt
       - docker-compose.monitoring.yml
       - docker-compose.alerting.yml
+      - docker-compose.telemetry.yml
       - .github/workflows/third-party-images.yml
   workflow_dispatch:
 
@@ -79,7 +81,7 @@ jobs:
           set -euo pipefail
           {
             awk '!/^[[:space:]]*#/ && NF >= 2 && $2 == "infra" { print $1 }' deploy/images.manifest.txt
-            sed -n 's/^[[:space:]]*image:[[:space:]]*//p' docker-compose.monitoring.yml docker-compose.alerting.yml
+            sed -n 's/^[[:space:]]*image:[[:space:]]*//p' docker-compose.monitoring.yml docker-compose.alerting.yml docker-compose.telemetry.yml
           } | sort -u > third-party-images.txt
           test "$(wc -l < third-party-images.txt)" -ge 8
           cat third-party-images.txt

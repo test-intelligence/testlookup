@@ -106,6 +106,7 @@
     "pyyaml": "MIT",
     "redis": "MIT",
     "reportlab": "BSD-3-Clause",
+    "requests": "Apache-2.0",
     "rich": "MIT",
     "ruff": "MIT",
     "scikit-learn": "BSD-3-Clause",

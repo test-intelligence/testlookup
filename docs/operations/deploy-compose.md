@@ -11,6 +11,7 @@ Docker Compose runs the whole stack on one host. There are four Compose files yo
 | `docker-compose.release.yml` | Pulls prebuilt images from `ghcr.io/test-intelligence/testlookup` | A host that runs published images, installed with `install.sh` or by hand |
 | `docker-compose.airgap.yml` (override) | Re-points every image at your registry | Air-gapped hosts, layered on the release file |
 | `docker-compose.monitoring.yml` (override) | Pulls Prometheus, Grafana, Jaeger | Metrics, dashboards and traces next to the stack |
+| `docker-compose.telemetry.yml` (override) | Adds Collector, persistent Jaeger and Loki | [Durable logs and traces](durable-telemetry.md) |
 | `docker-compose.gcp-vm.yml` (override) | Production build targets | A cloud VM; see [single VM](deploy-single-vm.md) |
 
 ## Prerequisites

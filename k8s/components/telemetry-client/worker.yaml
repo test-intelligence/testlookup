@@ -1,0 +1,29 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: testlookup-worker
+spec:
+  template:
+    spec:
+      containers:
+        - name: worker
+          env:
+            - name: OTEL_LOGS_ROLE
+              value: worker
+            - name: OTEL_EXPORTER_OTLP_LOGS_ENDPOINT
+              value: https://testlookup-otel.testlookup-telemetry.svc:4318/v1/logs
+            - name: OTEL_EXPORTER_OTLP_CERTIFICATE
+              value: /var/run/testlookup-otel/ca.crt
+            - name: OTEL_EXPORTER_OTLP_CLIENT_CERTIFICATE
+              value: /var/run/testlookup-otel/tls.crt
+            - name: OTEL_EXPORTER_OTLP_CLIENT_KEY
+              value: /var/run/testlookup-otel/tls.key
+          volumeMounts:
+            - name: telemetry-client-identity
+              mountPath: /var/run/testlookup-otel
+              readOnly: true
+      volumes:
+        - name: telemetry-client-identity
+          secret:
+            secretName: testlookup-otel-worker-client
+            optional: true

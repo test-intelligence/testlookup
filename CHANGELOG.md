@@ -9,6 +9,7 @@ contain breaking changes; [UPGRADING.md](UPGRADING.md) lists them).
 
 ### Added
 
+- The durable telemetry profile adds queued OpenTelemetry export, persistent Loki logs and Jaeger traces, Grafana correlation, and queue loss alerts. Kubernetes client overlays support a site-operated mTLS gateway, and the offline Compose bundle can include the durable stack.
 - The optional Compose alerting overlay adds a private Alertmanager with authenticated HTTPS incident and watchdog receivers. Compose and Kubernetes monitoring inventories detect missing scrape roles and required metric series.
 - Operational metrics report SQLAlchemy pool pressure and acquisition timeouts for API and worker processes, plus Redis and Valkey memory for the application and broker. Optional Compose and Kubernetes profiles support file-backed authentication for API scrapes.
 - Operational metrics expose collector freshness and durable downstream-outbox failure/overdue state, including alerts that avoid counting the same SQL rows across API replicas.

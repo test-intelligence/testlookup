@@ -5,3 +5,8 @@ httpx>=0.28.1
 PyJWT>=2.14.0,<3.0.0
 pydantic-settings>=2.16.3
 python-dotenv>=1.2.3
+# Keep the optional SSE log exporter on the backend's OTLP HTTP release.
+opentelemetry-sdk==1.45.2
+opentelemetry-exporter-otlp-proto-http==1.45.2
+requests==2.34.2
+uvicorn==0.54.0

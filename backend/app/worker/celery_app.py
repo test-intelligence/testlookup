@@ -920,16 +920,25 @@ def _record_task_outcome(task_id=None, task=None, state=None, **_kwargs: object)
 
 
 @task_postrun.connect
-def _clear_task_log_context(task=None, **_kwargs: object) -> None:
+def _clear_task_log_context(task=None, state=None, **_kwargs: object) -> None:
     """Postrun runs for success, failure and retry; none may leak into the next task."""
     from structlog.contextvars import bind_contextvars, clear_contextvars
 
-    clear_contextvars()
-    request = getattr(task, "request", None)
-    parent_context = getattr(request, "_testlookup_parent_log_context", None)
-    if getattr(request, "is_eager", False) and isinstance(parent_context, dict):
-        del request._testlookup_parent_log_context
-        bind_contextvars(**parent_context)
+    try:
+        if settings.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT:
+            import structlog
+
+            outcome = {"SUCCESS": "success", "FAILURE": "failure", "RETRY": "retry"}.get(state, "other")
+            task_logger = structlog.get_logger(__name__)
+            log = task_logger.warning if outcome in {"failure", "retry"} else task_logger.info
+            log("celery_task_execution", state=outcome)
+    finally:
+        clear_contextvars()
+        request = getattr(task, "request", None)
+        parent_context = getattr(request, "_testlookup_parent_log_context", None)
+        if getattr(request, "is_eager", False) and isinstance(parent_context, dict):
+            del request._testlookup_parent_log_context
+            bind_contextvars(**parent_context)
 
 
 #: Readiness sentinel. Written once the worker has booted and connected to the

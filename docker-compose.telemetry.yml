@@ -1,0 +1,148 @@
+# Opt in after docker-compose.monitoring.yml. See docs/operations/durable-telemetry.md.
+x-telemetry-hardening: &telemetry-hardening
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  restart: unless-stopped
+  depends_on:
+    telemetry-volume-init:
+      condition: service_completed_successfully
+
+x-log-rotation: &log-rotation
+  driver: local
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+x-worker-telemetry: &worker-telemetry
+  OTEL_SERVICE_NAME: testlookup
+  OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: http://otel-collector:4318/v1/logs
+
+services:
+  telemetry-volume-init:
+    image: busybox:1.36@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662
+    user: "0:0"
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [CHOWN]
+    security_opt: [no-new-privileges:true]
+    command:
+      - sh
+      - -ec
+      - |
+        mkdir -p /otel/storage /otel/compaction
+        chown 10001:10001 /otel /otel/storage /otel/compaction /jaeger /loki
+    volumes:
+      - otel-spool:/otel
+      - jaeger-data:/jaeger
+      - loki-data:/loki
+
+  otel-collector:
+    <<: *telemetry-hardening
+    image: otel/opentelemetry-collector-contrib:0.166.0@sha256:3e18fe04181de50bdd72e23ad4a4d6214b54351e63d496f1c58127cc4541ad7f
+    user: "10001:10001"
+    command: [--config=/etc/otelcol-contrib/config.yml]
+    environment:
+      GOMEMLIMIT: 448MiB
+    mem_limit: 512m
+    cpus: 1.0
+    volumes:
+      - ./infra/monitoring/otel-collector/config.yml:/etc/otelcol-contrib/config.yml:ro
+      - otel-spool:/var/lib/otelcol
+    networks: [telemetry_ingress, telemetry_storage, telemetry_metrics]
+    logging: *log-rotation
+
+  jaeger:
+    <<: *telemetry-hardening
+    image: cr.jaegertracing.io/jaegertracing/jaeger:2.23.0@sha256:3823829974ccfc2485d2e48b165579091f32295022ae80ca49704e2f4834116e
+    user: "10001:10001"
+    command: [--config=/etc/jaeger/config.yaml]
+    environment: !override
+      GOMEMLIMIT: 384MiB
+    mem_limit: 512m
+    cpus: 1.0
+    ports: !reset []
+    networks: !override [telemetry_storage]
+    healthcheck: !override
+      disable: true
+    volumes:
+      - ./infra/monitoring/jaeger.yml:/etc/jaeger/config.yaml:ro
+      - jaeger-data:/var/lib/jaeger
+    logging: *log-rotation
+
+  loki:
+    <<: *telemetry-hardening
+    image: grafana/loki:3.7.10@sha256:b43c257ccfc925d4a50b8717cac61a3b51df8c48d01847936057e5c4075a24a7
+    user: "10001:10001"
+    command: [-config.file=/etc/loki/testlookup.yml]
+    environment:
+      GOMEMLIMIT: 768MiB
+    mem_limit: 1g
+    cpus: 1.0
+    volumes:
+      - ./infra/monitoring/loki/loki.yml:/etc/loki/testlookup.yml:ro
+      - loki-data:/loki
+    networks: [telemetry_storage]
+    logging: *log-rotation
+
+  prometheus:
+    networks: [telemetry_metrics]
+    volumes:
+      - ./infra/monitoring/otel-collector/scrape.yml:/etc/prometheus/telemetry-scrape-collector.yml:ro
+      - ./infra/monitoring/otel-collector/telemetry-rules.yml:/etc/prometheus/rules/durable-telemetry.yml:ro
+
+  grafana:
+    networks: [telemetry_storage]
+    environment:
+      GF_FEATURE_TOGGLES_ENABLE: jaegerEnableGrpcEndpoint
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+    volumes:
+      - ./infra/monitoring/grafana/telemetry-datasources.yml:/etc/grafana/provisioning/datasources/prometheus.yml:ro
+
+  backend:
+    environment:
+      <<: *worker-telemetry
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_LOGS_ROLE: api
+    networks: [telemetry_ingress]
+    logging: *log-rotation
+
+  worker:
+    environment:
+      <<: *worker-telemetry
+      OTEL_LOGS_ROLE: worker
+    networks: [telemetry_ingress]
+    logging: *log-rotation
+
+  worker-children:
+    environment:
+      <<: *worker-telemetry
+      OTEL_LOGS_ROLE: worker-children
+    networks: [telemetry_ingress]
+    logging: *log-rotation
+
+  beat:
+    logging: *log-rotation
+
+  mcp:
+    environment:
+      TESTLOOKUP_OTLP_LOGS_ENDPOINT: http://otel-collector:4318/v1/logs
+      TESTLOOKUP_TELEMETRY_ENVIRONMENT: ${APP_ENV:-production}
+    networks: [telemetry_ingress]
+    logging: *log-rotation
+
+networks:
+  telemetry_ingress:
+    internal: true
+  telemetry_storage:
+    internal: true
+  telemetry_metrics:
+    internal: true
+
+volumes:
+  otel-spool:
+  jaeger-data:
+  loki-data:

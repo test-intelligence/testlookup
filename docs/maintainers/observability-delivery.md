@@ -156,3 +156,18 @@ This iteration builds on `a84edf88`. It extends the existing profile monitoring 
 Prometheus 3.16 and Alertmanager 0.35.1 delivered firing and resolved payloads to a disposable TLS receiver. The test exercised grouped replicas, deduplication, silence, inhibition, watchdog cadence and provider retry. The rule fixtures cover missed schedules, receiver availability, disappearing roles and required series. Both migrations were rendered forward and backward for PostgreSQL. The disposable PostgreSQL concurrency case is part of the existing integration job.
 
 The focused backend suite passed 406 tests and skipped the case that requires a disposable PostgreSQL instance. All 40 Prometheus semantic scenarios passed. Compose and Operator manifests were rendered, and no production receivers were contacted.
+
+## Iteration 4: durable log and trace collection
+
+This iteration builds on `be88915c`. The app keeps its normal stdout logs and Prometheus scrapes. An opt-in profile exports selected operational records and API traces.
+
+| Story | Change | Remaining acceptance |
+|---|---|---|
+| OBS-E04-S01 | The [profile and ownership contract](../operations/durable-telemetry.md) defines installation boundaries, retention, capacity and fault drills across Compose and managed deployments. | Assign site owners and validate retention, storage sizing, residency and receiver routing with the deployment team. |
+| OBS-E04-S02 | Collector ingress accepts the TestLookup service, rebuilds bounded log records and stores two finite, persistent exporter queues. Prometheus observes queue pressure and refusals. | Measure the actual full-stack failure window, pre-collector loss and capacity under site traffic. |
+| OBS-E04-S03 | Persistent Loki indexes three resource labels. API, Celery and MCP use a structured projection with hashed request or task IDs. Grafana queries Loki and can open a known Jaeger trace. | Run an authorized access drill and measure retention expiry, disk use and incident readback in the deployed profile. |
+| OBS-E04-S04 | Jaeger 2.23 uses synchronous Badger storage with a 72-hour TTL. Grafana can read traces by ID through the v3 API, and native Jaeger handles service and operation search. | Validate filesystem sizing, private UI access and the chosen HA storage path at each site. |
+| OBS-E04-S05 | Kubernetes, K3s and OpenShift render optional mTLS client adapters for a site-operated gateway. | Verify workload admission, certificate rotation, monitoring selection and persistent readback in disposable platform-matched clusters. |
+| OBS-E04-S06 | The image manifest and third-party scan track every durable reference image. The optional offline bundle records exact pins and aliases for all components and lists Grafana and Loki as operator-supplied prerequisites. | Exercise image import and the full stack with outbound internet blocked. |
+
+Disposable native runs covered queue overflow, retry exhaustion and recovery after collector restart, plus forced Loki and Jaeger restarts. Grafana returned matching trace and log IDs using the pinned datasource versions. The Kubernetes adapters were rendered locally. The Compose stack's runtime networking, actual site gateways and disconnected operation still need deployment-level evidence.

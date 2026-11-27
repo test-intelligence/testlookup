@@ -146,12 +146,12 @@ Apache-2.0, MIT or MPL-2.0 and is used under Apache-2.0.
 | `numpy` | BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0 | backend |
 | `openpyxl` | MIT | backend |
 | `opentelemetry-api` | Apache-2.0 | backend |
-| `opentelemetry-exporter-otlp-proto-http` | Apache-2.0 | backend |
+| `opentelemetry-exporter-otlp-proto-http` | Apache-2.0 | backend, mcp |
 | `opentelemetry-instrumentation-fastapi` | Apache-2.0 | backend |
 | `opentelemetry-instrumentation-httpx` | Apache-2.0 | backend |
 | `opentelemetry-instrumentation-redis` | Apache-2.0 | backend |
 | `opentelemetry-instrumentation-sqlalchemy` | Apache-2.0 | backend |
-| `opentelemetry-sdk` | Apache-2.0 | backend |
+| `opentelemetry-sdk` | Apache-2.0 | backend, mcp |
 | `passlib` | BSD-3-Clause | backend |
 | `platformdirs` | MIT | cli |
 | `prometheus-client` | Apache-2.0 AND BSD-2-Clause | backend |
@@ -174,6 +174,7 @@ Apache-2.0, MIT or MPL-2.0 and is used under Apache-2.0.
 | `pyyaml` | MIT | backend, cli, client |
 | `redis` | MIT | backend |
 | `reportlab` | BSD-3-Clause | backend |
+| `requests` | Apache-2.0 | backend, mcp |
 | `rich` | MIT | cli |
 | `ruff` | MIT | backend |
 | `scikit-learn` | BSD-3-Clause | backend |
@@ -188,7 +189,7 @@ Apache-2.0, MIT or MPL-2.0 and is used under Apache-2.0.
 | `typer` | MIT | cli |
 | `types-python-dateutil` | Apache-2.0 | backend |
 | `tzdata` | Apache-2.0 | backend |
-| `uvicorn` | BSD-3-Clause | backend |
+| `uvicorn` | BSD-3-Clause | backend, mcp |
 
 
 ## Container base images
@@ -234,6 +235,13 @@ They are listed for your own license review.
 | `ollama/ollama:0.40.10` | MIT; the image also contains NVIDIA CUDA runtime libraries under the NVIDIA CUDA EULA | https://github.com/ollama/ollama |
 | `chromadb/chroma:1.5.9` | Apache-2.0 | https://github.com/chroma-core/chroma |
 | `mher/flower:2.0` | BSD-3-Clause | https://github.com/mher/flower |
+| `busybox:1.36@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662` | see upstream |  |
+| `prom/prometheus:v3.16.0@sha256:e04987641b57704f408e31f6373ba4138ecf27cb4a165d24aabb6c38fddd0f06` | see upstream |  |
+| `grafana/grafana:13.3.1@sha256:0615ec4fbd4072004b7d86b46ded63013a74b7d6eb1119273dd89e8fa25c13cf` | see upstream |  |
+| `otel/opentelemetry-collector-contrib:0.166.0@sha256:3e18fe04181de50bdd72e23ad4a4d6214b54351e63d496f1c58127cc4541ad7f` | see upstream |  |
+| `cr.jaegertracing.io/jaegertracing/jaeger:2.23.0@sha256:3823829974ccfc2485d2e48b165579091f32295022ae80ca49704e2f4834116e` | see upstream |  |
+| `grafana/loki:3.7.10@sha256:b43c257ccfc925d4a50b8717cac61a3b51df8c48d01847936057e5c4075a24a7` | see upstream |  |
+| `docker.io/prom/alertmanager:v0.35.1@sha256:4e3d029e69c7f61dd53a2b31a3dc427a2b81736cffca185c0854075e07969e36` | see upstream |  |
 
 **MongoDB** is licensed under the Server Side Public License (SSPL-1.0), which
 is not an OSI-approved license. TestLookup only connects to it with the
