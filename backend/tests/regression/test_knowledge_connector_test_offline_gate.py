@@ -70,7 +70,7 @@ class _OfflineSettings:
     AI_OFFLINE_MODE = True
 
     def __getattr__(self, name):
-        raise AssertionError(f"must not read credential setting {name}")
+        raise AttributeError(f"must not read credential setting {name}")
 
 
 @pytest.mark.asyncio
