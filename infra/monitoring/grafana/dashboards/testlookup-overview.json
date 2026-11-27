@@ -873,7 +873,7 @@
     },
     {
       "datasource": "Prometheus",
-      "description": "Weekly auto-retro digests by status over 7 days, one per weekly-retro subscription the dispatcher reaches: skipped (the weekly_retro_digest flag is off for its project), success (the retro document was built). The pass rides dispatch_scheduled_digests on Mondays 07:05 UTC. Emitted by backend/app/services/retro_digest_service.py (generate_weekly_retro).",
+      "description": "Weekly retro content generation over 7 days: skipped means the project feature flag is off; success means content was built, not that a provider accepted delivery. The dispatcher processes persisted due dates on arbitrary weekdays in its daily 07:00 UTC pass, with an additional Monday pass. Delivery due/outcome gauges and alerts separately observe provider acceptance and unresolved work.",
       "fieldConfig": {
         "defaults": { "unit": "short", "color": { "mode": "palette-classic" } },
         "overrides": []
@@ -888,7 +888,7 @@
           "refId": "A"
         }
       ],
-      "title": "Weekly retro digest dispatch (7d)",
+      "title": "Weekly retro content generation (7d)",
       "type": "timeseries"
     },
     {

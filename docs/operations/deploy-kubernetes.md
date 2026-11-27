@@ -182,6 +182,8 @@ kubectl apply -k k8s/monitoring
 
 The backup alerts read kube-state-metrics, and the disk and OOM alerts read node-exporter. If your Prometheus selects rules and monitors by label (kube-prometheus-stack uses `release: <name>`), add that label in your site monitoring overlay. Confirm that the Prometheus resource selects rules and PodMonitors in the application namespace.
 
+Include the telemetry inventory Rule along with the shared alert Rule. The [telemetry contract](telemetry-contract.md) explains the role labels and namespace scope. Use the cluster's Alertmanager and check [alert delivery and watchdog routing](alert-routing.md) against your site configuration.
+
 ### Authenticate the API scrape
 
 Provision a Secret named `testlookup-metrics-auth` with key `token` in the application namespace through your secret manager. Include the `k8s/components/metrics-auth` component in your application overlay. It mounts the token read-only in the backend container. Select `k8s/monitoring-authenticated` as the monitoring resource in your site overlay. It uses `PodMonitor` bearer authorization with the same Secret key. The Operator needs permission to read that Secret in the PodMonitor namespace. [Prometheus Operator API](https://prometheus-operator.dev/docs/api-reference/api/).

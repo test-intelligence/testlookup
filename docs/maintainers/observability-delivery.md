@@ -18,7 +18,7 @@ Status meanings: **Open** is planned; **In progress** has partial implementation
 |---|---|---|
 | OBS-E01 | Safe correlated application telemetry | 1: privacy, errors, worker log context; 3: worker tracing and clients |
 | OBS-E02 | Reliable metric collection | 1: bounded reads, queue coverage and SQL outcomes; 2: producers, exporters and access |
-| OBS-E03 | Alerting and scheduled detection | 1: low-volume webhook and new outcome rules; 2: schedules, discovery and routing |
+| OBS-E03 | Alerting and scheduled detection | 1: low-volume webhook and new outcome rules; 3: schedules, discovery and routing |
 | OBS-E04 | Durable log and trace platform | 2: profile contract; 3: collection, storage, offline and BYO profiles |
 | OBS-E05 | Durable operational and audit evidence | 2: event outbox/replay; 3: audit archive and retention |
 | OBS-E06 | Objectives and capacity | 2: SLIs and series budget; 4: measured objectives, burn rates and capacity |
@@ -40,12 +40,12 @@ Status meanings: **Open** is planned; **In progress** has partial implementation
 | OBS-E02-S04 | Wire dependency and host exporters by deployment profile | In progress |
 | OBS-E02-S05 | Make authenticated scrapes work in reference profiles | Verification |
 | OBS-E02-S06 | Detect durable downstream failure independently of Celery success | In progress |
-| OBS-E03-S01 | Make weekly digest alerts reflect actual due work and delivery | Open |
+| OBS-E03-S01 | Make weekly digest alerts reflect actual due work and delivery | Verification |
 | OBS-E03-S02 | Detect low-volume terminal webhook failures correctly | Verification |
-| OBS-E03-S03 | Deliver routed firing and resolved notifications | Open |
-| OBS-E03-S04 | Observe durable expected-run and last-success state | Open |
-| OBS-E03-S05 | Detect missing targets and required telemetry | Open |
-| OBS-E03-S06 | Detect monitoring and notification path outages independently | Open |
+| OBS-E03-S03 | Deliver routed firing and resolved notifications | Verification |
+| OBS-E03-S04 | Observe durable expected-run and last-success state | Verification |
+| OBS-E03-S05 | Detect missing targets and required telemetry | Verification |
+| OBS-E03-S06 | Detect monitoring and notification path outages independently | In progress |
 | OBS-E04-S01 | Define the production telemetry and ownership contract | Open |
 | OBS-E04-S02 | Deploy bounded and secure log/trace collection | Open |
 | OBS-E04-S03 | Provide central log search and working trace-to-log navigation | Open |
@@ -140,3 +140,19 @@ This iteration builds on `30edfba5` and advances four stories in OBS-E02.
 Prometheus 3.16 scraped actual samples from an isolated candidate API, received 401 on a token mismatch and resumed scraping after rotation. The source and release Compose configurations and the K3s and OpenShift manifests rendered with the expected targets and mounts. The existing backend CI job checks the two mounted Prometheus configurations and runs all semantic rule fixtures using its checksum-verified binary.
 
 The focused suite passed 354 tests with the repository-pinned metrics dependencies. Two PostgreSQL cases require a disposable database and run in the existing integration job. Promtool validated 39 rules and 19 semantic fixture groups. In a separate Linux process test, removing the gauge from a killed child preserved the live child's gauge and both counters.
+
+## Iteration 3: alerting and scheduled detection
+
+This iteration builds on `a84edf88`. It extends the existing profile monitoring and alert evaluation without adding a CI job.
+
+| Story | Change | Remaining acceptance |
+|---|---|---|
+| OBS-E03-S01 | The digest claim records its unresolved slot, and the worker tracks generation, skipped work, provider success and ambiguous completion separately. The weekly alerts cover real subscription due dates and ignore inactive or paused subscriptions. | Apply migration 0262 and demonstrate failure, overdue detection and delivery recovery using isolated subscriptions. |
+| OBS-E03-S03 | The optional Compose Alertmanager profile uses pinned images, private mounts, and explicitly configured HTTPS incident and watchdog receivers. An existing Kubernetes Alertmanager can reuse the contract. | Verify deployed mounts and receiver routing, finish rule ownership and runbook links, and perform an on-call handoff. See [alert routing](../operations/alert-routing.md). |
+| OBS-E03-S04 | Beat stamps the UTC slot into nightly messages. Workers persist attempts and successful outcomes in a shared SQL table. Rules alert on missed enabled deadlines across worker replacements. | Apply migration 0261 and exercise missed dispatch and recovery in a deployment. See [scheduled maintenance](../operations/scheduled-maintenance.md). |
+| OBS-E03-S05 | Compose and Kubernetes declare expected scrape roles independently of discovery. Rules detect missing roles and missing required series while accepting a surviving healthy rollout replica. | Confirm the site's Operator selectors, apply its inventory, and demonstrate loss and recovery in a disposable deployment. See [telemetry contract](../operations/telemetry-contract.md). |
+| OBS-E03-S06 | The watchdog has a dedicated receiver route. Optional Alertmanager metrics expose delivery and notification path failures. | Configure an external service to page when the heartbeat stops, and verify it during Prometheus or Alertmanager outages. |
+
+Prometheus 3.16 and Alertmanager 0.35.1 delivered firing and resolved payloads to a disposable TLS receiver. The test exercised grouped replicas, deduplication, silence, inhibition, watchdog cadence and provider retry. The rule fixtures cover missed schedules, receiver availability, disappearing roles and required series. Both migrations were rendered forward and backward for PostgreSQL. The disposable PostgreSQL concurrency case is part of the existing integration job.
+
+The focused backend suite passed 406 tests and skipped the case that requires a disposable PostgreSQL instance. All 40 Prometheus semantic scenarios passed. Compose and Operator manifests were rendered, and no production receivers were contacted.

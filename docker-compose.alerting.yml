@@ -1,0 +1,70 @@
+# Explicit opt-in after docker-compose.monitoring.yml. Authentication overlay
+# docker-compose.monitoring-auth.yml can precede or follow this file.
+# Run scripts/monitoring/configure_alerting.py first; see alert-routing.md.
+services:
+  prometheus:
+    volumes:
+      - ${ALERTING_PROMETHEUS_CONFIG_SOURCE:?Set the validated generated Prometheus configuration path}:/etc/prometheus/prometheus.yml:ro
+      - ./infra/monitoring/alertmanager/telemetry-contract.yml:/etc/prometheus/alertmanager-contract.yml:ro
+
+  alertmanager-config-check:
+    image: docker.io/prom/alertmanager:v0.35.1@sha256:4e3d029e69c7f61dd53a2b31a3dc427a2b81736cffca185c0854075e07969e36
+    entrypoint: ["/bin/amtool"]
+    command: ["check-config", "/etc/alertmanager/alertmanager.yml"]
+    volumes:
+      - ./infra/monitoring/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    secrets: &alertmanager-secrets
+      - source: alertmanager-incident-url
+        target: alertmanager-incident-url
+      - source: alertmanager-incident-token
+        target: alertmanager-incident-token
+      - source: alertmanager-watchdog-url
+        target: alertmanager-watchdog-url
+      - source: alertmanager-watchdog-token
+        target: alertmanager-watchdog-token
+    network_mode: none
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+
+  alertmanager:
+    image: docker.io/prom/alertmanager:v0.35.1@sha256:4e3d029e69c7f61dd53a2b31a3dc427a2b81736cffca185c0854075e07969e36
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+      - --data.retention=120h
+      - --cluster.listen-address=
+      - --web.listen-address=:9093
+      - --log.level=warn
+    volumes:
+      - ./infra/monitoring/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - alertmanager-data:/alertmanager
+    secrets: *alertmanager-secrets
+    networks: [testlookup_net]
+    # No host port: this API can create alerts and silences and reload config.
+    # Use a temporary authenticated operator tunnel when managing silences.
+    depends_on:
+      alertmanager-config-check:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9093/-/ready"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+
+volumes:
+  alertmanager-data:
+
+secrets:
+  alertmanager-incident-url:
+    file: ${ALERTMANAGER_INCIDENT_URL_SOURCE:?Set an HTTPS incident webhook URL file}
+  alertmanager-incident-token:
+    file: ${ALERTMANAGER_INCIDENT_TOKEN_SOURCE:?Set the incident webhook bearer token file}
+  alertmanager-watchdog-url:
+    file: ${ALERTMANAGER_WATCHDOG_URL_SOURCE:?Set an independent HTTPS heartbeat webhook URL file}
+  alertmanager-watchdog-token:
+    file: ${ALERTMANAGER_WATCHDOG_TOKEN_SOURCE:?Set the heartbeat webhook bearer token file}

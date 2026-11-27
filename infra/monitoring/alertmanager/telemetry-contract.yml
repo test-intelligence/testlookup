@@ -1,0 +1,12 @@
+# Loaded only by the opt-in alerting profile. Discovery must not define its
+# own expected inventory: deleting the AM scrape must remain detectable.
+groups:
+  - name: testlookup.telemetry_contract.alerting
+    interval: 30s
+    rules:
+      - record: testlookup:telemetry_expected_role
+        expr: vector(1)
+        labels:
+          telemetry_profile: compose
+          telemetry_role: alertmanager
+          job: alertmanager

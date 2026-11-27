@@ -5674,6 +5674,14 @@ class DigestSubscription(Base):
     # each scheduled delivery reports changes since the previous send.
     last_delivered_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     next_delivery_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    # OBS-E03-S01: an atomic schedule claim must not erase unfinished due
+    # work. This original slot survives retry claims until sent/policy-skipped.
+    # The token fences late writes from an older attempt or schedule edit.
+    pending_delivery_since_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    delivery_observation_token: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True))
+    last_delivery_attempt_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    last_content_generated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    last_delivery_outcome: Mapped[Optional[str]] = mapped_column(String(20))
     delivery_count: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), onupdate=func.now(), server_default=func.now())
@@ -6651,6 +6659,20 @@ class AgentActionDispatchOutbox(Base):
 #
 # Every create/update/delete writes a SettingsAuditLog entry so the flag
 # history is a first-class audit trail for regulated customers.
+
+
+class NightlyJobObservation(Base):
+    """Bounded operational state shared by the scheduled workers and API."""
+
+    __tablename__ = "nightly_job_observations"
+
+    schedule_key: Mapped[str] = mapped_column(String(64), primary_key=True)
+    monitoring_since: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    enabled_since: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    last_attempt_slot_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    last_attempt_started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    last_success_slot_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    last_success_finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 
 
 class FeatureFlag(Base):

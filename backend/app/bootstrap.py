@@ -530,10 +530,12 @@ def _install_celery_queue_depth_collector(app) -> None:
             from app.services.agent_operational_metrics import (
                 refresh_agent_operational_metrics,
             )
+            from app.services.digest_operational_metrics import refresh_digest_operational_metrics
             from app.services.downstream_operational_metrics import (
                 refresh_downstream_operational_metrics,
             )
             from app.services.metric_collection import collect_bounded
+            from app.services.nightly_job_observation import refresh_nightly_job_metrics
             from app.services.redis_resource_metrics import refresh_redis_resource_metrics
 
             await asyncio.gather(
@@ -541,6 +543,8 @@ def _install_celery_queue_depth_collector(app) -> None:
                 collect_bounded("agents", refresh_agent_operational_metrics),
                 collect_bounded("downstream", refresh_downstream_operational_metrics),
                 collect_bounded("redis", refresh_redis_resource_metrics),
+                collect_bounded("nightly", refresh_nightly_job_metrics),
+                collect_bounded("digests", refresh_digest_operational_metrics),
             )
             result = __orig(*args, **kwargs)
             if inspect.isawaitable(result):

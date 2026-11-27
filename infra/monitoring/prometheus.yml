@@ -18,7 +18,14 @@ scrape_configs:
   # Each prefork worker container aggregates its children on port 9100.
   - job_name: 'testlookup-worker'
     static_configs:
-      - targets: ['worker:9100', 'worker-children:9100']
+      - targets: ['worker:9100']
+        labels:
+          telemetry_profile: compose
+          telemetry_role: worker
+      - targets: ['worker-children:9100']
+        labels:
+          telemetry_profile: compose
+          telemetry_role: worker-children
     metrics_path: /metrics
     scrape_interval: 30s
 

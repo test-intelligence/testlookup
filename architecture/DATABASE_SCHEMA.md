@@ -3121,10 +3121,27 @@ _Constraints:_ Index(`ix_search_query_events_project_created`, `project_id`, `cr
 | `last_delivered_at` | `DateTime` |  |  |  |
 | `next_delivery_at` | `DateTime` |  |  |  |
 | `delivery_count` | `Integer` |  | NN def |  |
+| `pending_delivery_since_at` | `DateTime` |  |  |  |
+| `delivery_observation_token` | `UUID` |  |  |  |
+| `last_delivery_attempt_at` | `DateTime` |  |  |  |
+| `last_content_generated_at` | `DateTime` |  |  |  |
+| `last_delivery_outcome` | `String(20)` |  |  |  |
 | `created_at` | `DateTime` |  | NN def |  |
 | `updated_at` | `DateTime` |  | NN def |  |
 
 _Constraints:_ Index(`ix_ds_user`, `user_id`); Index(`ix_ds_next`, `next_delivery_at`); Index(`ix_ds_schedule_active`, `schedule`, `is_active`, `is_paused`)
+
+#### `nightly_job_observations`  <sub>(model `NightlyJobObservation`)</sub>
+
+| Column | Type | Key | Flags | References |
+|---|---|---|---|---|
+| `schedule_key` | `String(64)` | PK | NN |  |
+| `monitoring_since` | `DateTime` |  | NN def |  |
+| `enabled_since` | `DateTime` |  |  |  |
+| `last_attempt_slot_at` | `DateTime` |  |  |  |
+| `last_attempt_started_at` | `DateTime` |  |  |  |
+| `last_success_slot_at` | `DateTime` |  |  |  |
+| `last_success_finished_at` | `DateTime` |  |  |  |
 
 #### `report_share_links`  <sub>(model `ReportShareLink`)</sub>
 

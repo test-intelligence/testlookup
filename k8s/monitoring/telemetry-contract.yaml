@@ -1,0 +1,60 @@
+# Opt-in Operator inventory, selected with the same site labels as the shared
+# PrometheusRule. It must remain independent of PodMonitor discovery.
+# If the application namespace or enabled roles change, patch this contract in
+# the site overlay too. Never copy private cluster/release labels into this file.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: testlookup-telemetry-contract
+  namespace: testlookup
+  labels:
+    app.kubernetes.io/name: testlookup
+    app.kubernetes.io/part-of: testlookup
+    role: alert-rules
+spec:
+  groups:
+    - name: testlookup.telemetry_contract.kubernetes
+      interval: 30s
+      rules:
+        - record: testlookup:telemetry_expected_role
+          expr: vector(1)
+          labels:
+            namespace: testlookup
+            telemetry_profile: kubernetes
+            telemetry_role: backend
+            job: testlookup-backend
+        - record: testlookup:telemetry_expected_role
+          expr: vector(1)
+          labels:
+            namespace: testlookup
+            telemetry_profile: kubernetes
+            telemetry_role: worker-critical
+            job: testlookup-worker
+        - record: testlookup:telemetry_expected_role
+          expr: vector(1)
+          labels:
+            namespace: testlookup
+            telemetry_profile: kubernetes
+            telemetry_role: worker-ingestion
+            job: testlookup-worker
+        - record: testlookup:telemetry_expected_role
+          expr: vector(1)
+          labels:
+            namespace: testlookup
+            telemetry_profile: kubernetes
+            telemetry_role: worker-ai
+            job: testlookup-worker
+        - record: testlookup:telemetry_expected_role
+          expr: vector(1)
+          labels:
+            namespace: testlookup
+            telemetry_profile: kubernetes
+            telemetry_role: worker-default
+            job: testlookup-worker
+        - record: testlookup:telemetry_expected_role
+          expr: vector(1)
+          labels:
+            namespace: testlookup
+            telemetry_profile: kubernetes
+            telemetry_role: worker-children
+            job: testlookup-worker

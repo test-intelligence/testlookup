@@ -5141,7 +5141,10 @@ def refresh_perf_baselines(self) -> dict:
             )
             return out
 
-    return cast(dict, _run_async(_run()))
+    from app.services.nightly_job_observation import observe_nightly_job
+    from app.worker.nightly_schedule import PERF_BASELINE_REFRESH
+
+    return cast(dict, _run_async(observe_nightly_job(PERF_BASELINE_REFRESH, self.request.headers, _run)))
 
 
 # ── Outbound webhook delivery (Tier 2 item 6) ──────────────────────────────
@@ -5272,7 +5275,10 @@ def run_flaky_quarantine_maintenance(self) -> dict:
                 **outcomes,
             }
 
-    return cast(dict[str, Any], _run_async(_run()))
+    from app.services.nightly_job_observation import observe_nightly_job
+    from app.worker.nightly_schedule import QUARANTINE_MAINTENANCE
+
+    return cast(dict[str, Any], _run_async(observe_nightly_job(QUARANTINE_MAINTENANCE, self.request.headers, _run)))
 
 
 # ── FLK-P3: flaky-confidence model retraining ───────────────────────────────
@@ -5580,6 +5586,11 @@ def dispatch_scheduled_digests(self):
         from app.db.postgres import AsyncSessionLocal
         from app.models.postgres import DigestSubscription, NotificationLog, User
         from app.services.digest_content_service import generate_digest, render_digest_html
+        from app.services.digest_delivery_observation import (
+            digest_claim_observation,
+            digest_final_observation,
+            observe_digest_phase,
+        )
         from app.services.digest_scope_service import PROJECT_SCOPE, resolve_digest_scope
 
         now = datetime.now(timezone.utc)
@@ -5635,6 +5646,7 @@ def dispatch_scheduled_digests(self):
             saved_view_id,
             saved_view_name,
         ) in due:
+            observation_token = uuid.uuid4()
             delta = timedelta(days=1) if schedule == "DAILY" else timedelta(weeks=1)
             scheduled_next = now + delta
             period = "daily" if schedule == "DAILY" else "weekly"
@@ -5658,9 +5670,11 @@ def dispatch_scheduled_digests(self):
                         DigestSubscription.is_active.is_(True),
                         DigestSubscription.is_paused.is_(False),
                         DigestSubscription.next_delivery_at <= now,
+                        DigestSubscription.schedule == schedule,
                     )
                     .values(
                         next_delivery_at=scheduled_next,
+                        **digest_claim_observation(now=now, token=observation_token),
                     )
                     .returning(
                         DigestSubscription.user_id,
@@ -5676,9 +5690,8 @@ def dispatch_scheduled_digests(self):
                 continue
             user_id, project_id, channel = claimed
 
-            # Step 3: actually deliver. A failure here only affects the log
-            # row — the claim is already persisted so we will not retry at
-            # the next beat tick.
+            # Step 3: actually deliver. The pending-slot observation already
+            # committed with the claim; generation is not provider success.
             status = "sent"
             error_detail = None
             scope = PROJECT_SCOPE
@@ -5719,6 +5732,16 @@ def dispatch_scheduled_digests(self):
                             with_release_verdict=True,
                         )
 
+                    # Generation performs reads. Return that connection before
+                    # the independent short phase-observation transaction so
+                    # even a one-connection worker pool cannot deadlock itself.
+                    from app.db.postgres import release_read_connection
+
+                    if await release_read_connection(db):
+                        await observe_digest_phase(
+                            sub_id, observation_token, phase="generated",
+                        )
+
                     user_result = await db.execute(
                         select(User).where(User.id == user_id)
                     )
@@ -5728,6 +5751,15 @@ def dispatch_scheduled_digests(self):
                             "Claimed subscription %s references missing user %s",
                             sub_id, user_id,
                         )
+                        await db.execute(
+                            update(DigestSubscription)
+                            .where(
+                                DigestSubscription.id == sub_id,
+                                DigestSubscription.delivery_observation_token == observation_token,
+                            )
+                            .values(**digest_final_observation("skipped"))
+                        )
+                        await db.commit()
                         continue
 
                     # US-7.4: zero-change window + send_when_unchanged=False
@@ -5919,8 +5951,11 @@ def dispatch_scheduled_digests(self):
                                 error_detail = str(e)
                                 logger.warning(
                                     "Digest %s delivery failed for sub %s: %s",
-                                    channel, sub_id, e,
+                                    channel, sub_id, type(e).__name__,
                                 )
+                    else:
+                        status = "failed"
+                        error_detail = "Unsupported scheduled digest channel"
 
                     db.add(NotificationLog(
                         user_id=user_id,
@@ -5954,12 +5989,14 @@ def dispatch_scheduled_digests(self):
                         now=now,
                         scheduled_next=scheduled_next,
                     )
+                    outcome.update(digest_final_observation(status))
                     increment_count = outcome.pop("increment_delivery_count", False)
                     if increment_count:
                         outcome["delivery_count"] = DigestSubscription.delivery_count + 1
                     if outcome:
                         final_update = update(DigestSubscription).where(
-                            DigestSubscription.id == sub_id
+                            DigestSubscription.id == sub_id,
+                            DigestSubscription.delivery_observation_token == observation_token,
                         )
                         # A failed delivery may shorten only the slot this
                         # attempt claimed. A concurrent pause/resume or schedule
@@ -5971,7 +6008,11 @@ def dispatch_scheduled_digests(self):
                         await db.execute(final_update.values(**outcome))
                     await db.commit()
             except Exception as exc:
-                logger.error("Digest delivery failed for subscription %s: %s", sub_id, exc)
+                # A provider may have accepted before a later transaction
+                # failed. Keep its slot unresolved; never infer success or
+                # automatically replay an ambiguous outcome from telemetry.
+                await observe_digest_phase(sub_id, observation_token, phase="unknown")
+                logger.error("Digest delivery failed for subscription %s: %s", sub_id, type(exc).__name__)
 
     with _beat_span("dispatch_scheduled_digests") as span:
         try:

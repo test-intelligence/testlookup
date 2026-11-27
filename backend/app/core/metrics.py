@@ -618,7 +618,7 @@ perf_baseline_refresh_runs_total = Counter(
 
 retro_digest_dispatch_total = Counter(
     "testlookup_retro_digest_dispatch_total",
-    "Total weekly retro digest dispatch task runs",
+    "Weekly retro content generation outcomes, not successful provider deliveries",
     ["status"],  # success | skipped | failure
 )
 
@@ -971,4 +971,49 @@ sqlalchemy_pool_timeouts_total = Counter(
     "sqlalchemy_pool_timeouts_total",
     "Pool queue acquisition timeouts (SQLAlchemy 3o7r), once per public attempt",
     ["role"],
+)
+
+# Absolute durable subscription snapshots; scrape replicas must not sum them.
+# Schedule/state/outcome vocabularies are bounded, with no subscriber labels.
+weekly_digest_subscriptions = Gauge(
+    "testlookup_weekly_digest_subscriptions",
+    "Enabled weekly subscriptions by durable due/observation state",
+    ["schedule", "state"], multiprocess_mode="mostrecent",
+)
+weekly_digest_oldest_overdue_seconds = Gauge(
+    "testlookup_weekly_digest_oldest_overdue_seconds",
+    "Oldest unmet weekly delivery slot beyond daily-dispatch plus processing grace",
+    ["schedule"], multiprocess_mode="mostrecent",
+)
+weekly_digest_delivery_outcomes = Gauge(
+    "testlookup_weekly_digest_delivery_outcomes",
+    "Enabled weekly subscriptions by last observed attempt outcome; generation is not delivery",
+    ["schedule", "outcome"], multiprocess_mode="mostrecent",
+)
+
+# Nightly jobs use shared SQL observations. The schedule label comes from the
+# two-job registry, with no task IDs or project data.
+nightly_job_enabled = Gauge(
+    "testlookup_nightly_job_enabled", "Whether the nightly job's feature is enabled", ["schedule"],
+    multiprocess_mode="mostrecent",
+)
+nightly_job_next_due_timestamp = Gauge(
+    "testlookup_nightly_job_next_due_timestamp_seconds", "Next UTC slot, or zero when disabled", ["schedule"],
+    multiprocess_mode="mostrecent",
+)
+nightly_job_last_attempt_timestamp = Gauge(
+    "testlookup_nightly_job_last_attempt_timestamp_seconds", "Start of the most recent observed slot attempt", ["schedule"],
+    multiprocess_mode="mostrecent",
+)
+nightly_job_last_success_timestamp = Gauge(
+    "testlookup_nightly_job_last_success_timestamp_seconds", "Completion of the most recent successful slot", ["schedule"],
+    multiprocess_mode="mostrecent",
+)
+nightly_job_overdue = Gauge(
+    "testlookup_nightly_job_overdue", "Whether an eligible nightly slot missed its success deadline", ["schedule"],
+    multiprocess_mode="mostrecent",
+)
+nightly_job_started_overdue_slot = Gauge(
+    "testlookup_nightly_job_started_overdue_slot", "Whether a worker began the overdue slot or a later one", ["schedule"],
+    multiprocess_mode="mostrecent",
 )

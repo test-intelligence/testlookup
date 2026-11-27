@@ -5,7 +5,7 @@ name: Third-party image scan
 # Flower and the monitoring add-on's Jaeger, Prometheus and Grafana) were in no
 # scan, and Dependabot tracks only their Compose tags (OSS review 2026-11-12,
 # H-4). This scans every `infra` row of deploy/images.manifest.txt and every
-# image in docker-compose.monitoring.yml: weekly, when either file changes on
+# image in the monitoring and alerting overlays: weekly, when these files change on
 # main, and on demand.
 #
 # It reports and does not fail on findings: an upstream image's findings are
@@ -22,6 +22,7 @@ on:
     paths:
       - deploy/images.manifest.txt
       - docker-compose.monitoring.yml
+      - docker-compose.alerting.yml
       - .github/workflows/third-party-images.yml
   # A pull request that changes an image or this workflow sees the report
   # before it merges.
@@ -29,6 +30,7 @@ on:
     paths:
       - deploy/images.manifest.txt
       - docker-compose.monitoring.yml
+      - docker-compose.alerting.yml
       - .github/workflows/third-party-images.yml
   workflow_dispatch:
 
@@ -77,7 +79,7 @@ jobs:
           set -euo pipefail
           {
             awk '!/^[[:space:]]*#/ && NF >= 2 && $2 == "infra" { print $1 }' deploy/images.manifest.txt
-            sed -n 's/^[[:space:]]*image:[[:space:]]*//p' docker-compose.monitoring.yml
+            sed -n 's/^[[:space:]]*image:[[:space:]]*//p' docker-compose.monitoring.yml docker-compose.alerting.yml
           } | sort -u > third-party-images.txt
           test "$(wc -l < third-party-images.txt)" -ge 8
           cat third-party-images.txt

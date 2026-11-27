@@ -187,6 +187,8 @@ All of these listen on `127.0.0.1` only (`MONITORING_PUBLISH_ADDR`): Jaeger, the
 
 The override sets `OTEL_ENABLED=true`, `OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318` and `METRICS_ENABLED=true` on the backend. The same alert rules are rendered for Kubernetes in [`k8s/monitoring`](deploy-kubernetes.md#monitoring-podmonitor-and-prometheusrule). Metric and alert reference: [observability](../../architecture/OBSERVABILITY.md).
 
+Use the [alert routing overlay](alert-routing.md) to deliver incident notifications and an independent watchdog over authenticated HTTPS. The [telemetry contract](telemetry-contract.md) lists the required roles and series.
+
 ### Authenticate the API scrape
 
 Use `docker-compose.monitoring-auth.yml` after the monitoring file with either the source or release stack. Set `METRICS_API_TOKEN_SOURCE` and `METRICS_PROMETHEUS_TOKEN_SOURCE` to the absolute host paths of two protected files containing the same bearer token. Grant file read access to the corresponding container users and restrict access to the files on the host. Compose mounts each file only in the service that needs it. File-based Compose secrets use host file ownership and permissions. [Compose secrets](https://docs.docker.com/compose/how-tos/use-secrets/).

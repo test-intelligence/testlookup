@@ -6,6 +6,7 @@ from collections.abc import Mapping
 
 from celery import Celery, Task
 from celery.signals import (
+    before_task_publish,
     celeryd_init,
     setup_logging,
     task_postrun,
@@ -19,6 +20,9 @@ from celery.schedules import crontab
 from kombu import Exchange, Queue
 
 from app.core.config import settings
+from app.worker.nightly_schedule import (
+    PERF_BASELINE_REFRESH, QUARANTINE_MAINTENANCE, SCHEDULE_HEADER, stamp_nightly_slot,
+)
 from app.worker.queue_inventory import (
     AGENT_CHILDREN_QUEUE, AI_ANALYSIS_QUEUE, CRITICAL_QUEUE, DEFAULT_QUEUE,
     INGESTION_QUEUE, all_task_queue_names,
@@ -52,6 +56,7 @@ celery_app = Celery(
     include=["app.worker.tasks", "app.worker.training_tasks"],
     task_cls=TimeLimitedTask,
 )
+before_task_publish.connect(stamp_nightly_slot)
 
 
 @celery_app.task(bind=True, name="app.worker.celery_app.queue_delivery_probe")
@@ -387,14 +392,16 @@ celery_app.conf.update(
         # No-op until the ``flaky_auto_quarantine`` feature flag is enabled.
         "nightly-flaky-quarantine-maintenance": {
             "task": "app.worker.tasks.run_flaky_quarantine_maintenance",
-            "schedule": crontab(hour=4, minute=0),
+            "schedule": crontab(hour=QUARANTINE_MAINTENANCE.hour, minute=QUARANTINE_MAINTENANCE.minute),
+            "options": {"headers": {SCHEDULE_HEADER: QUARANTINE_MAINTENANCE.key}},
         },
         # Tier 2 item 10: per-test duration baseline refresh (nightly at
         # 04:30 UTC, after quarantine maintenance so its reclassifications
         # land first). No-op until ``perf_regression_detection`` flag is on.
         "nightly-perf-baseline-refresh": {
             "task": "app.worker.tasks.refresh_perf_baselines",
-            "schedule": crontab(hour=4, minute=30),
+            "schedule": crontab(hour=PERF_BASELINE_REFRESH.hour, minute=PERF_BASELINE_REFRESH.minute),
+            "options": {"headers": {SCHEDULE_HEADER: PERF_BASELINE_REFRESH.key}},
         },
         # Tier 2 item 12: weekly auto-retro digest dispatch (Mondays
         # 07:00 UTC, same time as the existing daily digest pass). The

@@ -132,7 +132,7 @@ Local-model RAM, VRAM and disk depend on the model, quantization, context and co
 | Project activity and decision trail | User-visible receipts and agent reasoning/provenance events |
 | Upload, outbox, DLQ and pipeline records | Locate the failed asynchronous step, not just HTTP health |
 
-Prometheus alert rules live in `infra/monitoring/prometheus-rules/`; Compose loads them through the [monitoring add-on](deploy-compose.md#monitoring-add-on) and Kubernetes through [`k8s/monitoring`](deploy-kubernetes.md#monitoring-podmonitor-and-prometheusrule). Alert on stalled pipelines, lease or retry exhaustion, outbox/DLQ backlog, queue imbalance, database connections and broker memory. Installing an OpenTelemetry library does not by itself trace Celery tasks. [Dependency metrics](dependency-metrics.md), [observability deep dive](../../architecture/OBSERVABILITY.md), [troubleshooting](../../user-guide/troubleshooting.md).
+Prometheus alert rules live in `infra/monitoring/prometheus-rules/`; Compose loads them through the [monitoring add-on](deploy-compose.md#monitoring-add-on) and Kubernetes through [`k8s/monitoring`](deploy-kubernetes.md#monitoring-podmonitor-and-prometheusrule). Alert on stalled pipelines, lease or retry exhaustion, outbox/DLQ backlog, queue imbalance, database connections and broker memory. Installing an OpenTelemetry library does not by itself trace Celery tasks. [Dependency metrics](dependency-metrics.md), [scheduled maintenance monitoring](scheduled-maintenance.md), [observability deep dive](../../architecture/OBSERVABILITY.md), [troubleshooting](../../user-guide/troubleshooting.md).
 
 ## Related
 

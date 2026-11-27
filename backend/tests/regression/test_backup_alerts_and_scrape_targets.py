@@ -452,7 +452,11 @@ def test_every_job_an_alert_selects_is_produced_by_a_monitor() -> None:
         job for rule in _rules().values() for job in re.findall(r'(?<![A-Za-z0-9_])job="([^"]+)"', rule["expr"])
     }
     assert selected, "no alert selects on job -- the check is vacuous"
-    assert selected <= produced, selected - produced
+    # The opt-in alerting profile owns the Alertmanager scrape. Operator
+    # installations use their platform's own AM monitor; the base application
+    # PodMonitors must not make that optional service a mandatory dependency.
+    optional_platform_jobs = {"alertmanager"}
+    assert selected <= produced | optional_platform_jobs, selected - produced - optional_platform_jobs
 
 
 #: Alert metrics served by an exporter the cluster runs, not by TestLookup.

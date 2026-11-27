@@ -1,5 +1,114 @@
 # TestLookup — Prometheus alerting rules
 groups:
+  # The expected-role inventory is independent of scrape discovery. Compose
+  # loads compose-telemetry-contract.yml; Operator installs the equivalent
+  # k8s/monitoring/telemetry-contract.yaml. Do not derive it from `up`.
+  - name: testlookup.telemetry
+    interval: 30s
+    rules:
+      - alert: TestLookupTelemetryContractMissing
+        expr: absent(testlookup:telemetry_expected_role)
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "The required telemetry inventory is not loaded"
+          description: "No expected-role recording rules are evaluating. Load the inventory for this monitoring profile and verify its selection independently of the application PodMonitors. Missing inventory makes role-loss detection incomplete. Runbook: docs/operations/telemetry-contract.md."
+
+      # Set matching intentionally tolerates extra rollout replicas and only
+      # requires one healthy target per declared role. It also handles `up`
+      # disappearing entirely, unlike `up == 0` on its own.
+      - alert: TestLookupExpectedRoleUnavailable
+        expr: |
+          (testlookup:telemetry_expected_role == 1)
+          unless on (cluster, namespace, job, telemetry_profile, telemetry_role)
+          (up == 1)
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "A required TestLookup telemetry role has no healthy target"
+          description: "Profile {{ $labels.telemetry_profile }} role {{ $labels.telemetry_role }} has no healthy {{ $labels.job }} scrape target for five minutes. Check discovery, monitor selectors, port, scrape credentials and network policy; an entirely deleted monitor also triggers this alert. Runbook: docs/operations/telemetry-contract.md."
+
+      # These four collectors are an unconditional E02 baseline. New optional
+      # collectors must explicitly join the contract when applicable. Preserve
+      # each target, rather than allowing a healthy replica to hide a broken one.
+      - record: testlookup:telemetry_required_collector
+        expr: |
+          label_replace(up{job="testlookup-backend"} == 1, "collector", "queues", "job", ".*")
+          or label_replace(up{job="testlookup-backend"} == 1, "collector", "agents", "job", ".*")
+          or label_replace(up{job="testlookup-backend"} == 1, "collector", "downstream", "job", ".*")
+          or label_replace(up{job="testlookup-backend"} == 1, "collector", "redis", "job", ".*")
+
+      - alert: TestLookupRequiredTelemetryMissing
+        expr: |
+          label_replace(
+            testlookup:telemetry_required_collector
+            unless on (cluster, namespace, job, instance, telemetry_profile, telemetry_role, collector)
+            testlookup_metric_collection_success,
+            "signal", "collection_success", "job", ".*"
+          )
+          or
+          label_replace(
+            testlookup:telemetry_required_collector
+            unless on (cluster, namespace, job, instance, telemetry_profile, telemetry_role, collector)
+            testlookup_metric_collection_last_success_timestamp_seconds,
+            "signal", "collection_last_success", "job", ".*"
+          )
+          or
+          label_replace(
+            (up{job=~"testlookup-backend|testlookup-worker"} == 1)
+            unless on (cluster, namespace, job, instance, telemetry_profile, telemetry_role)
+            testlookup_finalize_step_failures_total{step="suite_sync"},
+            "signal", "metric_registry", "job", ".*"
+          )
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "A healthy scrape is missing required application telemetry"
+          description: "Target {{ $labels.instance }} is up but required signal {{ $labels.signal }} (collector {{ $labels.collector }}) is absent. Check exporter initialization and metric relabel/drop filters. Zero is valid; lazy task histograms and optional collectors are deliberately excluded. Runbook: docs/operations/telemetry-contract.md."
+
+      # An external dead-man receiver must alert when these notifications stop.
+      # This rule alone cannot detect the failure of its own Prometheus server.
+      - alert: TestLookupWatchdog
+        expr: vector(1)
+        labels:
+          severity: none
+          category: watchdog
+        annotations:
+          summary: "TestLookup notification heartbeat"
+          description: "Always firing. Route to an independently hosted authenticated dead-man receiver that alarms on missing heartbeats; do not page on normal receipt. Runbook: docs/operations/alert-routing.md."
+
+      # Alertmanager is optional. These rules require its actual scrape series;
+      # the opt-in alerting profile supplies its job and external routing.
+      - alert: TestLookupAlertmanagerDown
+        expr: up{job="alertmanager"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "The configured Alertmanager scrape is failing"
+          description: "Alert delivery may be unavailable. Check Alertmanager health and its scrape path, then use the independent heartbeat receiver to confirm notification-path recovery."
+
+      - alert: TestLookupAlertmanagerNotificationsFailing
+        expr: increase(alertmanager_notifications_failed_total{job="alertmanager"}[5m]) > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Alertmanager failed to deliver notifications"
+          description: "A configured receiver has failed notification attempts in the last five minutes. Inspect receiver authorization, connectivity and rate limits; verify delivery through the independent receiver."
+
+      - alert: TestLookupAlertmanagerConfigReloadFailed
+        expr: alertmanager_config_last_reload_successful{job="alertmanager"} == 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Alertmanager rejected its latest configuration reload"
+          description: "The intended routing configuration is not active. Validate the configuration and confirm a successful reload before relying on new receiver routes."
+
   - name: testlookup.application
     interval: 30s
     rules:
@@ -585,78 +694,81 @@ groups:
           summary: "Outbound webhook delivery failure rate > 5% for 15 min"
           description: "More than 5% of webhook delivery attempts are terminal failures over the last 15 minutes. Check the Webhook Deliveries panel in /settings/webhooks for the DLQ rows and the most recent error text, and consider quarantining the offending subscription until the receiver is fixed."
 
-      # ── 1-3 Flaky quarantine maintenance: back-to-back failures ────────
-      # The beat runs once daily at 04:00 UTC. Two failures in a row
-      # leaves the quarantine queue unmanaged for 48+ hours, during
-      # which PROPOSED rows won't expire and approved rows won't be
-      # re-checked. Scoped to the specific Celery task name so other
-      # task failures don't page the quarantine on-call.
+      # 04:00 UTC due slot and one-hour completion margin. The SQL snapshot
+      # describes the same installation across worker and API replacement.
       - alert: TestLookupFlakyQuarantineMaintenanceFailing
         expr: |
-          increase(
-            testlookup_celery_tasks_total{
-              task_name="app.worker.tasks.run_flaky_quarantine_maintenance",
-              status="failure"
-            }[2d]
-          ) >= 2
-        for: 0m
+          max by (cluster, namespace, schedule) (
+            testlookup_nightly_job_overdue{job="testlookup-backend",schedule="quarantine_maintenance"}
+            and on (cluster, namespace, job, instance)
+              (testlookup_metric_collection_success{job="testlookup-backend",collector="nightly"} == 1)
+            and on (cluster, namespace, job, instance)
+              ((time() - testlookup_metric_collection_last_success_timestamp_seconds{job="testlookup-backend",collector="nightly"}) <= 120)
+          ) == 1
+        for: 5m
         labels:
           severity: warning
           tier: "1-3"
           feature: flaky_auto_quarantine
         annotations:
-          summary: "Flaky quarantine maintenance beat failed twice in a row"
-          description: "The run_flaky_quarantine_maintenance Celery beat (04:00 UTC) has failed on two consecutive runs. PROPOSED rows aren't being expired and approved rows aren't being rechecked. Check the worker logs for the most recent traceback and the celery.beat.run_flaky_quarantine_maintenance spans in Jaeger."
+          summary: "Flaky quarantine maintenance missed its completion deadline"
+          description: "The enabled nightly quarantine slot has no durable success after its one-hour completion margin. Compare the schedule's last attempt and success to distinguish missing dispatch from incomplete work, then inspect worker and Beat health."
 
-      # ── 2-12 Weekly retro digest: missed Monday dispatch ───────────────
-      # The Monday 07:05 UTC beat entry produces a WEEKLY_RETRO digest
-      # for each subscribed project. If the success counter hasn't
-      # incremented in the last 2 hours of the Monday 08:00-10:00 UTC
-      # window, the dispatch almost certainly didn't fire — either the
-      # beat scheduler is down, the feature flag got flipped off, or
-      # the retro_digest_service crashed inside the dispatcher loop.
-      # The day-of-week+hour guard narrows the alert to the window
-      # where we'd actually expect traffic.
-      - alert: TestLookupWeeklyRetroDigestMissedMonday
+      # Subscription due dates are UTC instants on arbitrary weekdays. The
+      # durable claim receipt survives next_delivery_at advancement/retries.
+      # The producer allows the normal daily dispatch interval plus processing
+      # grace. Generation counters are diagnostics, never delivery evidence.
+      - alert: TestLookupWeeklyDigestDeliveryOverdue
         expr: |
-          (
-            increase(
-              testlookup_retro_digest_dispatch_total{status="success"}[2h]
-            ) == 0
-          )
-          and (day_of_week() == 1)
-          and (hour() >= 8 and hour() < 10)
+          max by (cluster, namespace, schedule) (
+            testlookup_weekly_digest_oldest_overdue_seconds{job="testlookup-backend"}
+            and on (cluster, namespace, job, instance)
+              (testlookup_metric_collection_success{job="testlookup-backend",collector="digests"} == 1)
+            and on (cluster, namespace, job, instance)
+              ((time() - testlookup_metric_collection_last_success_timestamp_seconds{job="testlookup-backend",collector="digests"}) <= 120)
+          ) > 0
         for: 15m
         labels:
           severity: warning
-          tier: "2-12"
-          feature: weekly_retro_digest
         annotations:
-          summary: "Weekly retro digest didn't dispatch on Monday"
-          description: "No retro_digest_dispatch_total{status=\"success\"} increments have been observed during the Monday 08:00-10:00 UTC window. The Monday 07:05 UTC beat either didn't fire, the weekly_retro_digest feature flag got flipped off, or every generate_weekly_retro call raised. Check the celery.beat.dispatch_scheduled_digests span in Jaeger for the most recent Monday and the worker logs."
+          summary: "Weekly digest delivery has overdue work"
+          description: "An enabled {{ $labels.schedule }} subscription has an unresolved due slot beyond the normal daily dispatch interval and processing grace. Content generation is not provider delivery. Inspect durable attempt outcomes and provider logs before replaying any ambiguous send."
 
-      # ── 2-10 Perf baseline refresh: back-to-back failures ──────────────
-      # The nightly refresh is best-effort (the release gate falls back
-      # to the hardcoded config thresholds if no baseline exists), so a
-      # single miss is not a page. Two consecutive failures mean the
-      # baselines are frozen on stale data and spike detection at gate
-      # time degrades to "no signal".
+      - alert: TestLookupWeeklyDigestScheduleMissing
+        expr: |
+          max by (cluster, namespace, schedule) (
+            testlookup_weekly_digest_subscriptions{job="testlookup-backend",state="missing_schedule"}
+            and on (cluster, namespace, job, instance)
+              (testlookup_metric_collection_success{job="testlookup-backend",collector="digests"} == 1)
+            and on (cluster, namespace, job, instance)
+              ((time() - testlookup_metric_collection_last_success_timestamp_seconds{job="testlookup-backend",collector="digests"}) <= 120)
+          ) > 0
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Enabled weekly digest has no due schedule"
+          description: "An enabled {{ $labels.schedule }} subscription has neither a next delivery time nor an unresolved claimed slot. Inspect its durable schedule; absence of a due date is not successful delivery."
+
+      # 04:30 UTC due slot and one-hour completion margin. Disabled features
+      # have no deadline, and a skipped refresh does not advance success.
       - alert: TestLookupPerfBaselineRefreshFailing
         expr: |
-          increase(
-            testlookup_celery_tasks_total{
-              task_name="app.worker.tasks.refresh_perf_baselines",
-              status="failure"
-            }[2d]
-          ) >= 2
-        for: 0m
+          max by (cluster, namespace, schedule) (
+            testlookup_nightly_job_overdue{job="testlookup-backend",schedule="perf_baseline_refresh"}
+            and on (cluster, namespace, job, instance)
+              (testlookup_metric_collection_success{job="testlookup-backend",collector="nightly"} == 1)
+            and on (cluster, namespace, job, instance)
+              ((time() - testlookup_metric_collection_last_success_timestamp_seconds{job="testlookup-backend",collector="nightly"}) <= 120)
+          ) == 1
+        for: 5m
         labels:
           severity: warning
           tier: "2-10"
           feature: perf_regression_detection
         annotations:
-          summary: "Perf baseline refresh beat failed twice in a row"
-          description: "The refresh_perf_baselines Celery beat (04:30 UTC) has failed on two consecutive runs. Release-gate spike detection will degrade to 'no signal' against stale baselines. Check the celery.beat.refresh_perf_baselines spans in Jaeger and the worker logs."
+          summary: "Performance baseline refresh missed its completion deadline"
+          description: "The enabled nightly baseline refresh has no durable success after its one-hour completion margin. Check the schedule's last attempt and success, Beat dispatch and worker logs. Release gating may use stale baselines."
 
       # ── 1-4 Release compliance pack generation errors ──────────────────
       # Pack generation is user-triggered (QA Lead clicks "Generate

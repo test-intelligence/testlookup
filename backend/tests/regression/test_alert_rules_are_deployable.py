@@ -136,7 +136,9 @@ def test_the_rule_is_opt_in_not_in_base() -> None:
     )
     # The rule and the PodMonitors that feed it (QA-B45-P5); both need the
     # Operator CRDs, so both stay out of base.
-    assert kustomization["resources"] == ["prometheusrule.yaml", "podmonitors.yaml"]
+    assert kustomization["resources"] == [
+        "prometheusrule.yaml", "podmonitors.yaml", "telemetry-contract.yaml",
+    ]
     base = yaml.safe_load((REPO_ROOT / "k8s" / "base" / "kustomization.yaml").read_text(encoding="utf-8"))
     assert not any("monitoring" in str(r) or "prometheusrule" in str(r) for r in base["resources"])
 
@@ -147,17 +149,18 @@ def test_semantic_fixtures_execute_in_the_existing_backend_ci_job() -> None:
     job = workflow["jobs"]["backend-test"]
     step = next(s for s in job["steps"] if s.get("name") == "Verify alert semantics with checksum-pinned promtool")
     assert not step.get("continue-on-error") and not step.get("if")
-    assert step["working-directory"] == "infra/monitoring/tests"
+    assert step["working-directory"] == "."
     compose = yaml.safe_load((REPO_ROOT / "docker-compose.monitoring.yml").read_text(encoding="utf-8"))
     runtime_version = compose["services"]["prometheus"]["image"].rsplit(":", 1)[1].lstrip("v")
     assert step["env"]["PROMETHEUS_VERSION"] == runtime_version
     assert re.fullmatch(r"[0-9a-f]{64}", step["env"]["PROMETHEUS_ARCHIVE_SHA256"])
     commands = step["run"]
     assert commands.index("sha256sum --check --strict") < commands.index("tar -xzf")
-    assert '"$tool" check rules ../prometheus-rules/testlookup-alerts.yml' in commands
-    assert '"$tool" test rules ./*.yml' in commands
+    assert '"$tool" check rules "$monitoring/prometheus-rules/testlookup-alerts.yml"' in commands
+    assert '"$tool" test rules "$monitoring"/tests/*.yml' in commands
     assert '"$tool" check config "$scratch/config/prometheus.yml"' in commands
-    fixture = REPO_ROOT / step["working-directory"] / "operational-alerts.yml"
+    assert "python -m pytest scripts/monitoring/tests -q" in commands
+    fixture = REPO_ROOT / "infra/monitoring/tests/operational-alerts.yml"
     assert not fixture.is_relative_to(ALERTS.parent), "fixture would be loaded as a production rule file"
     data = yaml.safe_load(fixture.read_text(encoding="utf-8"))
     assert data["tests"] and len(data["rule_files"]) == 1

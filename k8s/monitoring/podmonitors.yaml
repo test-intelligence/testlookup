@@ -33,6 +33,12 @@ spec:
         - action: replace
           targetLabel: job
           replacement: testlookup-backend
+        - action: replace
+          targetLabel: telemetry_profile
+          replacement: kubernetes
+        - action: replace
+          targetLabel: telemetry_role
+          replacement: backend
 ---
 apiVersion: monitoring.coreos.com/v1
 kind: PodMonitor
@@ -58,3 +64,11 @@ spec:
         - action: replace
           targetLabel: job
           replacement: testlookup-worker
+        - action: replace
+          targetLabel: telemetry_profile
+          replacement: kubernetes
+        - action: replace
+          sourceLabels: [__meta_kubernetes_pod_label_app]
+          regex: 'testlookup-(worker-(critical|ingestion|ai|default|children))'
+          targetLabel: telemetry_role
+          replacement: '$1'
