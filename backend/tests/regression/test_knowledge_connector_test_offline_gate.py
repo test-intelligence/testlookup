@@ -87,7 +87,7 @@ async def test_connector_offline_refuses_before_credentials_or_http(
     http_client = MagicMock(side_effect=AssertionError("must not create HTTP client"))
 
     with patch.object(connector_module, "settings", _OfflineSettings()), \
-         patch.object(connector_module, "get_http_client", http_client):
+         patch.object(connector_module, "get_integration_http_client", http_client):
         result = await connector_factory().test_connection()
 
     assert result == OFFLINE_RESULT

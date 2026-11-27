@@ -10221,6 +10221,13 @@ class GitHubIntegrationWrite(BaseModel):
     #: W19 INT-06: ``pat`` or ``app`` (a GitHub App installation). Omitted leaves it as stored.
     auth_kind: Optional[Literal["pat", "app"]] = None
 
+    @field_validator("api_base_url", mode="after")
+    @classmethod
+    def _api_base_is_an_origin(cls, value: str) -> str:
+        if integration_url_problem(value) is not None:
+            raise PydanticCustomError("integration_url", INTEGRATION_URL_SENTENCE)
+        return value
+
 
 class GitHubIntegrationRead(BaseModel):
     id: uuid.UUID
@@ -10326,6 +10333,13 @@ class GitLabConfigWrite(BaseModel):
     mr_comment_mode: Literal["off", "failures_only", "always"] = "failures_only"
     commit_status_enabled: bool = True
     token: Optional[str] = Field(None, max_length=200)
+
+    @field_validator("base_url", mode="after")
+    @classmethod
+    def _base_is_an_origin(cls, value: str) -> str:
+        if integration_url_problem(value) is not None:
+            raise PydanticCustomError("integration_url", INTEGRATION_URL_SENTENCE)
+        return value
 
 
 class GitLabConfigRead(BaseModel):

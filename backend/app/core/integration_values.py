@@ -36,13 +36,13 @@ JIRA_DOMAIN_SENTENCE = (
     "Jira domain must be a host name such as your-company.atlassian.net, without https:// or a path."
 )
 INTEGRATION_URL_SENTENCE = (
-    "Enter a URL that starts with http:// or https:// and names a host, with no user name or password in it."
+    "Enter a URL that starts with http:// or https:// and names a host, with no user name, password, or fragment in it."
 )
 TARGET_NOT_ALLOWED = "Target host is not allowed"
 
 
 def integration_url_problem(url: str) -> Optional[str]:
-    """``None`` when ``url`` is http(s), names a host and carries no userinfo;
+    """``None`` for an http(s) origin without userinfo or a fragment;
     else ``INTEGRATION_URL_SENTENCE``. No DNS: the host check is
     ``url_safety.egress_block_reason`` (async)."""
     if not isinstance(url, str):
@@ -54,7 +54,7 @@ def integration_url_problem(url: str) -> Optional[str]:
         return INTEGRATION_URL_SENTENCE
     if parts.scheme.lower() not in ("http", "https") or not host:
         return INTEGRATION_URL_SENTENCE
-    if "@" in parts.netloc:
+    if "@" in parts.netloc or "#" in url:
         return INTEGRATION_URL_SENTENCE
     return None
 

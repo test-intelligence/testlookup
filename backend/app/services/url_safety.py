@@ -26,14 +26,15 @@ Two policies (W10)
   the server then POSTs data to (outbound webhooks, knowledge-source URLs, SSO
   metadata). Every non-global address is refused (RFC1918 included) and a DNS
   failure fails closed.
-* **Integration egress** -- ``egress_block_reason``: for an integration base
-  an ADMIN (Splunk, OpenShift, Jira) or a QA lead (per-project GitHub /
-  GitLab) configures, to which the server sends that integration's
-  credential. Only loopback, link-local (169.254.169.254 included) and
-  unspecified addresses are refused: RFC1918 stays allowed (on-prem Splunk,
-  OpenShift, GitHub Enterprise, GitLab) and a host that does not resolve is
-  allowed (setup, air-gapped DNS -- nothing is reachable through it). It runs
-  at save and again at use, before the credential is sent.
+* **Integration egress** -- ``egress_block_reason`` /
+  ``IntegrationEgressAsyncHTTPTransport``: for an integration base an ADMIN
+  (Splunk, OpenShift, Jira) or a QA lead (per-project GitHub / GitLab)
+  configures, to which the server sends that integration's credential. Only
+  loopback, link-local (169.254.169.254 included) and unspecified addresses
+  are refused: RFC1918 stays allowed (on-prem Splunk, OpenShift, GitHub
+  Enterprise, GitLab). The preflight check remains setup-friendly, while the
+  transport fails closed, pins an approved numeric address, and verifies the
+  connected peer before any HTTP request can carry a credential.
   ``github_checks_service._ssrf_block_reason`` is this same function under its
   old name.
 """
@@ -52,12 +53,14 @@ import httpcore
 import httpx
 
 __all__ = [
+    "IntegrationEgressAsyncHTTPTransport",
     "UnsafeTargetError",
     "PublicOnlyAsyncHTTPTransport",
     "assert_public_url",
     "egress_block_reason",
     "is_safe_public_url",
     "is_unsafe_target_error",
+    "resolve_integration_addresses",
     "resolve_public_addresses",
 ]
 
@@ -108,6 +111,56 @@ def resolve_public_addresses(host: str, port: int) -> list[str]:
             f"target DNS resolution failed ({type(exc).__name__})"
         ) from exc
     return _validated_addresses(infos)
+
+
+def _integration_ip(raw: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address:
+    """Normalize one integration address and reject the protected ranges."""
+    try:
+        address = ipaddress.ip_address(raw.split("%", 1)[0])
+    except ValueError as exc:
+        raise UnsafeTargetError(f"DNS returned an invalid address ({raw})") from exc
+    mapped = getattr(address, "ipv4_mapped", None)
+    candidates = (address,) if mapped is None else (address, mapped)
+    if any(
+        candidate.is_loopback
+        or candidate.is_link_local
+        or candidate.is_unspecified
+        for candidate in candidates
+    ):
+        raise UnsafeTargetError(f"target resolves to a blocked address ({raw})")
+    return address
+
+
+def _validated_integration_addresses(infos: Iterable[tuple[Any, ...]]) -> list[str]:
+    addresses: list[str] = []
+    for info in infos:
+        try:
+            raw = str(info[4][0])
+        except (IndexError, TypeError) as exc:
+            raise UnsafeTargetError("DNS returned a malformed address") from exc
+        normalized = str(_integration_ip(raw))
+        if normalized not in addresses:
+            addresses.append(normalized)
+    if not addresses:
+        raise UnsafeTargetError("target host did not resolve to an address")
+    return addresses
+
+
+def resolve_integration_addresses(host: str, port: int) -> list[str]:
+    """Resolve an integration host and require every answer to pass its policy."""
+    try:
+        infos = socket.getaddrinfo(
+            host,
+            port,
+            family=socket.AF_UNSPEC,
+            type=socket.SOCK_STREAM,
+            proto=socket.IPPROTO_TCP,
+        )
+    except Exception as exc:
+        raise UnsafeTargetError(
+            f"target DNS resolution failed ({type(exc).__name__})"
+        ) from exc
+    return _validated_integration_addresses(infos)
 
 
 def is_safe_public_url(url: str) -> tuple[bool, str]:
@@ -190,26 +243,44 @@ async def egress_block_reason(url: str) -> Optional[str]:
     metadata) or unspecified. RFC1918 is ALLOWED (an on-prem Splunk,
     OpenShift, GitHub Enterprise or GitLab); a host that does not resolve is
     ALLOWED (initial setup, air-gapped DNS: nothing is reachable through it).
-    Run at egress time, so it also covers DNS rebinding and rows saved before
-    the check existed. DNS runs off the event loop.
+    This preflight gives configuration-time and user-facing refusal reasons;
+    ``IntegrationEgressAsyncHTTPTransport`` repeats the policy while opening
+    the socket, closes the DNS-rebinding window, and fails closed. DNS runs
+    off the event loop in both controls.
 
     Moved verbatim from ``github_checks_service._ssrf_block_reason`` (W10),
     which remains importable there as this same object.
     """
-    host = (urlparse(url).hostname or "").strip()
-    if not host:
+    try:
+        parsed = urlparse(url)
+        host = (parsed.hostname or "").strip()
+        port = parsed.port or (443 if parsed.scheme.lower() == "https" else 80)
+    except (TypeError, ValueError):
+        return "invalid_url"
+    if (
+        parsed.scheme.lower() not in ("http", "https")
+        or not host
+        or parsed.username is not None
+        or parsed.password is not None
+        or "#" in url
+    ):
         return "invalid_url"
     try:
-        infos = await asyncio.to_thread(socket.getaddrinfo, host, None)
+        infos = await asyncio.to_thread(
+            socket.getaddrinfo,
+            host,
+            port,
+            socket.AF_UNSPEC,
+            socket.SOCK_STREAM,
+            socket.IPPROTO_TCP,
+        )
     except Exception:
         return None  # non-resolving -> allow (setup-friendly, no SSRF reach)
     for info in infos:
         raw = str(info[4][0])
         try:
-            addr = ipaddress.ip_address(raw.split("%")[0])
-        except ValueError:
-            continue
-        if addr.is_loopback or addr.is_link_local or addr.is_unspecified:
+            _integration_ip(raw)
+        except UnsafeTargetError:
             return f"blocked_target:{raw}"
     return None
 
@@ -336,3 +407,112 @@ class PublicOnlyAsyncHTTPTransport(httpx.AsyncHTTPTransport):
         pool._network_backend = safe_backend
         if pool._network_backend is not safe_backend:
             raise RuntimeError("Public URL connection policy could not be installed")
+
+
+class IntegrationEgressNetworkBackend(httpcore.AsyncNetworkBackend):
+    """Resolve, validate, and pin integration TCP connections at connect time."""
+
+    def __init__(self, backend: httpcore.AsyncNetworkBackend | None = None) -> None:
+        self._backend = backend or httpcore.AnyIOBackend()
+
+    async def connect_tcp(
+        self,
+        host: str,
+        port: int,
+        timeout: float | None = None,
+        local_address: str | None = None,
+        socket_options: Iterable[httpcore.SOCKET_OPTION] | None = None,
+    ) -> httpcore.AsyncNetworkStream:
+        started = time.monotonic()
+        try:
+            if timeout is None:
+                addresses = await asyncio.to_thread(
+                    resolve_integration_addresses, host, port
+                )
+            else:
+                async with asyncio.timeout(timeout):
+                    addresses = await asyncio.to_thread(
+                        resolve_integration_addresses, host, port
+                    )
+        except TimeoutError as exc:
+            raise httpcore.ConnectTimeout("DNS resolution deadline expired") from exc
+
+        approved = set(addresses)
+        last_error: Exception | None = None
+        for address in addresses:
+            remaining = None
+            if timeout is not None:
+                remaining = timeout - (time.monotonic() - started)
+                if remaining <= 0:
+                    raise httpcore.ConnectTimeout("connection deadline expired")
+            try:
+                stream = await self._backend.connect_tcp(
+                    address,
+                    port,
+                    timeout=remaining,
+                    local_address=local_address,
+                    socket_options=socket_options,
+                )
+            except (httpcore.ConnectError, httpcore.ConnectTimeout) as exc:
+                last_error = exc
+                continue
+
+            peer = stream.get_extra_info("server_addr")
+            try:
+                peer_address = str(_integration_ip(str(peer[0])))
+            except (IndexError, TypeError, UnsafeTargetError) as exc:
+                await stream.aclose()
+                raise UnsafeTargetError(
+                    "connected peer address could not be verified"
+                ) from exc
+            if peer_address not in approved:
+                await stream.aclose()
+                raise UnsafeTargetError(
+                    f"connected peer did not match approved DNS answers ({peer_address})"
+                )
+            return stream
+        if last_error is not None:
+            raise last_error
+        raise UnsafeTargetError("target host had no connectable integration address")
+
+    async def connect_unix_socket(
+        self,
+        path: str,
+        timeout: float | None = None,
+        socket_options: Iterable[httpcore.SOCKET_OPTION] | None = None,
+    ) -> httpcore.AsyncNetworkStream:
+        raise UnsafeTargetError("Unix sockets are not allowed for integration requests")
+
+    async def sleep(self, seconds: float) -> None:
+        await self._backend.sleep(seconds)
+
+
+class IntegrationEgressAsyncHTTPTransport(httpx.AsyncHTTPTransport):
+    """HTTPX transport enforcing integration policy on the connected peer."""
+
+    def __init__(
+        self,
+        *,
+        verify: Any = True,
+        limits: httpx.Limits | None = None,
+        network_backend: httpcore.AsyncNetworkBackend | None = None,
+    ) -> None:
+        super().__init__(
+            verify=verify,
+            trust_env=False,
+            limits=limits or httpx.Limits(),
+            retries=0,
+        )
+        pool = getattr(self, "_pool", None)
+        if not isinstance(pool, httpcore.AsyncConnectionPool):
+            raise RuntimeError(
+                "HTTPX transport internals changed; integration egress policy unavailable"
+            )
+        if not hasattr(pool, "_network_backend"):
+            raise RuntimeError(
+                "HTTPcore transport internals changed; integration egress policy unavailable"
+            )
+        safe_backend = IntegrationEgressNetworkBackend(network_backend)
+        pool._network_backend = safe_backend
+        if pool._network_backend is not safe_backend:
+            raise RuntimeError("Integration egress policy could not be installed")

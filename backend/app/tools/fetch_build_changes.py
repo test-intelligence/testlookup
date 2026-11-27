@@ -17,7 +17,7 @@ from typing import Any, Optional
 
 from langchain_core.tools import tool
 
-from app.core.http_client import get_http_client
+from app.core.http_client import get_integration_http_client as get_http_client
 from app.db.postgres import AsyncSessionLocal
 from app.services.github_target import GitHubTarget, resolve_github_target
 from app.services.url_safety import egress_block_reason

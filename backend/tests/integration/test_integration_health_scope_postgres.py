@@ -82,7 +82,7 @@ async def world():
     monkeypatch = pytest.MonkeyPatch()
     monkeypatch.setattr("app.db.postgres.AsyncSessionLocal", sessions)
     monkeypatch.setattr(settings, "AI_OFFLINE_MODE", False)
-    monkeypatch.setattr(probes, "get_http_client", lambda: client)
+    monkeypatch.setattr(probes, "get_integration_http_client", lambda: client)
     monkeypatch.setattr(secret_service, "read_secret", read_secret)
     monkeypatch.setattr(url_safety.socket, "getaddrinfo", resolves)
 

@@ -97,7 +97,7 @@ async def world():
     monkeypatch = pytest.MonkeyPatch()
     monkeypatch.setattr("app.db.postgres.AsyncSessionLocal", sessions)
     monkeypatch.setattr(svc, "resolve_jira_config", resolved)
-    monkeypatch.setattr(svc, "get_http_client", lambda: jira_client)
+    monkeypatch.setattr(svc, "get_integration_http_client", lambda: jira_client)
     monkeypatch.setattr("app.services.cache_service.bump_analytics_epoch", AsyncMock())
     monkeypatch.setattr("app.services.defect_promoted_webhook.emit_defect_promoted", AsyncMock(return_value=0))
 
