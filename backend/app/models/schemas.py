@@ -610,9 +610,8 @@ class MfaEnrollConfirmResponse(BaseModel):
     enabled: Literal[True] = True
     # Shown exactly once. Only digests are stored server-side.
     recovery_codes: List[str]
-    # Present only on the forced-enrollment path, where confirming enrollment
-    # is also what completes the login.
-    tokens: Optional[TokenResponse] = None
+    # Enrollment replaces the browser's password-only refresh session with an MFA-assured one.
+    tokens: TokenResponse
 
 
 class MfaVerifyRequest(BaseModel):
@@ -646,10 +645,11 @@ class MfaStatusResponse(BaseModel):
     enabled: bool
     enrolled_at: Optional[datetime] = None
     recovery_codes_remaining: int = 0
-    # Does workspace policy require this user to hold a second factor?
+    # Does workspace policy require this user to hold a second factor when
+    # signing in locally? SSO session assurance is evaluated separately.
     required_by_policy: bool = False
-    # True when an external IdP owns this account, so the local requirement
-    # does not apply to it.
+    # True when an external IdP owns this account. A linked account may also
+    # have a local factor for password sign-in.
     sso_managed: bool = False
     # True when the account is flagged as enrolled but the stored seed cannot
     # be read — MFA is broken, not off, and login is denied until it is fixed.

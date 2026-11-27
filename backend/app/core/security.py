@@ -3,6 +3,7 @@ import hashlib
 import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
+from enum import Enum
 from functools import lru_cache
 from typing import Any, Optional, cast
 
@@ -23,6 +24,14 @@ from app.core.config import settings
 # scripts/quality_gate.py (deps.no-python-jose) keeps jose from coming back.
 JWTError = jwt.PyJWTError
 ExpiredSignatureError = jwt.ExpiredSignatureError
+
+
+class AuthenticationAssurance(str, Enum):
+    """Authentication method that established a renewable browser session."""
+
+    PASSWORD = "password"
+    MFA = "mfa"
+    SSO = "sso"
 
 
 # bcrypt hashes at most 72 bytes. Versions before 5.0 truncated silently;
@@ -95,16 +104,29 @@ def create_access_token(
     return cast(str, jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM))
 
 
-def create_refresh_token(subject: Any, jti: Optional[str] = None) -> tuple[str, str, datetime]:
+def create_refresh_token(
+    subject: Any,
+    jti: Optional[str] = None,
+    *,
+    authentication_assurance: AuthenticationAssurance = AuthenticationAssurance.PASSWORD,
+) -> tuple[str, str, datetime]:
     """Return (encoded_token, jti, expires_at).
 
     Callers must persist a `RefreshTokenRecord` using ``hash_token(jti)`` so
-    rotation and replay detection can be enforced at refresh time.
+    rotation and replay detection can be enforced at refresh time. The signed
+    assurance claim lets policy checks distinguish local-password sessions
+    from sessions established by MFA or an identity provider.
     """
     expire = datetime.now(timezone.utc) + timedelta(days=settings.JWT_REFRESH_TOKEN_EXPIRE_DAYS)
     if jti is None:
         jti = secrets.token_urlsafe(24)
-    payload = {"sub": str(subject), "exp": expire, "type": "refresh", "jti": jti}
+    payload = {
+        "sub": str(subject),
+        "exp": expire,
+        "type": "refresh",
+        "jti": jti,
+        "auth_assurance": authentication_assurance.value,
+    }
     token = cast(str, jwt.encode(payload, settings.JWT_SECRET_KEY, algorithm=settings.JWT_ALGORITHM))
     return token, jti, expire
 

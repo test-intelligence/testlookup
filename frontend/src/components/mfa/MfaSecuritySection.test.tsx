@@ -23,6 +23,7 @@ const mockEnrollStart = vi.fn()
 const mockEnrollConfirm = vi.fn()
 const mockDisable = vi.fn()
 const mockRegenerate = vi.fn()
+const mockSetAuth = vi.hoisted(() => vi.fn())
 
 vi.mock('@/services/mfaService', () => ({
   mfaService: {
@@ -36,6 +37,22 @@ vi.mock('@/services/mfaService', () => ({
 
 vi.mock('react-hot-toast', () => ({
   default: { success: vi.fn(), error: vi.fn() },
+}))
+
+vi.mock('@/store/authStore', () => ({
+  useAuthStore: (selector: (state: unknown) => unknown) => selector({
+    user: {
+      id: 'user-1',
+      email: 'alice@example.test',
+      username: 'alice',
+      full_name: 'Alice',
+      role: 'ADMIN',
+      is_active: true,
+      must_change_password: false,
+      avatar_color: null,
+    },
+    setAuth: mockSetAuth,
+  }),
 }))
 
 const BASE: MfaStatus = {
@@ -76,7 +93,7 @@ describe('MfaSecuritySection', () => {
   })
 
   it('offers no controls at all when MFA is managed by the identity provider', async () => {
-    mockStatus.mockResolvedValue({ ...BASE, sso_managed: true, enabled: true })
+    mockStatus.mockResolvedValue({ ...BASE, sso_managed: true })
     renderSection()
 
     expect(await screen.findByTestId('mfa-sso-managed')).toBeInTheDocument()
@@ -134,11 +151,17 @@ describe('MfaSecuritySection', () => {
   it('walks voluntary enrollment and requires acknowledging the recovery codes', async () => {
     mockStatus.mockResolvedValue({ ...BASE })
     mockEnrollStart.mockResolvedValue(ENROLL_START)
-    // Voluntary path: `tokens` is null — the user keeps their session.
+    // Voluntary enrollment replaces the password-only session with MFA assurance.
     mockEnrollConfirm.mockResolvedValue({
       enabled: true,
       recovery_codes: RECOVERY_CODES,
-      tokens: null,
+      tokens: {
+        access_token: 'mfa-access',
+        refresh_token: 'mfa-refresh',
+        token_type: 'bearer',
+        expires_in: 1800,
+        must_change_password: false,
+      },
     })
     renderSection()
 
@@ -161,6 +184,12 @@ describe('MfaSecuritySection', () => {
     expect(finish).toBeDisabled()
     fireEvent.click(screen.getByRole('checkbox', { name: /saved these recovery codes/i }))
     expect(finish).toBeEnabled()
+    fireEvent.click(finish)
+    expect(mockSetAuth).toHaveBeenCalledWith(
+      'mfa-access',
+      'mfa-refresh',
+      expect.objectContaining({ id: 'user-1' }),
+    )
   })
 
   it('shows enrolled state with remaining codes, Regenerate and Disable', async () => {
@@ -177,6 +206,23 @@ describe('MfaSecuritySection', () => {
     )
     expect(screen.getByRole('button', { name: /regenerate recovery codes/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /turn off two-factor/i })).toBeInTheDocument()
+  })
+
+  it('keeps recovery controls visible for an IdP-linked account with local MFA', async () => {
+    mockStatus.mockResolvedValue({
+      ...BASE,
+      enabled: true,
+      sso_managed: true,
+      required_by_policy: true,
+      recovery_codes_remaining: 6,
+    })
+    renderSection()
+
+    const enrolled = await screen.findByTestId('mfa-enrolled')
+    expect(enrolled).toHaveTextContent(/local factor.*protect password sign-in/i)
+    expect(enrolled).toHaveTextContent(/6.*of 10 recovery codes remaining/i)
+    expect(screen.getByRole('button', { name: /regenerate recovery codes/i })).toBeInTheDocument()
+    expect(screen.queryByTestId('mfa-sso-managed')).toBeNull()
   })
 
   it('requires a password and a second factor to disable', async () => {

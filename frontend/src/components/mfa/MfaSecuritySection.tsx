@@ -19,6 +19,7 @@ import type { MfaEnrollStartResponse } from '@/types/mfa'
 import { describeMfaError, type MfaErrorInfo } from '@/utils/mfaErrors'
 import { formatCompactDateTime } from '@/utils/formatters'
 import { PANEL_TITLE_CLASS } from '@/components/ui/PanelHeader'
+import { useAuthStore } from '@/store/authStore'
 import MfaCodeField, { type MfaFactorMode } from './MfaCodeField'
 import MfaEnrollPanel from './MfaEnrollPanel'
 import RecoveryCodesPanel from './RecoveryCodesPanel'
@@ -36,9 +37,9 @@ function formatEnrolledAt(iso: string | null): string | null {
  *
  * The two states that are easy to get wrong, and are handled explicitly here:
  *
- *  - `sso_managed` — the identity provider owns this user's second factor.
- *    Showing an Enable button would be a lie; we render an explanation and no
- *    controls at all.
+ *  - `sso_managed` without local MFA — the identity provider owns the only
+ *    second factor, so we render its guidance and no local controls. A linked
+ *    account with `enabled` local MFA still sees recovery management.
  *  - `secret_unreadable` — MFA is ON but the stored seed will not decrypt. The
  *    user cannot log in with TOTP and cannot fix it themselves (disable and
  *    regenerate both 503). This is rendered as a loud broken state, never as
@@ -47,6 +48,8 @@ function formatEnrolledAt(iso: string | null): string | null {
  */
 export default function MfaSecuritySection() {
   const { data: status, error, isLoading, mutate } = useMfaStatus()
+  const user = useAuthStore((state) => state.user)
+  const setAuth = useAuthStore((state) => state.setAuth)
 
   const [panel, setPanel] = useState<Panel>('none')
   const [busy, setBusy] = useState(false)
@@ -167,8 +170,8 @@ export default function MfaSecuritySection() {
     )
   }
 
-  // ── SSO-managed: the IdP owns the second factor ───────────────────────────
-  if (status.sso_managed) {
+  // ── SSO-only: the IdP owns the only second factor ─────────────────────────
+  if (status.sso_managed && !status.enabled) {
     return (
       <section className="card space-y-3" data-testid="mfa-sso-managed">
         {heading('mb-3')}
@@ -231,7 +234,10 @@ export default function MfaSecuritySection() {
               resetForms()
               void mutate()
             }}
-            onComplete={() => {
+            onComplete={(result) => {
+              if (user) {
+                setAuth(result.tokens.access_token, result.tokens.refresh_token, user)
+              }
               toast.success('Two-factor authentication enabled')
               resetForms()
               void mutate()
@@ -305,6 +311,14 @@ export default function MfaSecuritySection() {
         <strong>{status.recovery_codes_remaining}</strong> of 10 recovery codes remaining.
         {codesLow && ' Regenerate a fresh set before you run out.'}
       </p>
+
+      {status.sso_managed && (
+        <p className="flex items-start gap-2 text-xs text-[var(--color-text-muted)]">
+          <Building2 className="mt-0.5 h-3.5 w-3.5 flex-shrink-0" />
+          Your identity provider protects SSO sign-in. This local factor and its recovery
+          codes protect password sign-in, so you can manage them here.
+        </p>
+      )}
 
       {status.required_by_policy && (
         <p className="text-xs text-[var(--color-text-muted)]">

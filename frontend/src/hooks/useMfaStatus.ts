@@ -43,7 +43,7 @@ export function startMfaEnrollment(
 
 /**
  * Confirm with a live code. The response carries the one-and-only copy of the
- * recovery codes, plus `tokens` (non-null only on the forced path).
+ * recovery codes, plus an MFA-assured replacement session.
  */
 export function confirmMfaEnrollment(
   code: string,

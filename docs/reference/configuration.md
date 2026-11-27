@@ -192,7 +192,6 @@ Source declarations only; no `.env` or running secrets are read. Compose/Helm/Ku
 | `JWT_ALGORITHM` | `str` | `'HS256'` |
 | `JWT_ACCESS_TOKEN_EXPIRE_MINUTES` | `int` | `30` |
 | `JWT_REFRESH_TOKEN_EXPIRE_DAYS` | `int` | `7` |
-| `JWT_REFRESH_REUSE_LEEWAY_SECONDS` | `int` | `Field(default=10, ge=0, le=60)` |
 | `AUTH_REVOCATION_FAIL_OPEN` | `bool` | `False` |
 | `REGISTRATION_ENABLED` | `bool` | `False` |
 | `DEMO_MODE` | `bool` | `False` |

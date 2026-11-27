@@ -388,16 +388,9 @@ export default function LoginPage() {
                   )
                 }
                 onComplete={(result) => {
-                  // The forced path is the only one where `tokens` is non-null —
-                  // it is how the user finishes signing in without re-entering
-                  // their password.
-                  if (result.tokens) {
-                    void completeSignIn(result.tokens);
-                  } else {
-                    backToPassword(
-                      'Two-factor authentication is enabled. Sign in again to continue.',
-                    );
-                  }
+                  // Enrollment completes this sign-in with an MFA-assured
+                  // replacement session, without asking for the password again.
+                  void completeSignIn(result.tokens);
                 }}
               />
               </Suspense>

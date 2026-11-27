@@ -60,7 +60,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.deps import _normalize_user_role, _ROLE_ORDER
-from app.core.security import hash_token
+from app.core.security import AuthenticationAssurance, hash_token
 from app.models.postgres import (
     AppSetting,
     FederatedIdentity,
@@ -362,9 +362,10 @@ async def is_sso_managed(db: AsyncSession, user: User) -> bool:
        sense but looks purely local. The audit row is written unconditionally
        on the same code path, so it is the reliable signal.
 
-    Used only to decide whether the workspace MFA *requirement* applies. It
-    never suppresses MFA a user has voluntarily enrolled — an SSO-managed user
-    with ``mfa_enabled`` set is still challenged on the local password path.
+    Used by account-management endpoints to describe IdP ownership. It must
+    not exempt local password login or permit a policy-covered local factor to
+    be disabled: session assurance records the method that authenticated the
+    current session.
     """
     linked = await db.execute(
         select(FederatedIdentity.id).where(FederatedIdentity.user_id == user.id).limit(1)
@@ -537,20 +538,31 @@ class LoginRequirement(str, Enum):
 
 
 async def evaluate_login_requirement(
-    db: AsyncSession, user: User, policy: Optional[MfaPolicy] = None
+    db: AsyncSession,
+    user: User,
+    policy: Optional[MfaPolicy] = None,
+    *,
+    authentication_assurance: AuthenticationAssurance = AuthenticationAssurance.PASSWORD,
 ) -> LoginRequirement:
-    """Decide the post-password step for a local (password) login.
+    """Decide whether the current authentication method satisfies local MFA.
 
-    Not consulted by ``/api/v1/sso/acs`` — see ``routers/sso.py`` and
-    ``architecture/SECURITY.md`` for why the IdP path is exempt.
+    Password login uses the fail-closed default. SSO callbacks do not call this
+    helper when the IdP authenticates the user, but their refresh sessions pass
+    signed SSO assurance here when policy is re-evaluated during rotation.
     """
     policy = policy if policy is not None else await load_policy(db)
+    strong_assurance = authentication_assurance in (
+        AuthenticationAssurance.MFA,
+        AuthenticationAssurance.SSO,
+    )
+    if strong_assurance:
+        return LoginRequirement.NONE
     if user.mfa_enabled:
         loaded = await load_totp_secret(db, user)
         if not loaded.usable:
             return LoginRequirement.BROKEN
         return LoginRequirement.CHALLENGE
-    if policy_requires_mfa(user, policy) and not await is_sso_managed(db, user):
+    if policy_requires_mfa(user, policy):
         return LoginRequirement.ENROLL
     return LoginRequirement.NONE
 

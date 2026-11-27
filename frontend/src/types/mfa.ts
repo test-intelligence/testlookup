@@ -100,12 +100,8 @@ export interface MfaEnrollConfirmResponse {
   enabled: true
   /** Exactly 10 codes, shown once and never again. */
   recovery_codes: string[]
-  /**
-   * Non-null ONLY on the forced-enrollment path (the request carried an
-   * `enrollment_token`). On the voluntary path the caller keeps its session
-   * and this is null.
-   */
-  tokens: TokenResponse | null
+  /** MFA-assured replacement for the browser's pre-enrollment session. */
+  tokens: TokenResponse
 }
 
 // ── Challenge verification ───────────────────────────────────────────────────
@@ -144,8 +140,9 @@ export interface MfaStatus {
   /** ISO-8601 with offset, or null when never enrolled. */
   enrolled_at: string | null
   recovery_codes_remaining: number
-  /** Already net of SSO — true only when the policy binds *and* SSO does not manage this user. */
+  /** True when local password sign-in for this role requires MFA. */
   required_by_policy: boolean
+  /** The account is IdP-linked; it may also have a local factor for password sign-in. */
   sso_managed: boolean
   /**
    * Enrolled but the stored TOTP seed cannot be decrypted. This is BROKEN, not

@@ -34,6 +34,7 @@ from sqlalchemy.pool import StaticPool  # noqa: E402
 
 from app.core import security  # noqa: E402
 from app.core.security import (  # noqa: E402
+    AuthenticationAssurance,
     MFA_CHALLENGE_TOKEN_TYPE,
     MFA_ENROLLMENT_TOKEN_TYPE,
     create_access_token,
@@ -57,6 +58,7 @@ from app.models.postgres import (  # noqa: E402
     UserRole,
 )
 from app.services import mfa_service  # noqa: E402
+from app.services.refresh_token_service import issue_refresh_token  # noqa: E402
 
 # Tables the MFA/auth surface touches. Deliberately a closed set rather than
 # ``create_all()`` — most of the schema uses Postgres-only column types.
@@ -523,7 +525,7 @@ class TestSsoExemption:
         user = await make_user(db, username="local")
         assert await mfa_service.is_sso_managed(db, user) is False
 
-    async def test_policy_does_not_force_enrollment_on_an_sso_user(self, db, client):
+    async def test_linked_account_password_login_still_requires_enrollment(self, db, client):
         user = await make_user(db, username="fed2", role=UserRole.ADMIN)
         cfg = await self._sso_config(db)
         db.add(
@@ -532,14 +534,85 @@ class TestSsoExemption:
         await set_policy(db, require_mfa=True, required_for_role=None)
 
         req = await mfa_service.evaluate_login_requirement(db, user)
-        assert req is mfa_service.LoginRequirement.NONE
+        assert req is mfa_service.LoginRequirement.ENROLL
 
         resp = await login(client, user=user)
         assert resp.status_code == 200
-        assert "access_token" in resp.json()
+        assert resp.json()["mfa_enrollment_required"] is True
+        assert "access_token" not in resp.json()
+        assert "refresh_token" not in resp.json()
+
+    async def test_password_session_cannot_refresh_through_sso_history(self, db, client):
+        user = await make_user(db, username="fed-refresh", role=UserRole.ADMIN)
+        cfg = await self._sso_config(db)
+        db.add(
+            FederatedIdentity(user_id=user.id, sso_config_id=cfg.id, external_id="ext-refresh")
+        )
+        await db.commit()
+        password_session = (await login(client, user=user)).json()
+
+        await set_policy(db, require_mfa=True, required_for_role=None)
+        resp = await client.post(
+            "/api/v1/auth/refresh",
+            json={"refresh_token": password_session["refresh_token"]},
+        )
+
+        assert resp.status_code == 401
+        assert "access_token" not in resp.json()
+
+    async def test_legacy_linked_refresh_without_assurance_is_password_only(self, db, client):
+        user = await make_user(db, username="fed-legacy-refresh", role=UserRole.ADMIN)
+        cfg = await self._sso_config(db)
+        db.add(
+            FederatedIdentity(user_id=user.id, sso_config_id=cfg.id, external_id="ext-legacy")
+        )
+        refresh_token = await issue_refresh_token(db, user.id)
+        await db.commit()
+        claims = decode_token(refresh_token, expected_type="refresh")
+        claims.pop("auth_assurance")
+        legacy_token = security.jwt.encode(
+            claims,
+            security.settings.JWT_SECRET_KEY,
+            algorithm=security.settings.JWT_ALGORITHM,
+        )
+        await set_policy(db, require_mfa=True, required_for_role=None)
+
+        resp = await client.post(
+            "/api/v1/auth/refresh", json={"refresh_token": legacy_token}
+        )
+
+        assert resp.status_code == 401
+        assert "access_token" not in resp.json()
+
+    async def test_sso_assured_session_refreshes_under_policy(self, db, client):
+        user = await make_user(db, username="fed-sso-refresh", role=UserRole.ADMIN)
+        cfg = await self._sso_config(db)
+        db.add(
+            FederatedIdentity(user_id=user.id, sso_config_id=cfg.id, external_id="ext-sso-refresh")
+        )
+        await set_policy(db, require_mfa=True, required_for_role=None)
+        await enroll(db, user)
+        refresh_token = await issue_refresh_token(
+            db,
+            user.id,
+            authentication_assurance=AuthenticationAssurance.SSO,
+        )
+        await db.commit()
+
+        resp = await client.post(
+            "/api/v1/auth/refresh", json={"refresh_token": refresh_token}
+        )
+
+        assert resp.status_code == 200
+        rotated = decode_token(resp.json()["refresh_token"], expected_type="refresh")
+        assert rotated["auth_assurance"] == AuthenticationAssurance.SSO.value
+        replay = await client.post(
+            "/api/v1/auth/refresh", json={"refresh_token": refresh_token}
+        )
+        assert replay.status_code == 401
 
     async def test_sso_user_who_opts_in_is_still_challenged(self, db):
-        """Exemption is from the *requirement*, never from an enrolled factor."""
+        """A linked account with local MFA still challenges on password login."""
         user = await make_user(db, username="fed3")
         cfg = await self._sso_config(db)
         db.add(
@@ -550,6 +623,56 @@ class TestSsoExemption:
 
         req = await mfa_service.evaluate_login_requirement(db, user)
         assert req is mfa_service.LoginRequirement.CHALLENGE
+
+    async def test_linked_user_with_local_mfa_can_manage_recovery_codes(self, db, client):
+        user = await make_user(db, username="fed-recovery", role=UserRole.ADMIN)
+        cfg = await self._sso_config(db)
+        db.add(
+            FederatedIdentity(
+                user_id=user.id,
+                sso_config_id=cfg.id,
+                external_id="ext-recovery",
+            )
+        )
+        await set_policy(db, require_mfa=True, required_for_role=None)
+        enrollment_token = (await login(client, user=user)).json()["enrollment_token"]
+        started = await client.post(
+            "/api/v1/auth/mfa/enroll/start",
+            json={"enrollment_token": enrollment_token},
+        )
+        secret = started.json()["secret"]
+        confirmed = await client.post(
+            "/api/v1/auth/mfa/enroll/confirm",
+            json={
+                "enrollment_token": enrollment_token,
+                "code": pyotp.TOTP(secret).now(),
+            },
+        )
+        assert confirmed.status_code == 200
+        tokens = confirmed.json()["tokens"]
+        headers = {"Authorization": f"Bearer {tokens['access_token']}"}
+
+        status_response = await client.get("/api/v1/auth/mfa/status", headers=headers)
+        assert status_response.status_code == 200
+        assert status_response.json()["enabled"] is True
+        assert status_response.json()["sso_managed"] is True
+        assert status_response.json()["required_by_policy"] is True
+
+        await db.refresh(user)
+        next_code = pyotp.TOTP(secret).at((user.mfa_last_used_step + 1) * 30)
+        denied = await client.post(
+            "/api/v1/auth/mfa/recovery-codes",
+            headers=headers,
+            json={"password": "wrong-password", "code": next_code},
+        )
+        assert denied.status_code == 400
+        regenerated = await client.post(
+            "/api/v1/auth/mfa/recovery-codes",
+            headers=headers,
+            json={"password": PASSWORD, "code": next_code},
+        )
+        assert regenerated.status_code == 200
+        assert len(regenerated.json()["recovery_codes"]) == 10
 
     def test_sso_acs_does_not_consult_the_mfa_policy(self):
         """Documented, deliberate, and asserted so it cannot drift silently.
@@ -1111,6 +1234,19 @@ class TestPolicy:
         payload = confirm.json()
         assert len(payload["recovery_codes"]) == 10
         assert payload["tokens"]["access_token"]
+        refresh_claims = decode_token(
+            payload["tokens"]["refresh_token"], expected_type="refresh"
+        )
+        assert refresh_claims["auth_assurance"] == AuthenticationAssurance.MFA.value
+        refreshed = await client.post(
+            "/api/v1/auth/refresh",
+            json={"refresh_token": payload["tokens"]["refresh_token"]},
+        )
+        assert refreshed.status_code == 200
+        rotated_claims = decode_token(
+            refreshed.json()["refresh_token"], expected_type="refresh"
+        )
+        assert rotated_claims["auth_assurance"] == AuthenticationAssurance.MFA.value
 
         await db.refresh(user)
         assert user.mfa_enabled is True
@@ -1249,7 +1385,8 @@ class TestEnrollmentFlow:
 
     async def test_full_voluntary_enrollment_then_challenge_then_verify(self, db, client):
         user = await make_user(db, username="enr-full")
-        tok = (await login(client, user=user)).json()["access_token"]
+        password_session = (await login(client, user=user)).json()
+        tok = password_session["access_token"]
         headers = {"Authorization": f"Bearer {tok}"}
 
         start = await client.post("/api/v1/auth/mfa/enroll/start", headers=headers, json={})
@@ -1260,7 +1397,25 @@ class TestEnrollmentFlow:
             json={"code": pyotp.TOTP(secret).now()},
         )
         assert confirm.status_code == 200
-        assert confirm.json()["tokens"] is None  # already had a session
+        replacement = confirm.json()["tokens"]
+        claims = decode_token(replacement["refresh_token"], expected_type="refresh")
+        assert claims["auth_assurance"] == AuthenticationAssurance.MFA.value
+        old_jti = decode_token(
+            password_session["refresh_token"], expected_type="refresh"
+        )["jti"]
+        old_record = (
+            await db.execute(
+                select(RefreshTokenRecord).where(
+                    RefreshTokenRecord.jti_hash == security.hash_token(old_jti)
+                )
+            )
+        ).scalar_one()
+        assert old_record.revoked_at is not None
+        refreshed = await client.post(
+            "/api/v1/auth/refresh",
+            json={"refresh_token": replacement["refresh_token"]},
+        )
+        assert refreshed.status_code == 200
 
         # Next login is now two-legged.
         body = (await login(client, user=user)).json()

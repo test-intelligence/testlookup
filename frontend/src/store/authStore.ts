@@ -31,6 +31,38 @@ export function storedUserId(raw: string | null): string | null {
   }
 }
 
+interface StoredSession {
+  userId: string | null;
+  refreshToken: string | null;
+}
+
+/** The persisted token pair another tab may have rotated while this tab waited. */
+function storedSession(raw: string | null): StoredSession | null {
+  try {
+    const state = raw ? JSON.parse(raw).state : null;
+    if (!state) return null;
+    return {
+      userId: state.user?.id ?? null,
+      refreshToken: state.refreshToken ?? null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+const REFRESH_LOCK_NAME = 'testlookup.auth.refresh';
+interface BrowserLockManager {
+  request<T>(name: string, callback: () => Promise<T>): Promise<T>;
+}
+
+/** Serialize refresh-token use across tabs when the browser supports Web Locks. */
+function withBrowserRefreshLock<T>(callback: () => Promise<T>): Promise<T> {
+  const locks = typeof navigator === 'undefined'
+    ? undefined
+    : (navigator as unknown as { locks?: BrowserLockManager }).locks;
+  return locks?.request ? locks.request(REFRESH_LOCK_NAME, callback) : callback();
+}
+
 /** `auth-storage`, guarded: a tab never writes over an entry another tab gave to a different account. */
 const guardedLocalStorage: StateStorage = {
   getItem: (name) => {
@@ -197,54 +229,73 @@ export const useAuthStore = create<AuthState>()(
 
       refreshAccessToken: async (): Promise<string | null> => {
         if (refreshInFlight) return refreshInFlight;
-        refreshInFlight = (async (): Promise<string | null> => {
-        const { refreshToken, logout, refreshRetryAt, refreshRequiresReauth, refreshRetryExhausted, sessionGeneration } = get();
-        if (refreshRequiresReauth || refreshRetryExhausted || (refreshRetryAt && Date.now() < refreshRetryAt)) return null;
-        if (!refreshToken) {
-          logout();
-          return null;
-        }
-
-        try {
-          const res = await api.post<{ access_token: string; refresh_token: string }>(
-            '/api/v1/auth/refresh',
-            { refresh_token: refreshToken },
-          );
-          const { access_token, refresh_token } = res.data;
-          if (get().refreshToken !== refreshToken || get().sessionGeneration !== sessionGeneration) return null;
-          set({ token: access_token, refreshToken: refresh_token, refreshRetryAt: null, refreshFailureCount: 0, refreshError: null, refreshRequiresReauth: false, refreshRetryExhausted: false });
-          return access_token;
-        } catch (err) {
-          const status = (err as { response?: { status?: number } })?.response?.status;
-          // A refresh failure is ambiguous for transient/network/server errors:
-          // the rotated token may already have been committed server-side.
-          // Preserve credentials and let the next request retry. Only an
-          // explicit credential rejection means the session is invalid.
-          if (get().refreshToken !== refreshToken || get().sessionGeneration !== sessionGeneration) return null;
-          if (status === 401 || status === 403) logout();
-          else {
-            const failures = get().refreshFailureCount + 1;
-            const headers = (err as { response?: { headers?: { get?: (name: string) => string | undefined } & Record<string, string> } })?.response?.headers;
-            const header = (name: string) => headers?.get?.(name) ?? headers?.[name.toLowerCase()] ?? headers?.[name];
-            const retryAfter = Number(header('retry-after'));
-            const retrySafe = header('x-refresh-retry-safe') === '1';
-            if (status === 429 || retrySafe) {
-              if (failures >= 6) {
-                set({ refreshFailureCount: failures, refreshRetryAt: Number.POSITIVE_INFINITY, refreshRetryExhausted: true, refreshError: 'Session refresh is still unavailable. Try again when the service recovers.' });
-                return null;
-              }
-              const delay = Number.isFinite(retryAfter) && retryAfter > 0
-                ? Math.min(60_000, Math.max(1_000, retryAfter * 1000))
-                : Math.min(60_000, 1000 * 2 ** Math.min(failures - 1, 6));
-              set({ refreshFailureCount: failures, refreshRetryAt: Date.now() + delay, refreshRetryExhausted: false, refreshError: 'Session refresh is temporarily unavailable. Retry after the cooldown.' });
-            } else {
-              // Other responses may be post-commit and unsafe to replay.
-              set({ refreshFailureCount: failures, refreshRetryAt: Number.POSITIVE_INFINITY, refreshRequiresReauth: true, refreshError: 'Session refresh could not be confirmed. Sign in again to continue.' });
-            }
+        refreshInFlight = withBrowserRefreshLock(async (): Promise<string | null> => {
+          // A tab that rotated while this one waited owns the only live refresh
+          // token. Adopt its pair instead of replaying the now-spent token.
+          const beforeLock = get();
+          const persisted = storedSession(localStorage.getItem(AUTH_STORAGE_KEY));
+          if (persisted && beforeLock.user && persisted.userId !== beforeLock.user.id) {
+            sessionHooks.superseded?.();
+            return null;
           }
-          return null;
-        }
-        })();
+          if (
+            persisted?.userId === beforeLock.user?.id
+            && persisted.refreshToken
+            && persisted.refreshToken !== beforeLock.refreshToken
+          ) {
+            await useAuthStore.persist.rehydrate();
+            const adopted = get();
+            if (adopted.refreshToken === persisted.refreshToken) return adopted.token;
+            return null;
+          }
+
+          const { refreshToken, logout, refreshRetryAt, refreshRequiresReauth, refreshRetryExhausted, sessionGeneration } = get();
+          if (refreshRequiresReauth || refreshRetryExhausted || (refreshRetryAt && Date.now() < refreshRetryAt)) return null;
+          if (!refreshToken) {
+            logout();
+            return null;
+          }
+
+          try {
+            const res = await api.post<{ access_token: string; refresh_token: string }>(
+              '/api/v1/auth/refresh',
+              { refresh_token: refreshToken },
+            );
+            const { access_token, refresh_token } = res.data;
+            if (get().refreshToken !== refreshToken || get().sessionGeneration !== sessionGeneration) return null;
+            set({ token: access_token, refreshToken: refresh_token, refreshRetryAt: null, refreshFailureCount: 0, refreshError: null, refreshRequiresReauth: false, refreshRetryExhausted: false });
+            return access_token;
+          } catch (err) {
+            const status = (err as { response?: { status?: number } })?.response?.status;
+            // A refresh failure is ambiguous for transient/network/server errors:
+            // the rotated token may already have been committed server-side.
+            // Preserve credentials and let the next request retry. Only an
+            // explicit credential rejection means the session is invalid.
+            if (get().refreshToken !== refreshToken || get().sessionGeneration !== sessionGeneration) return null;
+            if (status === 401 || status === 403) logout();
+            else {
+              const failures = get().refreshFailureCount + 1;
+              const headers = (err as { response?: { headers?: { get?: (name: string) => string | undefined } & Record<string, string> } })?.response?.headers;
+              const header = (name: string) => headers?.get?.(name) ?? headers?.[name.toLowerCase()] ?? headers?.[name];
+              const retryAfter = Number(header('retry-after'));
+              const retrySafe = header('x-refresh-retry-safe') === '1';
+              if (status === 429 || retrySafe) {
+                if (failures >= 6) {
+                  set({ refreshFailureCount: failures, refreshRetryAt: Number.POSITIVE_INFINITY, refreshRetryExhausted: true, refreshError: 'Session refresh is still unavailable. Try again when the service recovers.' });
+                  return null;
+                }
+                const delay = Number.isFinite(retryAfter) && retryAfter > 0
+                  ? Math.min(60_000, Math.max(1_000, retryAfter * 1000))
+                  : Math.min(60_000, 1000 * 2 ** Math.min(failures - 1, 6));
+                set({ refreshFailureCount: failures, refreshRetryAt: Date.now() + delay, refreshRetryExhausted: false, refreshError: 'Session refresh is temporarily unavailable. Retry after the cooldown.' });
+              } else {
+                // Other responses may be post-commit and unsafe to replay.
+                set({ refreshFailureCount: failures, refreshRetryAt: Number.POSITIVE_INFINITY, refreshRequiresReauth: true, refreshError: 'Session refresh could not be confirmed. Sign in again to continue.' });
+              }
+            }
+            return null;
+          }
+        });
         try { return await refreshInFlight; } finally { refreshInFlight = null; }
       },
     }),

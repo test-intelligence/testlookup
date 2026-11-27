@@ -70,7 +70,7 @@ export default function MfaEnrollPanel({
       <RecoveryCodesPanel
         codes={confirmed.recovery_codes}
         variant="initial"
-        acknowledgeLabel={confirmed.tokens ? 'Continue to TestLookup' : 'Finish'}
+        acknowledgeLabel={enrollmentToken ? 'Continue to TestLookup' : 'Finish'}
         onAcknowledge={() => onComplete(confirmed)}
       />
     )

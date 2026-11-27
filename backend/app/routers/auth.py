@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.deps import get_current_active_user, oauth2_scheme, require_interactive_session
 from app.core.security import (
+    AuthenticationAssurance,
     MFA_CHALLENGE_TOKEN_TYPE,
     MFA_ENROLLMENT_TOKEN_TYPE,
     JWTError,
@@ -235,7 +236,9 @@ async def accept_invitation(
         )
 
     access_token = await issue_access_jwt(db, str(user.id))
-    refresh_token = await issue_refresh_token(db, user.id)
+    refresh_token = await issue_refresh_token(
+        db, user.id, authentication_assurance=AuthenticationAssurance.PASSWORD
+    )
     await mfa_service.register_successful_login(db, user)
     await db.commit()
     await invalidate_membership_cache(user.id)
@@ -612,7 +615,9 @@ async def login(
         )
 
     access_token = await issue_access_jwt(db, str(user.id))
-    refresh_token = await issue_refresh_token(db, user.id)
+    refresh_token = await issue_refresh_token(
+        db, user.id, authentication_assurance=AuthenticationAssurance.PASSWORD
+    )
     await mfa_service.register_successful_login(db, user)
     await db.commit()
     logger.info("User logged in: user_id=%s (must_change_password=%s)", user.id, user.must_change_password)
@@ -757,7 +762,9 @@ async def dev_login(
         )
 
     access_token = await issue_access_jwt(db, str(user.id))
-    refresh_token = await issue_refresh_token(db, user.id)
+    refresh_token = await issue_refresh_token(
+        db, user.id, authentication_assurance=AuthenticationAssurance.PASSWORD
+    )
     await db.commit()
     logger.info("dev-login: issued token for user_id=%s (%s)", user.id, role)
 
@@ -819,7 +826,9 @@ async def demo_login(db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=DEMO_ACCOUNT_REFUSED)
 
     access_token = await issue_access_jwt(db, str(user.id))
-    refresh_token = await issue_refresh_token(db, user.id)
+    refresh_token = await issue_refresh_token(
+        db, user.id, authentication_assurance=AuthenticationAssurance.PASSWORD
+    )
     await db.commit()
 
     return TokenResponse(
@@ -889,13 +898,23 @@ async def refresh_tokens(
 
     try:
         # decode_token(expected_type="refresh") already rejects a non-refresh
-        # token (e.g. an access token presented here), so we only verify `sub`.
+        # token (e.g. an access token presented here) and verifies its signature
+        # before these identity and assurance claims are trusted.
         data = decode_token(payload.refresh_token, expected_type="refresh")
         user_id: str = data.get("sub", "")
         jti: str = data.get("jti", "")
         if not user_id or not jti:
             raise credentials_exception
     except JWTError:
+        raise credentials_exception
+
+    try:
+        # Tokens issued before assurance was recorded are password-equivalent:
+        # they cannot claim an IdP or second factor that was never persisted.
+        authentication_assurance = AuthenticationAssurance(
+            data.get("auth_assurance", AuthenticationAssurance.PASSWORD.value)
+        )
+    except (TypeError, ValueError):
         raise credentials_exception
 
     try:
@@ -915,26 +934,42 @@ async def refresh_tokens(
     # never present a second factor. Rejecting here sends the SPA back to
     # /login, which then returns the enrollment challenge.
     policy = await mfa_service.load_policy(db)
-    requirement = await mfa_service.evaluate_login_requirement(db, user, policy)
+    requirement = await mfa_service.evaluate_login_requirement(
+        db,
+        user,
+        policy,
+        authentication_assurance=authentication_assurance,
+    )
     if requirement is mfa_service.LoginRequirement.BROKEN:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=mfa_service.SEED_UNREADABLE_DETAIL,
             headers={"X-Refresh-Retry-Safe": "1"},
         )
-    if requirement is mfa_service.LoginRequirement.ENROLL:
-        logger.info("Refresh rejected — MFA enrollment now required: user_id=%s", user.id)
+    if requirement in (
+        mfa_service.LoginRequirement.CHALLENGE,
+        mfa_service.LoginRequirement.ENROLL,
+    ):
+        logger.info("Refresh rejected — stronger assurance required: user_id=%s", user.id)
+        detail = (
+            "Multi-factor authentication is now required for your role. "
+            "Sign in again to enroll an authenticator."
+            if requirement is mfa_service.LoginRequirement.ENROLL
+            else "Multi-factor authentication is required. Sign in again to verify your authenticator."
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=(
-                "Multi-factor authentication is now required for your role. "
-                "Sign in again to enroll an authenticator."
-            ),
+            detail=detail,
             headers={"WWW-Authenticate": "Bearer"},
         )
 
     try:
-        new_refresh = await rotate_refresh_token(db, uid, jti)
+        new_refresh = await rotate_refresh_token(
+            db,
+            uid,
+            jti,
+            authentication_assurance=authentication_assurance,
+        )
     except RefreshTokenError as exc:
         await db.commit()  # persist any family revocation from replay detection
         logger.warning("Refresh token rejected for user_id=%s: %s", user.id, exc)

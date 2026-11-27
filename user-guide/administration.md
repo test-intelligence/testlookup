@@ -55,7 +55,7 @@ Then, in **Settings → Security & access → SSO & identity** (administrators):
 
 Sign-in is started by TestLookup: **Sign in with SSO** sends a SAML request to the identity provider and returns the user to the page they started from. TestLookup's requests are unsigned, so an identity provider that insists on signed requests will refuse them. Single logout works in one direction. When the identity provider ends a session and the configuration has an **IdP SLO URL**, the provider's signed logout request ends that user's TestLookup sessions as well (IdP-initiated SAML single logout). Signing out of TestLookup does not sign the user out of the identity provider. Details: [Single logout](../docs/operations/integrations.md#single-logout-idp-initiated).
 
-**Identity Events** shows sign-ins, provisioning and role changes for the last 30 days; **Sync Status** shows federated users, the last SSO sign-in and SCIM sync, and recent failures. SSO-managed accounts are exempt from the MFA requirement below.
+**Identity Events** shows sign-ins, provisioning and role changes for the last 30 days; **Sync Status** shows federated users, the last SSO sign-in and SCIM sync, and recent failures. The MFA exemption below follows the current SSO session, not the account link: a linked account that uses its local password still follows the local MFA policy.
 
 ### When your identity provider deletes a user
 
@@ -92,7 +92,7 @@ Password first, then a second factor. The intermediate token the server hands ba
 
 - Ten codes, single-use, formatted `XXXX-XXXX-XXXX-XXXX`. Spacing and case do not matter when you type one back.
 - Using one consumes it permanently. The response tells you how many are left.
-- You can reissue the whole set at any time (password + a live second factor required). **Reissuing invalidates every previous code**, including unused ones.
+- You can reissue the whole set at any time (password + a live second factor required). **Reissuing invalidates every previous code**, including unused ones. A linked account that enrolled a local factor can see the remaining count and reissue its local codes here; an SSO-only account manages recovery with its identity provider.
 - Running out is not a lock-out on its own — you can reissue while you still have your authenticator. It becomes a lock-out only if you lose the authenticator *and* have no codes left, which is what breakglass is for.
 
 ### Turning MFA off
@@ -111,9 +111,11 @@ Requires your password **and** a live second factor. If workspace policy require
 | Failed attempts before lockout | 10 | Consecutive failures before the account locks (3–100). |
 | Lockout duration | 15 min | How long the lock lasts (1–1440 minutes). |
 
-Turning the requirement on takes effect immediately for new sign-ins, and within one access-token lifetime for sessions that are already live — the token-refresh path re-checks the policy and sends affected users back to the login screen, where they are handed an enrollment challenge instead of a session.
+Turning the requirement on takes effect immediately for new password sign-ins, and within one access-token lifetime for password-only sessions that are already live — the token-refresh path re-checks the policy and sends affected users back to the login screen, where they are handed an enrollment challenge instead of a session. Sessions established by a completed local MFA challenge or by SAML/OIDC keep that signed assurance when their single-use refresh token rotates.
 
-**SSO-managed accounts are exempt from the requirement.** Any account with a federated identity link, or one that was provisioned over SCIM, is skipped: your IdP already owns that account's authentication. SAML sign-in (`/api/v1/sso/acs`) does not consult this policy at all. An SSO-managed user who enrolls voluntarily is still challenged when they use the local password path.
+**The SSO session is exempt; the linked account is not.** SAML and OIDC callbacks establish an SSO-assured session because the identity provider authenticated that request. In Optional SSO mode, the same linked or SCIM-provisioned account can still submit its local password; that password path must enroll or verify local MFA when policy covers the role. A local factor on a linked account remains visible under **My profile**, including its recovery-code count and regeneration controls.
+
+Refresh tokens issued before this assurance claim was added are treated as password-only because the server cannot prove how those sessions authenticated. After upgrading, a policy-covered user with an older token is sent to sign in once: use SSO again for an IdP-assured session, or complete local MFA for an MFA-assured session. This is a one-time interruption; later rotations preserve the signed assurance.
 
 **API keys are never challenged.** A key embedded in a CI pipeline cannot type a TOTP code, so keys keep working when you turn the policy on. The flip side is that a key is a single-factor way into the account, so treat key issuance as a sensitive grant — keys are per-user, listed under **My API keys** (and, for project-bound keys, **Streaming API keys**), and revocable. Keys *can* read MFA status but cannot enroll, disable, or reissue recovery codes.
 

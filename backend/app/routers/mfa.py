@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.deps import get_current_active_user
 from app.core.security import (
+    AuthenticationAssurance,
     MFA_CHALLENGE_TOKEN_TYPE,
     MFA_ENROLLMENT_TOKEN_TYPE,
     JWTError,
@@ -49,6 +50,7 @@ from app.models.schemas import (
 )
 from app.services import mfa_service
 from app.services.auth_session_tokens import issue_access_jwt
+from app.services.refresh_token_service import _revoke_family as _revoke_refresh_family
 from app.services.refresh_token_service import issue_refresh_token
 from app.services.sso_service import log_identity_event
 
@@ -195,7 +197,9 @@ def _assert_not_locked(user: User) -> None:
 
 async def _issue_session(db: AsyncSession, user: User) -> TokenResponse:
     access_token = await issue_access_jwt(db, str(user.id))
-    refresh_token = await issue_refresh_token(db, user.id)
+    refresh_token = await issue_refresh_token(
+        db, user.id, authentication_assurance=AuthenticationAssurance.MFA
+    )
     await mfa_service.register_successful_login(db, user)
     return TokenResponse(
         access_token=access_token,
@@ -334,11 +338,14 @@ async def confirm_enrollment(
         ip_address=_client_ip(request),
     )
 
-    tokens: Optional[TokenResponse] = None
+    # Enrollment raises the session's assurance. End every pre-enrollment
+    # refresh root before minting the replacement so a password-only token
+    # cannot outlive the newly enabled factor.
+    await _revoke_refresh_family(db, user.id, reason="mfa_enrollment")
+    tokens = await _issue_session(db, user)
     if forced:
         # The enrollment token was the only credential in play; completing
         # enrollment is what completes the login.
-        tokens = await _issue_session(db, user)
         await _consume_mfa_token(user)
 
     await db.commit()
@@ -505,9 +512,7 @@ async def disable_mfa(
     # Policy is checked *before* the second factor so a user who is not allowed
     # to disable MFA is not asked to burn a recovery code finding that out.
     policy = await mfa_service.load_policy(db)
-    if mfa_service.policy_requires_mfa(current_user, policy) and not await mfa_service.is_sso_managed(
-        db, current_user
-    ):
+    if mfa_service.policy_requires_mfa(current_user, policy):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=(
@@ -605,7 +610,7 @@ async def mfa_status(
         enabled=bool(current_user.mfa_enabled),
         enrolled_at=current_user.mfa_enrolled_at,
         recovery_codes_remaining=await mfa_service.count_unused_recovery_codes(db, current_user),
-        required_by_policy=mfa_service.policy_requires_mfa(current_user, policy) and not sso_managed,
+        required_by_policy=mfa_service.policy_requires_mfa(current_user, policy),
         sso_managed=sso_managed,
         secret_unreadable=unreadable,
     )
