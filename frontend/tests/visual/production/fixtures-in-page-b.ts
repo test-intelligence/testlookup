@@ -717,11 +717,11 @@ export const UM_USERS = {
 }
 /** The one-time values the fixtures answer (fixture strings, not real secrets). */
 export const ONE_TIME = {
-  tempPassword: 'Tmp-w27b-fixture-Zq81x',
+  tempPassword: 'Tmp-w27b-fixture-Zq81x', // gitleaks:allow -- synthetic test credential, never production authority
   invitePath: '/accept-invite#token=w27b-fixture-invite-token',
-  streamingKey: 'qai_w27b_fixture_streaming_key_0001',
-  personalKey: 'qai_w27b_fixture_personal_key_0002',
-  qaLeadPassword: 'QaLead-w27b-fixture-Pw77',
+  streamingKey: 'qai_w27b_fixture_streaming_key_0001', // gitleaks:allow -- synthetic test credential, never production authority
+  personalKey: 'qai_w27b_fixture_personal_key_0002', // gitleaks:allow -- synthetic test credential, never production authority
+  qaLeadPassword: 'QaLead-w27b-fixture-Pw77', // gitleaks:allow -- synthetic test credential, never production authority
 }
 export const DEFAULT_QA_LEAD_EMAIL = 'qa-lead-checkout@example.test'
 /** The id the next created user gets. */

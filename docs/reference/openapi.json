@@ -68759,6 +68759,29 @@
               }
             },
             "description": "Validation Error"
+          },
+          "503": {
+            "description": "Upload admission or queue confirmation unavailable. If Location and X-Upload-Task-ID are present, processing may still start: poll the existing upload before resubmitting.",
+            "headers": {
+              "Location": {
+                "description": "Existing upload status URL, when dispatch is unconfirmed",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Upload-Run-ID": {
+                "description": "Existing run identifier, when dispatch is unconfirmed",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Upload-Task-ID": {
+                "description": "Existing upload task identifier, when dispatch is unconfirmed",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -68824,6 +68847,29 @@
               }
             },
             "description": "Validation Error"
+          },
+          "503": {
+            "description": "Upload admission or queue confirmation unavailable. If Location and X-Upload-Task-ID are present, processing may still start: poll the existing upload before resubmitting.",
+            "headers": {
+              "Location": {
+                "description": "Existing upload status URL, when dispatch is unconfirmed",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Upload-Run-ID": {
+                "description": "Existing run identifier, when dispatch is unconfirmed",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Upload-Task-ID": {
+                "description": "Existing upload task identifier, when dispatch is unconfirmed",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           }
         },
         "security": [

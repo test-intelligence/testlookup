@@ -15,7 +15,7 @@ from app.services.privacy_service import sanitize_for_persistence
 
 RAW_ERROR = (
     "Auth failed for admin@corp.example with password=Admin123! "
-    "and api_key=sk_live_abcdefghijklmnop"
+    "and api_key=sk_live_abcdefghijklmnop" # gitleaks:allow -- synthetic test credential, never production authority
 )
 RAW_STACK = (
     "Authorization: Bearer abcdefghijklmnopqrstuvwxyz0123456789\n"
@@ -39,7 +39,7 @@ def _assert_no_raw_canaries(payload: object) -> None:
     for secret in (
         "admin@corp.example",
         "Admin123!",
-        "sk_live_abcdefghijklmnop",
+        "sk_live_abcdefghijklmnop", # gitleaks:allow -- synthetic test credential, never production authority
         "abcdefghijklmnopqrstuvwxyz0123456789",
         "192.168.50.10",
         "nested@example.com",

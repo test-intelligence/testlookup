@@ -440,13 +440,21 @@ def test_the_secret_scan_runs_on_every_change_and_blocks() -> None:
     install = next(s for s in steps if "gitleaks" in s.get("name", "").lower() and "curl" in s.get("run", ""))
     assert re.fullmatch(r"[0-9a-f]{64}", install["env"]["GITLEAKS_ARCHIVE_SHA256"])
     assert install["run"].index("sha256sum --check --strict") < install["run"].index("tar ")
-    scan = steps[-1]
+    scan = next(step for step in steps if step.get("name") == "Scan the added commits")
     assert "gitleaks git --config .gitleaks.toml" in scan["run"]
     assert "--exit-code 1" in scan["run"]
     assert "${{" not in scan["run"], "pass event values through env:, never into the script"
     version = re.search(r"/download/v([\d.]+)/", install["run"]).group(1)
     push_check = (ROOT / "scripts" / "push_check.py").read_text(encoding="utf-8")
     assert f"gitleaks/v8@v{version}" in push_check, "push_check.py installs a different gitleaks"
+    snapshot = next(step for step in steps if step.get("name") == "Scan the full tracked candidate snapshot")
+    assert snapshot["if"] == "github.event_name == 'push'"
+    assert 'scan_secret_snapshot.py' in snapshot["run"]
+    assert '--source-sha "$GITHUB_SHA"' in snapshot["run"]
+    assert '--gitleaks /usr/local/bin/gitleaks' in snapshot["run"]
+    assert not snapshot.get("continue-on-error")
+    proof = next(step for step in steps if step.get("name") == "Prove full candidate coverage and raw-blob isolation")
+    assert proof["env"]["GITLEAKS_TEST_BINARY"] == "/usr/local/bin/gitleaks"
 
 
 def test_the_gitleaks_rules_add_the_tokens_the_defaults_missed() -> None:

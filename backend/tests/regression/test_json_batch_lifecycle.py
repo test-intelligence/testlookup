@@ -231,15 +231,17 @@ async def test_after_the_task_body_runs_the_poll_reads_succeeded_with_the_total(
     assert published["kwargs"]["payload_storage_key"] in world.storage.deleted
 
 
-async def test_a_broker_failure_is_a_503_and_leaves_nothing_behind(world, monkeypatch):
+async def test_an_unconfirmed_publish_is_a_503_with_a_retained_payload_and_poll_id(world, monkeypatch):
     def _broken(*_a, **_k):
         raise ConnectionError("broker down")
 
     monkeypatch.setattr(tasks.ingest_uploaded_results, "apply_async", _broken)
     resp = await _post("/api/v1/ingest", json=_batch(world.project_id))
     assert resp.status_code == 503, resp.text
-    assert world.storage.objects == {}, "the stored batch must not outlive a failed publish"
-    assert world.store == {}, "the pending seed must not outlive a failed publish"
+    assert len(world.storage.objects) == 1, "an accepted message may still need its batch"
+    task_id = resp.headers["X-Upload-Task-ID"]
+    assert _status(world, task_id)["state"] == "pending"
+    assert resp.headers["Location"] == f"/api/v1/ingest/uploads/{task_id}"
 
 
 # ── D-05 / S-C-6: terminal refusals in the worker ───────────────────────────

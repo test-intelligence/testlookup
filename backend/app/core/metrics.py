@@ -843,3 +843,42 @@ workflow_eval_coverage = Gauge(
     "Fraction of candidate workflow steps measured by the replay corpus",
     ["project_id", "workflow_id"],
 )
+
+# Operational collection is bounded; a previous gauge value is not proof that
+# its dependency was observed during the current scrape. Shared-state gauges
+# use mostrecent within a pod and max (not sum) across API replicas in rules.
+metric_collection_success = Gauge(
+    "testlookup_metric_collection_success",
+    "Whether the latest bounded collection completed successfully",
+    ["collector"],
+    multiprocess_mode="mostrecent",
+)
+metric_collection_last_success = Gauge(
+    "testlookup_metric_collection_last_success_timestamp_seconds",
+    "Unix timestamp of the latest complete successful collection",
+    ["collector"],
+    multiprocess_mode="mostrecent",
+)
+metric_collection_errors_total = Counter(
+    "testlookup_metric_collection_errors_total",
+    "Failed or timed-out operational collections",
+    ["collector"],
+)
+downstream_outbox_entries = Gauge(
+    "testlookup_downstream_outbox_entries",
+    "Durable downstream operations by bounded operation and lifecycle state",
+    ["operation", "status"],
+    multiprocess_mode="mostrecent",
+)
+downstream_outbox_oldest_age_seconds = Gauge(
+    "testlookup_downstream_outbox_oldest_age_seconds",
+    "Age of the oldest non-completed operation in the current SQL snapshot",
+    ["operation", "status"],
+    multiprocess_mode="mostrecent",
+)
+downstream_outbox_overdue_seconds = Gauge(
+    "testlookup_downstream_outbox_overdue_seconds",
+    "Seconds past the oldest retry or lease deadline for nonterminal work",
+    ["operation", "status"],
+    multiprocess_mode="mostrecent",
+)

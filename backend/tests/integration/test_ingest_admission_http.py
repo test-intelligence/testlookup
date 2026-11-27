@@ -73,11 +73,11 @@ def downstream():
         async def get_object_content(self, key, bucket=None):
             return self.last[1]
 
-    def _batch_apply_async(*, kwargs, task_id):
+    def _batch_apply_async(*, kwargs, task_id, **_options):
         queued.append("batch")
         return SimpleNamespace(id=task_id)
 
-    def _apply_async(*, kwargs, task_id):
+    def _apply_async(*, kwargs, task_id, **_options):
         queued.append("file")
         return SimpleNamespace(id=task_id)
 

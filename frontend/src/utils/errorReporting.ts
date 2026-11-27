@@ -11,7 +11,7 @@
  * using navigator.sendBeacon on page unload and a periodic flush timer.
  */
 
-import type { Metric } from 'web-vitals'
+import type { Metric } from "web-vitals";
 
 /**
  * Whether this session sends no telemetry. The public read-only demo refuses
@@ -20,16 +20,16 @@ import type { Metric } from 'web-vitals'
  * the API client, which reads `window` as it loads, and error boundaries
  * import this module lazily, sometimes after a test's environment is gone.
  */
-let _telemetrySuppressed: () => boolean = () => false
+let _telemetrySuppressed: () => boolean = () => false;
 
 export function setTelemetrySuppressed(check: () => boolean): void {
-  _telemetrySuppressed = check
+  _telemetrySuppressed = check;
 }
 
 // When VITE_API_BASE_URL is unset, use a same-origin relative URL so the
 // reporter follows the page through any ingress (k8s, gcp, aws, reference K3s install).
 // VITE_API_URL is also accepted as a legacy alias.
-const API_ENDPOINT = `${import.meta.env.VITE_API_URL ?? import.meta.env.VITE_API_BASE_URL ?? ''}/api/v1/observability/frontend`
+const API_ENDPOINT = `${import.meta.env.VITE_API_URL ?? import.meta.env.VITE_API_BASE_URL ?? ""}/api/v1/observability/frontend`;
 
 /**
  * The page address without its query string or fragment.
@@ -37,32 +37,32 @@ const API_ENDPOINT = `${import.meta.env.VITE_API_URL ?? import.meta.env.VITE_API
  * Invite, password-reset and SSO values ride in the fragment so that they
  * never reach a server; `location.href` would send them with every record.
  */
-const _pageUrl = (): string => location.origin + location.pathname
+const _pageUrl = (): string => location.origin + location.pathname;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
 interface FrontendError {
-  type: 'error' | 'unhandledrejection' | 'boundary'
-  message: string
-  stack?: string
-  component_stack?: string
-  url: string
-  user_agent: string
-  timestamp: string
-  context?: Record<string, unknown>
+  type: "error" | "unhandledrejection" | "boundary";
+  message: string;
+  stack?: string;
+  component_stack?: string;
+  url: string;
+  user_agent: string;
+  timestamp: string;
+  context?: Record<string, unknown>;
 }
 
 interface WebVitalReport {
-  name: string
-  value: number
-  rating: string
-  url: string
-  delta?: number
+  name: string;
+  value: number;
+  rating: string;
+  url: string;
+  delta?: number;
 }
 
 interface TelemetryBatch {
-  errors: FrontendError[]
-  vitals: WebVitalReport[]
+  errors: FrontendError[];
+  vitals: WebVitalReport[];
 }
 
 // ── Batch buffer ──────────────────────────────────────────────────────────────
@@ -81,19 +81,49 @@ interface TelemetryBatch {
  * every render produces them in a fraction of a second, which is exactly the
  * incident the report exists for. Batches are therefore split to fit.
  */
-const BEACON_LIMIT_BYTES = 60_000
+const BEACON_LIMIT_BYTES = 60_000;
 
 /**
  * Per-event truncation, applied at capture.
  *
- * Bounds a single event to roughly 6 KB so one enormous stack cannot produce a
+ * Bounds every captured string, including its serialized UTF-8 size, so an
+ * enormous message or escaped stack cannot produce a
  * chunk that nothing can send. The backend truncates `stack` at 5000 and
  * `message` at 2000 anyway, so this discards only what would have been dropped
  * server-side — except that here it is discarded before it can cost us the
  * whole batch.
  */
-const MAX_STACK_CHARS = 4000
-const MAX_COMPONENT_STACK_CHARS = 2000
+const MAX_STACK_CHARS = 4000;
+const MAX_COMPONENT_STACK_CHARS = 2000;
+const MAX_MESSAGE_CHARS = 2000;
+const MAX_URL_CHARS = 2000;
+const MAX_USER_AGENT_CHARS = 500;
+const utf8 = new TextEncoder();
+
+/** Bound JSON-encoded bytes too: control characters expand to six bytes. */
+function _boundedText(value: string, maxChars: number): string {
+  const prefix = (length: number) => {
+    const text = value.slice(0, length);
+    // Keep a surrogate pair together at a truncation boundary.
+    return /[\uD800-\uDBFF]$/.test(text) ? text.slice(0, -1) : text;
+  };
+  const bounded = prefix(maxChars);
+  const budget = maxChars * 3;
+  if (utf8.encode(JSON.stringify(bounded)).byteLength <= budget) return bounded;
+  let low = 0;
+  let high = bounded.length;
+  while (low < high) {
+    const middle = Math.ceil((low + high) / 2);
+    if (utf8.encode(JSON.stringify(prefix(middle))).byteLength <= budget)
+      low = middle;
+    else high = middle - 1;
+  }
+  return prefix(low);
+}
+
+function _boundedUrl(value: string): string {
+  return _boundedText(value.split(/[?#]/, 1)[0], MAX_URL_CHARS);
+}
 
 /**
  * Bound the buffer so a render loop cannot grow it without limit.
@@ -102,28 +132,28 @@ const MAX_COMPONENT_STACK_CHARS = 2000
  * error buffer gets one more record on send (the "events dropped" note in
  * `flush`), so it holds 49.
  */
-const MAX_BUFFERED_ERRORS = 49
-const MAX_BUFFERED_VITALS = 50
+const MAX_BUFFERED_ERRORS = 49;
+const MAX_BUFFERED_VITALS = 50;
 
 /** Stop rescheduling after this many consecutive failed flushes. */
-const MAX_FLUSH_RETRIES = 3
+const MAX_FLUSH_RETRIES = 3;
 
-const _batch: TelemetryBatch = { errors: [], vitals: [] }
-let _flushTimer: ReturnType<typeof setTimeout> | null = null
-let _droppedEvents = 0
-let _consecutiveFailures = 0
+const _batch: TelemetryBatch = { errors: [], vitals: [] };
+let _flushTimer: ReturnType<typeof setTimeout> | null = null;
+let _droppedEvents = 0;
+let _consecutiveFailures = 0;
 
 function _scheduleFlush(): void {
-  if (_flushTimer) return
+  if (_flushTimer) return;
   _flushTimer = setTimeout(() => {
-    _flushTimer = null
-    flush()
-  }, 5000) // batch window: 5 s
+    _flushTimer = null;
+    flush();
+  }, 5000); // batch window: 5 s
 }
 
 /** Serialized size of a batch, measured the way the transport measures it. */
 function _sizeOf(batch: TelemetryBatch): number {
-  return JSON.stringify(batch).length
+  return utf8.encode(JSON.stringify(batch)).byteLength;
 }
 
 /**
@@ -134,28 +164,37 @@ function _sizeOf(batch: TelemetryBatch): number {
  * limit on its own, so every event lands in some piece.
  */
 function _partition(batch: TelemetryBatch): TelemetryBatch[] {
-  if (_sizeOf(batch) <= BEACON_LIMIT_BYTES) return [batch]
+  if (_sizeOf(batch) <= BEACON_LIMIT_BYTES) return [batch];
 
-  const pieces: TelemetryBatch[] = []
-  let current: TelemetryBatch = { errors: [], vitals: [] }
-  let currentSize = _sizeOf(current)
+  const pieces: TelemetryBatch[] = [];
+  let current: TelemetryBatch = { errors: [], vitals: [] };
 
-  const add = (item: FrontendError | WebVitalReport, into: 'errors' | 'vitals') => {
-    const itemSize = JSON.stringify(item).length + 1 // + comma
-    const isEmpty = current.errors.length === 0 && current.vitals.length === 0
-    if (!isEmpty && currentSize + itemSize > BEACON_LIMIT_BYTES) {
-      pieces.push(current)
-      current = { errors: [], vitals: [] }
-      currentSize = _sizeOf(current)
+  const add = (
+    item: FrontendError | WebVitalReport,
+    into: "errors" | "vitals",
+  ) => {
+    const candidate: TelemetryBatch = {
+      errors:
+        into === "errors"
+          ? [...current.errors, item as FrontendError]
+          : current.errors,
+      vitals:
+        into === "vitals"
+          ? [...current.vitals, item as WebVitalReport]
+          : current.vitals,
+    };
+    const isEmpty = current.errors.length === 0 && current.vitals.length === 0;
+    if (!isEmpty && _sizeOf(candidate) > BEACON_LIMIT_BYTES) {
+      pieces.push(current);
+      current = { errors: [], vitals: [] };
     }
-    ;(current[into] as unknown[]).push(item)
-    currentSize += itemSize
-  }
+    (current[into] as unknown[]).push(item);
+  };
 
-  for (const err of batch.errors) add(err, 'errors')
-  for (const vital of batch.vitals) add(vital, 'vitals')
-  if (current.errors.length || current.vitals.length) pieces.push(current)
-  return pieces
+  for (const err of batch.errors) add(err, "errors");
+  for (const vital of batch.vitals) add(vital, "vitals");
+  if (current.errors.length || current.vitals.length) pieces.push(current);
+  return pieces;
 }
 
 /**
@@ -169,22 +208,22 @@ function _transmit(payload: string): boolean {
   try {
     if (navigator.sendBeacon) {
       // sendBeacon is the only transport that survives page unload.
-      const blob = new Blob([payload], { type: 'application/json' })
-      return navigator.sendBeacon(API_ENDPOINT, blob)
+      const blob = new Blob([payload], { type: "application/json" });
+      return navigator.sendBeacon(API_ENDPOINT, blob);
     }
     // No sendBeacon at all (not a real browser we ship to, but keep the path).
     fetch(API_ENDPOINT, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
       body: payload,
       keepalive: true,
     }).catch(() => {
       /* best-effort — ignore network failures */
-    })
-    return true
+    });
+    return true;
   } catch {
     /* never throw from error reporting */
-    return false
+    return false;
   }
 }
 
@@ -197,72 +236,80 @@ function _transmit(payload: string): boolean {
  * refused send destroyed the batch silently.
  */
 export function flush(): void {
-  if (_batch.errors.length === 0 && _batch.vitals.length === 0 && _droppedEvents === 0) return
+  if (
+    _batch.errors.length === 0 &&
+    _batch.vitals.length === 0 &&
+    _droppedEvents === 0
+  )
+    return;
 
   // The public read-only demo refuses every write, this report included (403
   // at the Cloudflare edge and in the app), so a send from a demo session can
   // only fail and print a refusal in the console. Drop the batch rather than
   // hold it for a retry that is refused the same way.
   if (_telemetrySuppressed()) {
-    _batch.errors.length = 0
-    _batch.vitals.length = 0
-    _droppedEvents = 0
-    return
+    _batch.errors.length = 0;
+    _batch.vitals.length = 0;
+    _droppedEvents = 0;
+    return;
   }
 
-  const errors = [..._batch.errors]
-  const vitals = [..._batch.vitals]
-  _batch.errors.length = 0
-  _batch.vitals.length = 0
+  const errors = [..._batch.errors];
+  const vitals = [..._batch.vitals];
+  _batch.errors.length = 0;
+  _batch.vitals.length = 0;
 
   // Tell the backend the report is incomplete. Silent truncation is
   // indistinguishable from silence, and this path only fires during a storm.
   if (_droppedEvents > 0) {
     errors.push({
-      type: 'error',
+      type: "error",
       message: `telemetry buffer overflow: ${_droppedEvents} events dropped before send`,
-      url: typeof window !== 'undefined' ? _pageUrl() : '',
-      user_agent: typeof navigator !== 'undefined' ? navigator.userAgent : '',
+      url: typeof window !== "undefined" ? _boundedUrl(_pageUrl()) : "",
+      user_agent:
+        typeof navigator !== "undefined"
+          ? _boundedText(navigator.userAgent, MAX_USER_AGENT_CHARS)
+          : "",
       timestamp: new Date().toISOString(),
       context: { dropped: _droppedEvents },
-    })
-    _droppedEvents = 0
+    });
+    _droppedEvents = 0;
   }
 
-  const refused: TelemetryBatch = { errors: [], vitals: [] }
+  const refused: TelemetryBatch = { errors: [], vitals: [] };
   for (const piece of _partition({ errors, vitals })) {
-    let payload: string
+    let payload: string;
     try {
-      payload = JSON.stringify(piece)
+      payload = JSON.stringify(piece);
     } catch {
-      continue // unserializable — dropping it is the only option
+      continue; // unserializable — dropping it is the only option
     }
     if (!_transmit(payload)) {
-      refused.errors.push(...piece.errors)
-      refused.vitals.push(...piece.vitals)
+      refused.errors.push(...piece.errors);
+      refused.vitals.push(...piece.vitals);
     }
   }
 
   if (refused.errors.length || refused.vitals.length) {
     // Put them back at the front — oldest events are the ones with context.
-    _batch.errors.unshift(...refused.errors)
-    _batch.vitals.unshift(...refused.vitals)
-    _enforceBufferBounds()
-    if (++_consecutiveFailures < MAX_FLUSH_RETRIES) _scheduleFlush()
+    _batch.errors.unshift(...refused.errors);
+    _batch.vitals.unshift(...refused.vitals);
+    _enforceBufferBounds();
+    if (++_consecutiveFailures < MAX_FLUSH_RETRIES) _scheduleFlush();
   } else {
-    _consecutiveFailures = 0
+    _consecutiveFailures = 0;
   }
 }
 
 /** Trim the buffer to its bounds, recording how much was discarded. */
 function _enforceBufferBounds(): void {
   if (_batch.errors.length > MAX_BUFFERED_ERRORS) {
-    _droppedEvents += _batch.errors.length - MAX_BUFFERED_ERRORS
-    _batch.errors.splice(MAX_BUFFERED_ERRORS)
+    _droppedEvents += _batch.errors.length - MAX_BUFFERED_ERRORS;
+    _batch.errors.splice(MAX_BUFFERED_ERRORS);
   }
   if (_batch.vitals.length > MAX_BUFFERED_VITALS) {
-    _droppedEvents += _batch.vitals.length - MAX_BUFFERED_VITALS
-    _batch.vitals.splice(MAX_BUFFERED_VITALS)
+    _droppedEvents += _batch.vitals.length - MAX_BUFFERED_VITALS;
+    _batch.vitals.splice(MAX_BUFFERED_VITALS);
   }
 }
 
@@ -270,71 +317,97 @@ function _enforceBufferBounds(): void {
 
 /** Strip full file paths from stack traces, keeping only filename + line number. */
 function _sanitizeStack(stack: string | undefined): string | undefined {
-  if (!stack) return stack
+  if (!stack) return stack;
   // Replace full paths like /home/user/project/src/file.ts:42:10 → file.ts:42:10
-  return stack.replace(/(?:\/[\w./-]+\/|[A-Z]:\\[\w.\\-]+\\)([\w.-]+:\d+)/g, '$1')
+  return stack.replace(
+    /(?:\/[\w./-]+\/|[A-Z]:\\[\w.\\-]+\\)([\w.-]+:\d+)/g,
+    "$1",
+  );
 }
 
 /** Redact potential PII patterns from error messages. */
 function _sanitizeMessage(msg: string): string {
-  return msg
-    // Email addresses
-    .replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, '[REDACTED_EMAIL]')
-    // Phone numbers
-    .replace(/\b(\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b/g, '[REDACTED_PHONE]')
-    // Bearer tokens — lowered floor from 20 → 8 to catch short opaque tokens
-    // (e.g., session IDs) while still avoiding obvious false positives like
-    // "Bearer token".
-    .replace(/Bearer\s+[A-Za-z0-9\-_.=]{8,}/gi, 'Bearer [REDACTED]')
-    // API keys — accept shorter keys (8+) because some integrations ship
-    // 10-12 character keys and would otherwise leak.
-    .replace(/api[_-]?key\s*[:=]\s*['"]?[A-Za-z0-9\-_]{8,}['"]?/gi, 'api_key=[REDACTED]')
-    // Known TestLookup API key prefixes (tl_, qai_, scim_) — catches keys
-    // that appear bare in a message without the "api_key=" antecedent.
-    .replace(/\b(?:tl|qai|scim)_[A-Za-z0-9\-_]{16,}/g, '[REDACTED_KEY]')
-    // JWT tokens (three base64url-ish sections separated by dots)
-    .replace(/\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g, '[REDACTED_JWT]')
-    // Connection strings with passwords
-    .replace(/(\/\/[^:]+:)[^@]{4,}(@)/g, '$1[REDACTED]$2')
+  return (
+    msg
+      // Email addresses
+      .replace(
+        /[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g,
+        "[REDACTED_EMAIL]",
+      )
+      // Phone numbers
+      .replace(
+        /\b(\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b/g,
+        "[REDACTED_PHONE]",
+      )
+      // Bearer tokens — lowered floor from 20 → 8 to catch short opaque tokens
+      // (e.g., session IDs) while still avoiding obvious false positives like
+      // "Bearer token".
+      .replace(/Bearer\s+[A-Za-z0-9\-_.=]{8,}/gi, "Bearer [REDACTED]")
+      // API keys — accept shorter keys (8+) because some integrations ship
+      // 10-12 character keys and would otherwise leak.
+      .replace(
+        /api[_-]?key\s*[:=]\s*['"]?[A-Za-z0-9\-_]{8,}['"]?/gi,
+        "api_key=[REDACTED]",
+      )
+      // Known TestLookup API key prefixes (tl_, qai_, scim_) — catches keys
+      // that appear bare in a message without the "api_key=" antecedent.
+      .replace(/\b(?:tl|qai|scim)_[A-Za-z0-9\-_]{16,}/g, "[REDACTED_KEY]")
+      // JWT tokens (three base64url-ish sections separated by dots)
+      .replace(
+        /\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\b/g,
+        "[REDACTED_JWT]",
+      )
+      // Connection strings with passwords
+      .replace(/(\/\/[^:]+:)[^@]{4,}(@)/g, "$1[REDACTED]$2")
+  );
 }
 
 // ── Error capture ─────────────────────────────────────────────────────────────
 
 function _capture(error: FrontendError): void {
   // Sanitize before buffering (PR-5: never send raw PII to backend)
-  error.message = _sanitizeMessage(error.message)
-  error.stack = _sanitizeStack(error.stack)?.slice(0, MAX_STACK_CHARS)
+  error.message = _boundedText(
+    _sanitizeMessage(error.message),
+    MAX_MESSAGE_CHARS,
+  );
+  error.url = _boundedUrl(error.url);
+  error.user_agent = _boundedText(error.user_agent, MAX_USER_AGENT_CHARS);
+  const stack = _sanitizeStack(error.stack);
+  error.stack = stack ? _boundedText(stack, MAX_STACK_CHARS) : stack;
   if (error.component_stack) {
-    error.component_stack = _sanitizeStack(error.component_stack)?.slice(
-      0,
+    error.component_stack = _boundedText(
+      _sanitizeStack(error.component_stack) ?? "",
       MAX_COMPONENT_STACK_CHARS,
-    )
+    );
   }
-  _batch.errors.push(error)
-  _enforceBufferBounds()
-  _scheduleFlush()
+  _batch.errors.push(error);
+  _enforceBufferBounds();
+  _scheduleFlush();
 }
 
 /** Report an error caught by a React Error Boundary. */
-export function reportBoundaryError(error: Error, componentStack: string): void {
+export function reportBoundaryError(
+  error: Error,
+  componentStack: string,
+): void {
   _capture({
-    type: 'boundary',
+    type: "boundary",
     message: error.message,
     stack: error.stack,
     component_stack: componentStack,
     url: _pageUrl(),
     user_agent: navigator.userAgent,
     timestamp: new Date().toISOString(),
-  })
+  });
 }
 
 // ── Global error listeners ────────────────────────────────────────────────────
 
 /** Install window-level error and unhandledrejection handlers. Call once from main.tsx. */
 export function installGlobalErrorHandlers(): void {
-  window.addEventListener('error', (event) => {
+  window.addEventListener("error", (event) => {
     _capture({
-      type: 'error',
+      type: "error",
       message: event.message || String(event.error),
       stack: event.error?.stack,
       url: event.filename || _pageUrl(),
@@ -344,26 +417,26 @@ export function installGlobalErrorHandlers(): void {
         lineno: event.lineno,
         colno: event.colno,
       },
-    })
-  })
+    });
+  });
 
-  window.addEventListener('unhandledrejection', (event) => {
-    const reason = event.reason
+  window.addEventListener("unhandledrejection", (event) => {
+    const reason = event.reason;
     _capture({
-      type: 'unhandledrejection',
+      type: "unhandledrejection",
       message: reason instanceof Error ? reason.message : String(reason),
       stack: reason instanceof Error ? reason.stack : undefined,
       url: _pageUrl(),
       user_agent: navigator.userAgent,
       timestamp: new Date().toISOString(),
-    })
-  })
+    });
+  });
 
   // Flush on page unload
-  window.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'hidden') flush()
-  })
-  window.addEventListener('pagehide', flush)
+  window.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") flush();
+  });
+  window.addEventListener("pagehide", flush);
 }
 
 // ── Web Vitals reporting ──────────────────────────────────────────────────────
@@ -371,12 +444,12 @@ export function installGlobalErrorHandlers(): void {
 /** Called by useWebVitals hook with each Core Web Vital measurement. */
 export function reportWebVital(metric: Metric): void {
   _batch.vitals.push({
-    name: metric.name,
+    name: _boundedText(metric.name, 64),
     value: metric.value,
-    rating: metric.rating,
-    url: _pageUrl(),
+    rating: _boundedText(metric.rating, 64),
+    url: _boundedUrl(_pageUrl()),
     delta: metric.delta,
-  })
-  _enforceBufferBounds()
-  _scheduleFlush()
+  });
+  _enforceBufferBounds();
+  _scheduleFlush();
 }

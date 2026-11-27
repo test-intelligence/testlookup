@@ -1,0 +1,127 @@
+# Observability delivery program
+
+[Maintainer guide](README.md)
+
+This program extends the existing Prometheus, Grafana and OpenTelemetry foundation. Its scope is eight epics, 43 stories and 129 implementation/verification tasks. Story identifiers remain stable across iterations. A completed code change does not establish production acceptance.
+
+## Delivery and change tracking
+
+Use the single `feat/production-observability` branch for this program. Keep changes in signed commits by iteration; validate locally and push a reviewed batch when it is ready. Do not create a branch per story, dispatch workflows for status checks, or remove required CI checks to save Actions usage. Each iteration updates this page with affected stories, behavior, checks, remaining acceptance and commit history.
+
+Implementation baseline: `bc71694ca8fc91af2ab1fd72819e14ea3e66d540` on `main`. The earlier assessment baseline was `74fdb6b0c1c003c6d70350e8b4fa22a6686e1ac7`. Upstream authentication/MFA changes are included.
+
+Status meanings: **Open** is planned; **In progress** has partial implementation; **Verification** has a candidate implementation with local checks and outstanding acceptance. **Complete** requires the whole story, its dependencies and evidence in the claimed deployment profiles. No epic is complete.
+
+## Epic and story register
+
+| Epic | Capability | Iteration sequence |
+|---|---|---|
+| OBS-E01 | Safe correlated application telemetry | 1: privacy, errors, worker log context; 3: worker tracing and clients |
+| OBS-E02 | Reliable metric collection | 1: bounded reads, queue coverage and SQL outcomes; 2: producers, exporters and access |
+| OBS-E03 | Alerting and scheduled detection | 1: low-volume webhook and new outcome rules; 2: schedules, discovery and routing |
+| OBS-E04 | Durable log and trace platform | 2: profile contract; 3: collection, storage, offline and BYO profiles |
+| OBS-E05 | Durable operational and audit evidence | 2: event outbox/replay; 3: audit archive and retention |
+| OBS-E06 | Objectives and capacity | 2: SLIs and series budget; 4: measured objectives, burn rates and capacity |
+| OBS-E07 | DevSecOps and operational rollout gates | 1: scan authorization and semantic rule tests; 3-4: full signal, security and rollout |
+| OBS-E08 | Safe ingestion and worker lifecycle | 1: bounded publication, retention and readiness reset; 2: durable reconciliation |
+
+| Story | Outcome | Status |
+|---|---|---|
+| OBS-E01-S01 | Redact every exported span surface | Verification |
+| OBS-E01-S02 | Initialize tracing in every worker and scheduler role | Open |
+| OBS-E01-S03 | Propagate task traces and reset task log context | In progress |
+| OBS-E01-S04 | Transmit bounded browser telemetry using actual UTF-8 bytes | Verification |
+| OBS-E01-S05 | Preserve backend correlation IDs in MCP and CLI errors | Open |
+| OBS-E01-S06 | Instrument MCP operations without corrupting stdio | Open |
+| OBS-E01-S07 | Preserve correlation and sanitized logs for every unexpected API error | Verification |
+| OBS-E02-S01 | Bound dependency collection and expose freshness | Verification |
+| OBS-E02-S02 | Monitor every routed queue including agent children | In progress |
+| OBS-E02-S03 | Emit real SQLAlchemy pool saturation measurements | Open |
+| OBS-E02-S04 | Wire dependency and host exporters by deployment profile | Open |
+| OBS-E02-S05 | Make authenticated scrapes work in reference profiles | Open |
+| OBS-E02-S06 | Detect durable downstream failure independently of Celery success | In progress |
+| OBS-E03-S01 | Make weekly digest alerts reflect actual due work and delivery | Open |
+| OBS-E03-S02 | Detect low-volume terminal webhook failures correctly | Verification |
+| OBS-E03-S03 | Deliver routed firing and resolved notifications | Open |
+| OBS-E03-S04 | Observe durable expected-run and last-success state | Open |
+| OBS-E03-S05 | Detect missing targets and required telemetry | Open |
+| OBS-E03-S06 | Detect monitoring and notification path outages independently | Open |
+| OBS-E04-S01 | Define the production telemetry and ownership contract | Open |
+| OBS-E04-S02 | Deploy bounded and secure log/trace collection | Open |
+| OBS-E04-S03 | Provide central log search and working trace-to-log navigation | Open |
+| OBS-E04-S04 | Persist incident traces with explicit small-install and HA options | Open |
+| OBS-E04-S05 | Adapt and verify Kubernetes, K3s and OpenShift monitoring | Open |
+| OBS-E04-S06 | Package offline telemetry and document cloud/BYO adapters | Open |
+| OBS-E05-S01 | Persist failed pipeline event delivery with stable IDs | Open |
+| OBS-E05-S02 | Replay events idempotently and expose fleet health | Open |
+| OBS-E05-S03 | Protect operational audit history and archive integrity | Open |
+| OBS-E05-S04 | Retain security events without deleting SCIM authority evidence | Open |
+| OBS-E06-S01 | Define and emit durable journey success indicators | Open |
+| OBS-E06-S02 | Add scoped error budgets, burn alerts and runbooks | Open |
+| OBS-E06-S03 | Bound metric cardinality and installation scope | Open |
+| OBS-E06-S04 | Measure storage, sampling and resource limits | Open |
+| OBS-E07-S01 | Run semantic telemetry and mounted-configuration checks in CI | In progress |
+| OBS-E07-S02 | Verify the full signal path against a disposable stack | Open |
+| OBS-E07-S03 | Add useful application source security analysis | Open |
+| OBS-E07-S04 | Validate infrastructure security policy in CI | Open |
+| OBS-E07-S05 | Run authenticated dynamic security checks in isolation | Open |
+| OBS-E07-S06 | Verify every deployed role and rehearse production handoff | Open |
+| OBS-E07-S07 | Require same-SHA secret-scan success before publication and promotion | Verification |
+| OBS-E08-S01 | Keep upload publication off the API event loop | Verification |
+| OBS-E08-S02 | Preserve queued batch payloads after ambiguous publication | In progress |
+| OBS-E08-S03 | Clear stale worker readiness before replacement startup | In progress |
+
+## Iteration 1: critical correctness and signal foundations
+
+Candidate changes on the shared branch:
+
+| Stories | Change | Remaining acceptance |
+|---|---|---|
+| OBS-E01-S01 | Every configured trace exporter receives sanitized copies of attributes, events, exception/status text, names, resources, links and scope. Encoded JSON credentials are scrubbed; oversized text is omitted; unsafe spans fail closed. | Review candidate image sinks and configuration before expanding production tracing. |
+| OBS-E01-S03 | Worker task hooks bind validated request/correlation headers and canonical task identity, clear every task outcome and preserve caller context during eager execution. | Full producer W3C propagation and prefork process lifecycle evidence remain open. |
+| OBS-E01-S04 | Browser error batching uses serialized UTF-8 bytes and bounds messages, stacks, component data, URLs and user agents. | Browser transport acceptance with the candidate build. |
+| OBS-E01-S07 | Unexpected core API errors emit one correlated error log and return X-Request-ID while preserving response bodies; pre-routing shared-link paths are sanitized. | Candidate HTTP smoke, with production log access policy. |
+| OBS-E02-S01 | Concurrent collectors have finite foreground deadlines and one in-flight read per collector; failed/stale reads expose success, error and freshness signals. | Real dependency outage, cancellation and multiprocess fleet checks. |
+| OBS-E02-S02 | Redis queue-depth collection includes agent_children and concurrent reads. | Authoritative routing inventory and queue age/throughput coverage. |
+| OBS-E02-S06 | SQL outbox counts, age and status-specific overdue time expose business failures independently of Redis/Celery status. Unknown operation names use a bounded other bucket. Invalid lease state fails collection. | Real PostgreSQL/fleet evidence, historic-table query cost and authorized investigation/replay. |
+| OBS-E03-S02 | Webhook ratio uses its actual nonzero attempt rate; namespace/cluster grouping preserves low-volume failures. | Receiver delivery and profile routing are separate stories. |
+| OBS-E07-S01 | Semantic Prometheus fixtures cover changed rules; Kubernetes rules are generated from the same source. | Broader configuration, full-signal and CI acceptance remain open. |
+| OBS-E07-S07 | Publication and reusable release authorization require successful trusted same-SHA main-push secret-scan evidence, with bounded waiting and failed/missing evidence denied. Main pushes also scan every tracked candidate blob, independently of added history. | Hosted Actions permission/event validation. |
+| OBS-E08-S01/S02 | Upload publishing leaves the API event loop through a finite thread pool. Timeouts/cancellation retain capacity until the real publisher ends; ambiguous publication retains payload and polling identity, exposed in documented CORS-readable response headers. | Durable initial-upload reconciliation, orphan cleanup and HTTP retry idempotency remain open. Thread timeouts cannot terminate a running broker call. |
+| OBS-E08-S03 | Readiness sentinel is removed at worker startup and shutdown so reused volumes cannot inherit a ready marker after a crash. | Container/prefork crash-and-restart acceptance. |
+
+The new collection and outbox alerts retain target freshness and use maximum values for replicated shared SQL state instead of adding duplicate observations. Future retry deadlines do not alert as overdue. Completed rows are not overdue.
+
+### Verification record
+
+- Focused backend behavioral suites: 371 passed, covering upload admission, accepted-then-error retention, event-loop responsiveness, saturation, cancellation, authorization, worker context/readiness, core errors and metric failure/recovery.
+- Trace serialization was exercised with Console JSON and OTLP encoding on Python 3.14.10 / OpenTelemetry SDK 1.45.2 in an isolated temporary process: 68 passed; one Kubernetes-manifest lookup was skipped because the temporary test tree contains no manifests. No live application code or configuration was replaced.
+- Frontend error-reporting suite: 18 passed; TypeScript, production build and bundle budget checks passed. Full browser journeys and production deployment acceptance remain open.
+- Release authorization uses mocked GitHub evidence tests; no workflow was dispatched or publication performed for this validation.
+- Upload publication failure tests also passed in an isolated Python 3.14.10 / Celery 5.7.0 process: 14 passed against fake broker, storage and authorization boundaries. No live uploads were submitted.
+
+The complete candidate-tree scan reads raw Git blobs in bounded batches and verifies their inventory, type, size and hashes before scanning a temporary snapshot. It scans tracked symlink targets as text and rejects unsupported gitlinks. Export attributes, checkout encodings and filters do not change the scanned bytes. Working-tree secrets and untracked files do not enter the snapshot. Existing synthetic credential fixtures use narrow, explained line annotations or exact path/value/detector exceptions; the former broad SDK-vector directory exemption is removed. Regression fixtures check that other credentials in those files still fail.
+
+### Running semantic alert verification
+
+The existing `backend-test` CI job downloads official Prometheus 3.16.0, verifies the reviewed archive SHA-256 before extraction, and runs the source rules and semantic fixtures. It adds no job or matrix. The version matches the reference Compose monitoring profile; update the version and reviewed official checksum together when that profile changes.
+
+With the matching `promtool` installed, run from the repository root:
+
+```sh
+cd infra/monitoring/tests
+promtool check rules ../prometheus-rules/testlookup-alerts.yml
+promtool test rules operational-alerts.yml
+```
+
+Fixtures live in `infra/monitoring/tests/`, outside the production `rules/*.yml` mount. They exercise collection failure/freshness and recovery, same-target freshness filtering before shared-SQL `max`, replica/installation separation, retry deadlines and nonterminal states, strict thresholds, quiet/absent webhook traffic, low-volume failure, and recovery. They evaluate synthetic samples and send no notifications. This does not replace target discovery, collector integration or receiver-delivery acceptance. See [Prometheus rule testing](https://prometheus.io/docs/prometheus/latest/configuration/unit_testing_rules/) and the [official 3.16.0 release](https://github.com/prometheus/prometheus/releases/tag/v3.16.0).
+
+### Next iteration dependencies
+
+1. Establish deployment-profile collection, selector, receiver, authentication and retention contracts. Reuse an existing monitoring stack where it meets the contract.
+2. Wire missing dependency/pool instruments and scrape authentication; connect all required application targets/rules and exercise an authorized test receiver.
+3. Add durable event/replay evidence and scheduled due-state detection. Reconcile retained initial uploads without duplicate publication.
+4. Implement persistent logs/traces and fork-safe tracing, then measure journey SLIs, label budgets, capacity and burn-rate rules.
+5. Complete all-role signal/security/rollback gates before declaring production readiness.
+
+No production deployment or claim of enterprise readiness is represented by this iteration. Data retention, receivers, SLO targets and platform ownership must be explicit for each supported production profile.

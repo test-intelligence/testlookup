@@ -215,14 +215,13 @@ class DownstreamTrackedTask(Task):
 
 
 def _bind_task_context(task, **extra):
-    """Bind structured logging context for a Celery task (observability improvement)."""
+    """Enrich the current execution without discarding its canonical correlation."""
+    from app.worker.celery_app import _task_log_context
+
+    context = dict(extra)
+    context.update(_task_log_context(task=task))
     clear_contextvars()
-    bind_contextvars(
-        celery_task_id=task.request.id,
-        celery_task_name=task.name,
-        celery_retry=task.request.retries,
-        **extra,
-    )
+    bind_contextvars(**context)
 
 
 def _exponential_backoff(attempt: int, base: int = 30, cap: int = 600) -> int:

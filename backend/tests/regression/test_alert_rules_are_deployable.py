@@ -10,9 +10,9 @@ Two defects kept TestLookupFinalizeStepFailing silent:
    created at import with value 0.
 
 And there was no PrometheusRule under ``k8s/``, so on a cluster nothing fired
-at all. promtool is not available offline, so the rules are validated here:
-parsed, their metric names checked against the declarations, and the k8s
-resource compared with the one source file.
+at all. These offline checks validate declarations and generated-rule parity.
+The existing backend CI job also runs semantic fixtures with checksum-pinned
+promtool matching the reference monitoring runtime.
 """
 from __future__ import annotations
 
@@ -139,3 +139,25 @@ def test_the_rule_is_opt_in_not_in_base() -> None:
     assert kustomization["resources"] == ["prometheusrule.yaml", "podmonitors.yaml"]
     base = yaml.safe_load((REPO_ROOT / "k8s" / "base" / "kustomization.yaml").read_text(encoding="utf-8"))
     assert not any("monitoring" in str(r) or "prometheusrule" in str(r) for r in base["resources"])
+
+
+def test_semantic_fixtures_execute_in_the_existing_backend_ci_job() -> None:
+    """A fixture outside the runtime glob must be executed, not merely committed."""
+    workflow = yaml.safe_load((REPO_ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"))
+    job = workflow["jobs"]["backend-test"]
+    step = next(s for s in job["steps"] if s.get("name") == "Verify alert semantics with checksum-pinned promtool")
+    assert not step.get("continue-on-error") and not step.get("if")
+    assert step["working-directory"] == "infra/monitoring/tests"
+    compose = yaml.safe_load((REPO_ROOT / "docker-compose.monitoring.yml").read_text(encoding="utf-8"))
+    runtime_version = compose["services"]["prometheus"]["image"].rsplit(":", 1)[1].lstrip("v")
+    assert step["env"]["PROMETHEUS_VERSION"] == runtime_version
+    assert re.fullmatch(r"[0-9a-f]{64}", step["env"]["PROMETHEUS_ARCHIVE_SHA256"])
+    commands = step["run"]
+    assert commands.index("sha256sum --check --strict") < commands.index("tar -xzf")
+    assert '"$tool" check rules ../prometheus-rules/testlookup-alerts.yml' in commands
+    assert '"$tool" test rules operational-alerts.yml' in commands
+    fixture = REPO_ROOT / step["working-directory"] / "operational-alerts.yml"
+    assert not fixture.is_relative_to(ALERTS.parent), "fixture would be loaded as a production rule file"
+    data = yaml.safe_load(fixture.read_text(encoding="utf-8"))
+    assert data["tests"] and len(data["rule_files"]) == 1
+    assert (fixture.parent / data["rule_files"][0]).resolve() == ALERTS.resolve()

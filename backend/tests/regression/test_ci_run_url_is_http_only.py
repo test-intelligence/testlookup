@@ -105,7 +105,7 @@ def file_route(monkeypatch):
     storage.put_object = AsyncMock()
     storage.delete_object = AsyncMock()
     task = MagicMock()
-    task.apply_async = lambda *, kwargs, task_id: queued.append(kwargs) or SimpleNamespace(id=task_id)
+    task.apply_async = lambda *, kwargs, task_id, **_options: queued.append(kwargs) or SimpleNamespace(id=task_id)
 
     async def _user():
         return user

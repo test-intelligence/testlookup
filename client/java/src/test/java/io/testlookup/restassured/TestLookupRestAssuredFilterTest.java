@@ -53,7 +53,7 @@ import static org.junit.platform.launcher.EngineFilter.includeEngines;
 class TestLookupRestAssuredFilterTest {
 
     /** Non-hex, so no uuid or hash in a request can contain it by chance. */
-    static final String SECRET = "w32bQzSecretKx";
+    static final String SECRET = "w32bQzSecretKx"; // gitleaks:allow -- synthetic test credential, never production authority
 
     /** The fake's base URL, read by the sample classes. */
     static volatile String target;

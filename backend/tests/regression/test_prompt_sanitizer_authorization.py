@@ -12,7 +12,7 @@ import pytest
 
 from app.services.input_sanitizer import sanitize_tool_output
 
-CREDENTIAL = "dXNlcjpwYXNzd29yZA=="
+CREDENTIAL = "dXNlcjpwYXNzd29yZA==" # gitleaks:allow -- synthetic test credential, never production authority
 
 
 @pytest.mark.parametrize("scheme", ["Basic", "Bearer", "Digest", "Negotiate", "NTLM", "Token", "basic"])

@@ -193,7 +193,7 @@ async def test_the_list_pages_counts_and_resolves_sources_inside_the_project(env
         async with sessions() as db:
             stored = await store_shadow_pair(
                 db, project_id=w["P"], agent_id=ROOT, sample_key=f"root_cause:{w['tc3']}", incumbent_tier="llm",
-                candidate_tier="slm", incumbent_output={"root_cause_summary": "Use token=Gh7Jk8Lm9Np0 to log in"},
+                candidate_tier="slm", incumbent_output={"root_cause_summary": "Use token=Gh7Jk8Lm9Np0 to log in"}, # gitleaks:allow -- synthetic test credential, never production authority
                 candidate_output={"failure_category": "TEST_DATA"}, incumbent_tokens=5, candidate_tokens=5,
                 daily_token_budget=10_000,
             )

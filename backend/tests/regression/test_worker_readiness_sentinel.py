@@ -102,6 +102,41 @@ def test_the_signal_handlers_write_and_clear_the_same_path(tmp_path, monkeypatch
     assert not sentinel.exists(), "worker_shutdown left the worker reporting Ready"
 
 
+@pytest.mark.parametrize("with_metrics", [False, True])
+def test_replacement_clears_preserved_marker_before_becoming_ready(tmp_path, monkeypatch, with_metrics):
+    """A killed container leaves /tmp behind; only its replacement may report Ready."""
+    from celery.signals import celeryd_init, worker_ready, worker_shutdown
+
+    from app.worker import celery_app
+
+    sentinel = tmp_path / "celery-worker-ready"
+    sentinel.write_text("old worker\n", encoding="utf-8")
+    monkeypatch.setattr(celery_app, "READY_SENTINEL", str(sentinel))
+    metric_dir = tmp_path / "metrics"
+    metric_dir.mkdir()
+    stale_metric = metric_dir / "counter_123.db"
+    stale_metric.write_text("old", encoding="utf-8")
+    keep = metric_dir / "README"
+    keep.write_text("keep", encoding="utf-8")
+    if with_metrics:
+        monkeypatch.setenv("PROMETHEUS_MULTIPROC_DIR", str(metric_dir))
+    else:
+        monkeypatch.delenv("PROMETHEUS_MULTIPROC_DIR", raising=False)
+
+    responses = celeryd_init.send(sender=None)
+    assert all(not isinstance(result, Exception) for _, result in responses)
+    assert not sentinel.exists(), "replacement reported Ready before its consumer started"
+    assert stale_metric.exists() is not with_metrics
+    assert keep.read_text(encoding="utf-8") == "keep"
+
+    # No broker connection or metrics listener is needed for this lifecycle proof.
+    monkeypatch.delenv("PROMETHEUS_MULTIPROC_DIR", raising=False)
+    worker_ready.send(sender=None)
+    assert sentinel.read_text(encoding="utf-8") == "ready\n"
+    worker_shutdown.send(sender=None)
+    assert not sentinel.exists()
+
+
 def test_readiness_never_blocks_a_worker_from_booting(tmp_path, monkeypatch):
     """An unwritable path must not raise out of the signal handler.
 

@@ -28,7 +28,7 @@ def mock_celery_dispatch():
     Stub the two Celery entry points the ingest router calls so tests don't
     need a running broker. Returns the mocks so callers can assert on them.
     """
-    def _queued(*, kwargs, task_id):
+    def _queued(*, kwargs, task_id, **_options):
         """Stand-in for ``apply_async``: the router reads only ``.id``."""
         return type("T", (), {"id": task_id})()
 
@@ -231,7 +231,7 @@ async def test_ingest_file_seeds_pending_before_worker_can_finish(client, auth_a
     task = MagicMock()
     task.delay.side_effect = lambda **_kwargs: _finish_immediately("legacy-task")
     task.apply_async.side_effect = (
-        lambda *, kwargs, task_id: _finish_immediately(task_id)
+        lambda *, kwargs, task_id, **_options: _finish_immediately(task_id)
     )
 
     with (
@@ -252,7 +252,7 @@ async def test_ingest_file_seeds_pending_before_worker_can_finish(client, auth_a
     assert task.apply_async.call_args.kwargs["task_id"] == resp.json()["task_id"]
 
 
-async def test_ingest_file_dispatch_failure_clears_pending_status(client, auth_as):
+async def test_ingest_file_unconfirmed_dispatch_preserves_pending_status(client, auth_as):
     project_id = uuid.uuid4()
     auth_as(accessible_projects={project_id})
     events: list[tuple[str, str]] = []
@@ -283,9 +283,9 @@ async def test_ingest_file_dispatch_failure_clears_pending_status(client, auth_a
         )
 
     assert resp.status_code == 503
-    assert resp.json()["detail"] == "Upload could not be queued"
-    assert events[0] == ("set", "pending")
-    assert events[1][0] == "clear"
+    assert "processing may still start" in resp.json()["detail"]
+    assert resp.headers["Location"] == f'/api/v1/ingest/uploads/{resp.headers["X-Upload-Task-ID"]}'
+    assert events == [("set", "pending")], "an unconfirmed publish must keep its polling identity"
 
 
 async def test_manual_upload_mints_fresh_run_when_build_label_exists(
@@ -422,7 +422,7 @@ async def test_ingest_file_zip_routes_to_archive(client, auth_as, requested_form
 
     captured: dict = {}
 
-    def _apply_async(*, kwargs, task_id):
+    def _apply_async(*, kwargs, task_id, **_options):
         captured.update(kwargs)
         return type("T", (), {"id": task_id})()
 
@@ -456,7 +456,7 @@ async def test_ingest_file_run_ai_flag_forwarded(client, auth_as):
     captured: dict = {}
     file_task = AsyncMock()
     file_task.apply_async = (
-        lambda *, kwargs, task_id: captured.update(kwargs)
+        lambda *, kwargs, task_id, **_options: captured.update(kwargs)
         or type("T", (), {"id": task_id})()
     )
     with patch("app.worker.tasks.ingest_uploaded_file", file_task), \
@@ -508,7 +508,7 @@ async def test_ingest_file_run_ai_defaults_true(client, auth_as):
     captured: dict = {}
     file_task = AsyncMock()
     file_task.apply_async = (
-        lambda *, kwargs, task_id: captured.update(kwargs)
+        lambda *, kwargs, task_id, **_options: captured.update(kwargs)
         or type("T", (), {"id": task_id})()
     )
     with patch("app.worker.tasks.ingest_uploaded_file", file_task), \

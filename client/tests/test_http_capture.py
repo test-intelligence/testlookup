@@ -27,7 +27,7 @@ from sdk_wire import FAKE_JWT, PytestConfig, PytestParser, PytestReport
 #: The cross-language specification (G-A): every case runs through the SDK port below.
 VECTORS_PATH = Path(__file__).resolve().parents[2] / "sdk-vectors" / "http_exchange.json"
 
-JWT = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ3MjNkLXNhbXBsZSJ9.c2lnbmF0dXJlLXNhbXBsZS12YWx1ZS0x"
+JWT = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ3MjNkLXNhbXBsZSJ9.c2lnbmF0dXJlLXNhbXBsZS12YWx1ZS0x" # gitleaks:allow -- synthetic test credential, never production authority
 PAT = "ghp_" + "w23dSamplePatValueQxZkLmNoPqRsTuVwXy"[:36]
 API = "https://api.example.test"
 

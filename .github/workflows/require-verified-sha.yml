@@ -23,6 +23,7 @@ jobs:
   require:
     name: Require successful CI and immutable image manifest
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     outputs:
       source_sha: ${{ steps.verify.outputs.source_sha }}
       ci_run_id: ${{ steps.verify.outputs.ci_run_id }}
@@ -48,3 +49,15 @@ jobs:
           [[ "${#matches[@]}" -eq 1 ]] || { echo "Expected exactly one successful main ci.yml run for $SOURCE_SHA" >&2; exit 1; }
           ci_run_id="${matches[0]}"
           printf 'source_sha=%s\nci_run_id=%s\nartifact_name=%s\n' "$SOURCE_SHA" "$ci_run_id" "$artifact_name" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.source_sha }}
+          persist-credentials: false
+      - name: Require successful exact-SHA secret scan before release authorization
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          python3 scripts/release/verify_secret_scan.py \
+            --repository "$GITHUB_REPOSITORY" --source-sha "$SOURCE_SHA" \
+            --timeout-seconds 900 --poll-seconds 10

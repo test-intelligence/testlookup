@@ -1,4 +1,5 @@
 from __future__ import annotations
+import asyncio
 import hmac
 import inspect
 
@@ -357,7 +358,7 @@ def configure_middlewares(app: FastAPI) -> None:
         # be a full payload) and the cache header would be invisible exactly
         # where it is read. ``Retry-After`` -- the 429 and the 503
         # ``analytics_timeout`` -- is already here.
-        expose_headers=["X-Refresh-Retry-Safe", "Retry-After", "X-TestLookup-AI-Generated", "X-TestLookup-Review-State", "X-Request-ID", "X-Analytics-Meta", "ETag", "X-Analytics-Cache", "Content-Disposition", "X-Total-Count"],
+        expose_headers=["X-Refresh-Retry-Safe", "Retry-After", "X-TestLookup-AI-Generated", "X-TestLookup-Review-State", "X-Request-ID", "X-Analytics-Meta", "ETag", "X-Analytics-Cache", "Content-Disposition", "X-Total-Count", "Location", "X-Upload-Task-ID", "X-Upload-Run-ID"],
     )
 
     # Import locally so middleware setup stays close to other app wiring.
@@ -453,7 +454,7 @@ def register_routers(app: FastAPI) -> None:
     )
 
 
-async def _refresh_celery_queue_depths() -> None:
+async def _refresh_celery_queue_depths() -> bool:
     """Read pending task counts straight off the Redis broker.
 
     Celery queues are Redis lists keyed by queue name, so LLEN is the depth.
@@ -465,22 +466,26 @@ async def _refresh_celery_queue_depths() -> None:
         from app.db.redis_client import get_redis
         from app.worker.ingestion_routing import LEGACY_INGESTION_QUEUE, all_shard_queues
 
-        queues = ["critical", "ai_analysis", "default", LEGACY_INGESTION_QUEUE]
+        queues = ["critical", "ai_analysis", "default", "agent_children", LEGACY_INGESTION_QUEUE]
         queues += list(all_shard_queues())
 
         redis = get_redis()
-        for name in queues:
+        async def refresh_queue(name: str) -> bool:
             try:
                 depth = await redis.llen(name)
             except Exception:  # noqa: BLE001 — one bad queue must not hide the rest
-                continue
+                return False
             celery_queue_length.labels(queue_name=name).set(float(depth or 0))
+            return True
+
+        return all(await asyncio.gather(*(refresh_queue(name) for name in queues)))
     except Exception as exc:  # noqa: BLE001
         import structlog
 
         structlog.get_logger(__name__).debug(
             "celery_queue_depth_collection_failed", error=str(exc)
         )
+        return False
 
 
 def _metrics_scrape_refusal(request):
@@ -542,12 +547,19 @@ def _install_celery_queue_depth_collector(app) -> None:
             refusal = _metrics_scrape_refusal(request) if request is not None else None
             if refusal is not None:
                 return refusal
-            await _refresh_celery_queue_depths()
             from app.services.agent_operational_metrics import (
                 refresh_agent_operational_metrics,
             )
+            from app.services.downstream_operational_metrics import (
+                refresh_downstream_operational_metrics,
+            )
+            from app.services.metric_collection import collect_bounded
 
-            await refresh_agent_operational_metrics()
+            await asyncio.gather(
+                collect_bounded("queues", _refresh_celery_queue_depths),
+                collect_bounded("agents", refresh_agent_operational_metrics),
+                collect_bounded("downstream", refresh_downstream_operational_metrics),
+            )
             result = __orig(*args, **kwargs)
             if inspect.isawaitable(result):
                 result = await result

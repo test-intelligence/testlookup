@@ -14,6 +14,54 @@ groups:
           summary: "TestLookup backend is down"
           description: "The FastAPI backend has been unreachable for more than 1 minute."
 
+      # The scrape can succeed while one operational dependency cannot be read.
+      # Keep per-target labels: another healthy API replica must not hide it.
+      - alert: TestLookupOperationalCollectionStale
+        expr: |
+          testlookup_metric_collection_success == 0
+          or
+          (time() - testlookup_metric_collection_last_success_timestamp_seconds) > 120
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Operational metric collection failed or is stale"
+          description: "Collector {{ $labels.collector }} cannot provide a fresh snapshot on this target. Scrape availability alone does not prove dependency health; inspect metric_collection_failed logs before trusting the retained gauges."
+
+      # Each API replica reads the SAME SQL outbox. max avoids counting one
+      # failure twice; cluster/namespace preserve independent installations.
+      - alert: TestLookupDownstreamOutboxFailed
+        expr: |
+          max by (cluster, namespace, operation) (
+            testlookup_downstream_outbox_entries{status="failed"}
+            and on (cluster, namespace, job, instance)
+            (testlookup_metric_collection_success{collector="downstream"} == 1)
+            and on (cluster, namespace, job, instance)
+            ((time() - testlookup_metric_collection_last_success_timestamp_seconds{collector="downstream"}) <= 120)
+          ) > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Durable downstream work exhausted retries"
+          description: "Operation {{ $labels.operation }} has {{ $value }} terminal failed outbox rows. Empty broker queues and Celery SUCCESS do not imply business completion. Inspect durable outbox outcomes and use the authorized replay process after fixing the cause."
+
+      - alert: TestLookupDownstreamOutboxOverdue
+        expr: |
+          max by (cluster, namespace, operation) (
+            testlookup_downstream_outbox_overdue_seconds{status=~"waiting|pending|sending|published|processing"}
+            and on (cluster, namespace, job, instance)
+            (testlookup_metric_collection_success{collector="downstream"} == 1)
+            and on (cluster, namespace, job, instance)
+            ((time() - testlookup_metric_collection_last_success_timestamp_seconds{collector="downstream"}) <= 120)
+          ) > 300
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Durable downstream work missed its retry or lease deadline"
+          description: "Operation {{ $labels.operation }} is {{ $value }} seconds beyond its stored retry or execution lease deadline. The rule includes a five-minute margin and does not treat scheduled future retries as stuck. Inspect relay and worker health."
+
       # High HTTP 5xx error rate
       - alert: TestLookupHighErrorRate
         expr: |
@@ -493,10 +541,12 @@ groups:
       - alert: TestLookupWebhookDeliveryFailureRate
         expr: |
           (
-            sum(rate(testlookup_webhook_delivery_attempts_total{result="failure"}[15m]))
+            sum by (cluster, namespace) (rate(testlookup_webhook_delivery_attempts_total{result="failure"}[15m]))
             /
-            clamp_min(sum(rate(testlookup_webhook_delivery_attempts_total[15m])), 1)
+            sum by (cluster, namespace) (rate(testlookup_webhook_delivery_attempts_total[15m]))
           ) > 0.05
+          and on (cluster, namespace)
+          sum by (cluster, namespace) (rate(testlookup_webhook_delivery_attempts_total[15m])) > 0
         for: 15m
         labels:
           severity: warning

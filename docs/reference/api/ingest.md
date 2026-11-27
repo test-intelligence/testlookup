@@ -14,7 +14,7 @@ The batch is dispatched to a Celery worker which creates the TestRun,
 upserts test cases, runs post-ingestion tagging, and triggers the
 AI analysis pipeline.
 
-Source: [backend/app/routers/ingest.py:91](../../../backend/app/routers/ingest.py#L91).
+Source: [backend/app/routers/ingest.py:141](../../../backend/app/routers/ingest.py#L141).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_api_key_context`, `get_current_user_or_api_key`, `get_db`.
 
@@ -28,7 +28,7 @@ Direct handler error branches (dependency/service errors can add others):
 
 ```python
 HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='This API key is restricted to a different project')
-HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail='Upload could not be queued')
+HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail='Upload publisher is busy; try again later.', headers={'Retry-After': '1'})
 HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail='Upload storage is temporarily unavailable')
 ```
 
@@ -87,6 +87,29 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
         }
       },
       "description": "Validation Error"
+    },
+    "503": {
+      "description": "Upload admission or queue confirmation unavailable. If Location and X-Upload-Task-ID are present, processing may still start: poll the existing upload before resubmitting.",
+      "headers": {
+        "Location": {
+          "description": "Existing upload status URL, when dispatch is unconfirmed",
+          "schema": {
+            "type": "string"
+          }
+        },
+        "X-Upload-Run-ID": {
+          "description": "Existing run identifier, when dispatch is unconfirmed",
+          "schema": {
+            "type": "string"
+          }
+        },
+        "X-Upload-Task-ID": {
+          "description": "Existing upload task identifier, when dispatch is unconfirmed",
+          "schema": {
+            "type": "string"
+          }
+        }
+      }
     }
   },
   "security": [
@@ -111,7 +134,7 @@ The Cypress and Playwright parsers are gated behind the ``cypress_ingest``
 and ``playwright_ingest`` feature flags respectively — 503 is returned if
 a disabled format is requested.
 
-Source: [backend/app/routers/ingest.py:379](../../../backend/app/routers/ingest.py#L379).
+Source: [backend/app/routers/ingest.py:438](../../../backend/app/routers/ingest.py#L438).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_api_key_context`, `get_current_user_or_api_key`, `get_db`.
 
@@ -128,7 +151,7 @@ HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Unsupported form
 HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail='This API key is restricted to a different project')
 HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail='build_number must not be empty')
 HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=exc.detail())
-HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail='Upload could not be queued')
+HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail='Upload publisher is busy; try again later.', headers={'Retry-After': '1'})
 HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail='Upload storage is temporarily unavailable')
 HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=f"{detected_format.title()} ingestion is disabled. Ask an admin to enable the '{flag_key}' feature flag.")
 ```
@@ -188,6 +211,29 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
         }
       },
       "description": "Validation Error"
+    },
+    "503": {
+      "description": "Upload admission or queue confirmation unavailable. If Location and X-Upload-Task-ID are present, processing may still start: poll the existing upload before resubmitting.",
+      "headers": {
+        "Location": {
+          "description": "Existing upload status URL, when dispatch is unconfirmed",
+          "schema": {
+            "type": "string"
+          }
+        },
+        "X-Upload-Run-ID": {
+          "description": "Existing run identifier, when dispatch is unconfirmed",
+          "schema": {
+            "type": "string"
+          }
+        },
+        "X-Upload-Task-ID": {
+          "description": "Existing upload task identifier, when dispatch is unconfirmed",
+          "schema": {
+            "type": "string"
+          }
+        }
+      }
     }
   },
   "security": [
@@ -208,7 +254,7 @@ Project-scoped: 404 if unknown/expired, 403 if the caller can't access the
 run's project (so a leaked/guessed task_id can't reveal another tenant's
 run).
 
-Source: [backend/app/routers/ingest.py:682](../../../backend/app/routers/ingest.py#L682).
+Source: [backend/app/routers/ingest.py:750](../../../backend/app/routers/ingest.py#L750).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_api_key_context`, `get_current_user_or_api_key`, `get_db`.
 

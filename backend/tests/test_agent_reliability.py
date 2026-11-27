@@ -189,13 +189,13 @@ from app.services.redaction_service import redact_text, redact_dict  # noqa: E40
 
 class TestPromptRedaction:
     def test_bearer_token_redacted(self):
-        text = "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"
+        text = "Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U" # gitleaks:allow -- synthetic test credential, never production authority
         result = redact_text(text)
         assert "eyJ" not in result
         assert "[REDACTED" in result
 
     def test_api_key_redacted(self):
-        text = "api_key=sk_live_abcdef1234567890abcdef"
+        text = "api_key=sk_live_abcdef1234567890abcdef" # gitleaks:allow -- synthetic test credential, never production authority
         result = redact_text(text)
         assert "sk_live" not in result
         assert "[REDACTED]" in result
@@ -211,7 +211,7 @@ class TestPromptRedaction:
         assert "secretpassword" not in result
 
     def test_jwt_redacted(self):
-        jwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
+        jwt = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c" # gitleaks:allow -- synthetic test credential, never production authority
         result = redact_text(jwt)
         assert "eyJ" not in result
 
@@ -444,7 +444,7 @@ class TestRedactionInPrompts:
         assert "eyJ" not in result
 
     def test_api_key_in_config_redacted(self):
-        config = "api_key=sk_live_abcdef1234567890abcdef"
+        config = "api_key=sk_live_abcdef1234567890abcdef" # gitleaks:allow -- synthetic test credential, never production authority
         result = redact_text(config)
         assert "sk_live" not in result
 

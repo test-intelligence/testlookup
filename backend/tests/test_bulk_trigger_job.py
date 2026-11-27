@@ -230,7 +230,7 @@ async def test_a_replayed_client_token_answers_the_first_job_and_queues_nothing(
     rows = _rows(2)
     redis = FakeRedis()
     user = _user()
-    payload = agents_router.BulkTriggerRequest(run_ids=[r[0] for r in rows], client_token="tok_12345678")
+    payload = agents_router.BulkTriggerRequest(run_ids=[r[0] for r in rows], client_token="tok_12345678") # gitleaks:allow -- synthetic test credential, never production authority
     first, first_calls, _record, _ = await _bulk(payload, _Session(rows), redis=redis, user=user)
     assert len(first_calls) == 2 and first.tracking is True
 

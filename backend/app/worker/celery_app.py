@@ -1,6 +1,8 @@
 """Celery application configuration."""
 from datetime import timedelta
 from pathlib import Path
+import re
+from collections.abc import Mapping
 
 from celery import Celery, Task
 from celery.signals import (
@@ -780,6 +782,50 @@ def _reset_db_pool_after_fork(**_kwargs: object) -> None:
 _TASK_STARTED_AT: dict[str, float] = {}
 
 
+def _task_log_context(task=None, task_id=None) -> dict[str, object]:
+    """Canonical task identity and allowlisted diagnostic correlation only.
+
+    Headers and task arguments are not an authority boundary. In particular,
+    never copy arbitrary broker headers or payload fields into log context.
+    """
+    request = getattr(task, "request", None)
+    retries = getattr(request, "retries", 0)
+    context: dict[str, object] = {
+        "celery_task_id": task_id or getattr(request, "id", None) or "unknown",
+        "celery_task_name": getattr(task, "name", None) or "unknown",
+        "celery_retry": retries if isinstance(retries, int) and retries >= 0 else 0,
+    }
+    headers = getattr(request, "headers", None)
+    if not isinstance(headers, Mapping):
+        headers = {}
+    candidates = {
+        "request_id": (
+            headers.get("request_id"), headers.get("x-request-id"), headers.get("X-Request-ID"),
+        ),
+        "correlation_id": (headers.get("correlation_id"), getattr(request, "correlation_id", None)),
+    }
+    for field, values in candidates.items():
+        for value in values:
+            if isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9._:-]{1,128}", value):
+                context[field] = value
+                break
+    return context
+
+
+@task_prerun.connect
+def _bind_task_log_context(task_id=None, task=None, **_kwargs: object) -> None:
+    """Start every execution with fresh context, including retries/reused children."""
+    from structlog.contextvars import bind_contextvars, clear_contextvars, get_contextvars
+
+    request = getattr(task, "request", None)
+    if getattr(request, "is_eager", False):
+        # Eager tasks run inside the caller's request/context rather than a
+        # worker child. Restore that caller after this execution completes.
+        request._testlookup_parent_log_context = get_contextvars()
+    clear_contextvars()
+    bind_contextvars(**_task_log_context(task=task, task_id=task_id))
+
+
 @celeryd_init.connect
 def _prepare_worker_metrics_directory(**_kwargs: object) -> None:
     """Remove metrics from an earlier worker parent before it forks children.
@@ -871,8 +917,21 @@ def _record_task_outcome(task_id=None, task=None, state=None, **_kwargs: object)
         pass
 
 
+@task_postrun.connect
+def _clear_task_log_context(task=None, **_kwargs: object) -> None:
+    """Postrun runs for success, failure and retry; none may leak into the next task."""
+    from structlog.contextvars import bind_contextvars, clear_contextvars
+
+    clear_contextvars()
+    request = getattr(task, "request", None)
+    parent_context = getattr(request, "_testlookup_parent_log_context", None)
+    if getattr(request, "is_eager", False) and isinstance(parent_context, dict):
+        del request._testlookup_parent_log_context
+        bind_contextvars(**parent_context)
+
+
 #: Readiness sentinel. Written once the worker has booted and connected to the
-#: broker; removed on shutdown.
+#: broker; removed before replacement startup and on shutdown.
 READY_SENTINEL = "/tmp/celery-worker-ready"
 
 
@@ -905,9 +964,14 @@ def _mark_worker_ready(**_kwargs: object) -> None:
         pass
 
 
+@celeryd_init.connect
 @worker_shutdown.connect
 def _clear_worker_ready(**_kwargs: object) -> None:
-    """Drop the sentinel so a draining worker stops reporting Ready."""
+    """A previous worker's marker must not make its replacement Ready.
+
+    SIGKILL/OOM skips worker_shutdown, and a pod's emptyDir survives a
+    container restart. celeryd_init clears it before this consumer starts.
+    """
     import os
 
     try:

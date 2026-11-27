@@ -257,7 +257,7 @@ def test_a_key_missing_from_env_reads_as_empty(tmp_path):
     assert "missing=[] present=[yes]" in result.stdout
 
 
-FAKE_TOKEN = "eyJhIjoiZGVtby10ZXN0In0" + "Q" * 40
+FAKE_TOKEN = "eyJhIjoiZGVtby10ZXN0In0" + "Q" * 40 # gitleaks:allow -- synthetic test credential, never production authority
 
 
 @needs_bash

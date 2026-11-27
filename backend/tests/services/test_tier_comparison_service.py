@@ -443,7 +443,7 @@ async def test_store_shadow_pair_sanitizes_both_outputs_before_the_insert():
         sample_key="summary:run-a1",
         incumbent_tier="llm",
         candidate_tier="slm",
-        incumbent_output={"summary": "Retry with token=Zx9Yw8Vu7Ts6", "x": 1},
+        incumbent_output={"summary": "Retry with token=Zx9Yw8Vu7Ts6", "x": 1}, # gitleaks:allow -- synthetic test credential, never production authority
         candidate_output={"x": 1},
         incumbent_tokens=3,
         candidate_tokens=2,

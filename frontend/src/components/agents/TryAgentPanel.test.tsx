@@ -251,7 +251,7 @@ describe('TryAgentPanel', () => {
     invocationSequence = [invocationAwaitingReview()]
     renderPanel()
     const editor = await pickSummary()
-    const typed = { schema_version: 1, failures: [{ test_name: 'checkout pays sentinel', confidence_score: 70, log_excerpt: 'token ghp_TypedSampleTokenTypedSampleToken0123' }] }
+    const typed = { schema_version: 1, failures: [{ test_name: 'checkout pays sentinel', confidence_score: 70, log_excerpt: 'token ghp_TypedSampleTokenTypedSampleToken0123' }] } // gitleaks:allow -- synthetic test credential, never production authority
     fireEvent.change(editor, { target: { value: JSON.stringify(typed, null, 2) } })
     fireEvent.click(screen.getByRole('button', { name: 'Run' }))
     await waitFor(() => expect(http.postData).toHaveBeenCalledTimes(1))

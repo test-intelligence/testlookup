@@ -34,6 +34,20 @@ logger = structlog.get_logger("routers.ingest")
 
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
 _READ_CHUNK_SIZE = 1 * 1024 * 1024  # 1 MB chunks when streaming uploads
+_DISPATCH_RESPONSES = {
+    503: {
+        "description": (
+            "Upload admission or queue confirmation unavailable. If Location and "
+            "X-Upload-Task-ID are present, processing may still start: poll the "
+            "existing upload before resubmitting."
+        ),
+        "headers": {
+            "Location": {"description": "Existing upload status URL, when dispatch is unconfirmed", "schema": {"type": "string"}},
+            "X-Upload-Task-ID": {"description": "Existing upload task identifier, when dispatch is unconfirmed", "schema": {"type": "string"}},
+            "X-Upload-Run-ID": {"description": "Existing run identifier, when dispatch is unconfirmed", "schema": {"type": "string"}},
+        },
+    },
+}
 
 
 async def _read_upload_bounded(file: UploadFile, max_size: int) -> bytes:
@@ -88,11 +102,48 @@ def _parse_project_uuid(raw: str) -> uuid.UUID:
         )
 
 
+def _unconfirmed_dispatch(task_id: str, run_id: str) -> HTTPException:
+    """Keep the existing 503/string-detail contract and expose the polling ID.
+
+    The broker may have accepted the task. Do not tell a caller to submit a
+    second manual upload before checking the first one's status.
+    """
+    status_url = f"/api/v1/ingest/uploads/{task_id}"
+    return HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail=(
+            "Upload queue confirmation is unavailable; processing may still start. "
+            f"Check {status_url} before resubmitting."
+        ),
+        headers={
+            "Location": status_url,
+            "X-Upload-Task-ID": task_id,
+            "X-Upload-Run-ID": run_id,
+        },
+    )
+
+
+async def _discard_unpublished_upload(storage_key: str, task_id: str) -> None:
+    """Clean up only when bounded admission proves no publish was submitted."""
+    from app.db.storage import get_storage_provider
+    from app.services import upload_status
+
+    await upload_status.clear_pending_status(task_id)
+    try:
+        await get_storage_provider().delete_object(storage_key)
+    except Exception as exc:  # noqa: BLE001 — cleanup must preserve the refusal
+        logger.warning(
+            "unpublished_upload_cleanup_failed", task_id=task_id,
+            error_type=type(exc).__name__,
+        )
+
+
 @router.post(
     "",
     response_model=IngestResponse,
     status_code=status.HTTP_202_ACCEPTED,
     summary="Ingest test results (JSON batch)",
+    responses=_DISPATCH_RESPONSES,
 )
 async def ingest_batch(
     payload: IngestPayload,
@@ -178,8 +229,11 @@ async def ingest_batch(
         task_id, run_id=run_id, project_id=str(target_project_id),
         state=upload_status.STATE_PENDING,
     )
+    from app.worker.upload_dispatch import UploadPublisherBusy, publish_upload
+
     try:
-        ingest_uploaded_results.apply_async(
+        await publish_upload(
+            ingest_uploaded_results,
             kwargs=dict(
                 run_id=run_id,
                 payload_storage_key=batch_storage_key,
@@ -187,18 +241,23 @@ async def ingest_batch(
             ),
             task_id=task_id,
         )
-    except Exception as exc:  # noqa: BLE001 — normalize broker errors for clients
-        await upload_status.clear_pending_status(task_id)
-        # Nothing will read the stored batch now (S-C-6): do not leave it behind.
-        try:
-            await get_storage_provider().delete_object(batch_storage_key)
-        except Exception:  # noqa: BLE001 — cleanup is best effort
-            pass
-        logger.error("batch_ingest_dispatch_failed", run_id=run_id, error=str(exc))
+    except UploadPublisherBusy as exc:
+        # The helper did not submit a call, so no late message can need these.
+        await _discard_unpublished_upload(batch_storage_key, task_id)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Upload could not be queued",
+            detail="Upload publisher is busy; try again later.",
+            headers={"Retry-After": "1"},
         ) from exc
+    except Exception as exc:  # noqa: BLE001 — publication may already have succeeded
+        # Keep both the payload and pending seed. A timeout cannot cancel the
+        # publisher thread, and even an immediate error can follow acceptance.
+        # Only the worker may advance this task's monotonic business status.
+        logger.warning(
+            "batch_ingest_dispatch_unconfirmed", run_id=run_id, task_id=task_id,
+            error_type=type(exc).__name__,
+        )
+        raise _unconfirmed_dispatch(task_id, run_id) from exc
 
     logger.info(
         "batch_ingest_accepted",
@@ -381,6 +440,7 @@ _SUPPORTED_FORMATS = {
     response_model=IngestResponse,
     status_code=status.HTTP_202_ACCEPTED,
     summary="Upload test result file (JUnit/TestNG XML, Allure/Cypress/Playwright JSON)",
+    responses=_DISPATCH_RESPONSES,
 )
 async def ingest_file(
     file: UploadFile = File(...),
@@ -638,17 +698,25 @@ async def ingest_file(
         # Sent only when true, so a task queued here still binds a worker that
         # predates the field (the run_context rule above).
         task_kwargs["commit_range_truncated"] = True
+    from app.worker.upload_dispatch import UploadPublisherBusy, publish_upload
+
     try:
-        ingest_uploaded_file.apply_async(kwargs=task_kwargs, task_id=task_id)
-    except Exception as exc:  # noqa: BLE001 — normalize broker errors for clients
-        # Publish failures can be ambiguous. Delete only a record that is still
-        # pending; an already-started worker's parsing/terminal status survives.
-        await upload_status.clear_pending_status(task_id)
-        logger.error("file_ingest_dispatch_failed", run_id=run_id, error=str(exc))
+        await publish_upload(ingest_uploaded_file, kwargs=task_kwargs, task_id=task_id)
+    except UploadPublisherBusy as exc:
+        await _discard_unpublished_upload(queued_storage_key, task_id)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Upload could not be queued",
+            detail="Upload publisher is busy; try again later.",
+            headers={"Retry-After": "1"},
         ) from exc
+    except Exception as exc:  # noqa: BLE001 — publication may already have succeeded
+        # Retain the original object and polling identity even if the worker
+        # has not started yet. A late accepted publish still needs both.
+        logger.warning(
+            "file_ingest_dispatch_unconfirmed", run_id=run_id, task_id=task_id,
+            error_type=type(exc).__name__,
+        )
+        raise _unconfirmed_dispatch(task_id, run_id) from exc
 
     logger.info(
         "file_ingest_accepted",
