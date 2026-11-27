@@ -36,10 +36,11 @@ RUNS = 60  # small runs, three cases each, plus one large run below
 LARGE_RUN_CASES = 60
 SUITES = ("perf-api", "perf-ui", "perf-db")
 
-# Observed at the pin (75a61f6a). A per-row lookup added to any of these reads raises the count with the
-# page size (caught by the equal-count assertions); any other added statement moves the pin.
-# list: token revocation x2, user, COUNT, page, release map, run-number pairs, run numbers, suite map.
-LIST_STATEMENTS = 9
+# A per-row lookup raises the count with the page size and fails the equal-count assertions.
+# The exact counts also catch added statements that run once per request.
+# list: token revocation x2, user, current membership, COUNT, page, release map, run-number pairs,
+# run numbers, suite map.
+LIST_STATEMENTS = 10
 # detail: token revocation x2, user, run access (run project, membership), run, release map, project name,
 # run-number pairs, run numbers, suite map.
 DETAIL_STATEMENTS = 11
@@ -271,8 +272,7 @@ def _shape(statements: list[str]) -> str:
 
 
 async def _counted(world, path: str, **params):
-    # The same request once unmeasured first: the membership lookup is cached in Redis for 5 minutes, so
-    # every measured request starts from the same warm state whatever ran before it.
+    # Warm the other request caches before measuring. Membership is read from PostgreSQL on every request.
     await world.client.get(path, params=params, headers=world.headers)
     with StatementCounter(world.engine) as counter:
         response = await world.client.get(path, params=params, headers=world.headers)

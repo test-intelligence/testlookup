@@ -104,7 +104,7 @@ session is. Note that `IdentityEventType.ADMIN_FALLBACK_LOGIN` is **not** this
 — that is the SSO fallback in `routers/auth.py` and says nothing about a second
 factor.
 
-## 2. Authorization — the guard family and the signed cache
+## 2. Authorization — the guard family and PostgreSQL authority
 
 Every router whose path carries a resource id (`{project_id}`, `{run_id}`,
 `{release_id}`, …) depends on the matching `require_*_access` guard from
@@ -114,33 +114,41 @@ gates "no id supplied" leaves the direct-object reference wide open. The IDOR
 sweeps hit exactly this on several routers; the convention plus its
 architectural test now enforce the correct shape.)
 
-Membership lookups are cached in Redis — and because an authorization cache is
-itself an attack surface, entries are **HMAC-signed**:
+Project membership is authorization state. For user membership scopes,
+`get_accessible_project_ids` queries the current `project_members` rows in
+PostgreSQL on every request; no Redis value is accepted as authority. The
+existing ADMIN bypass, project-bound API-key confinement, and project-role
+floors still apply before the selected project scope reaches a report or other
+tenant query.
 
 ```mermaid
 sequenceDiagram
     participant RQ as Request ({project_id})
-    participant G as require_project_access
-    participant R as Redis (membership cache)
-    participant PG as Postgres
+    participant G as Authorization guard
+    participant PG as PostgreSQL (membership authority)
+    participant M as Membership change / erasure
+    participant R as Redis (legacy cleanup only)
 
     RQ->>G: id + JWT/API key
-    G->>R: get membership entry
-    alt cache hit
-        R-->>G: entry + HMAC
-        G->>G: verify HMAC (forged/tampered entry fails → treated as miss)
-        G-->>RQ: allow / 403
-    else miss or bad signature
-        G->>PG: real membership query
-        PG-->>G: project ids
-        G->>R: store entry signed with _sign_membership_cache
-        G-->>RQ: allow / 403
+    G->>G: apply ADMIN, API-key binding, and role-floor rules
+    alt user membership must be resolved
+        G->>PG: SELECT current project_members rows
+        PG-->>G: current project ids / roles
     end
+    G-->>RQ: allow with scoped query / 403
+
+    M->>PG: commit membership mutation or erasure
+    M->>R: delete membership:{user_id}
+    Note over M,R: This cleanup serves older replicas. New authorization reads ignore the key.
 ```
 
-A Redis compromise (or a bug writing to the wrong key) therefore cannot mint
-authorization: an unsigned or mis-signed entry simply fails HMAC and falls
-through to the database.
+`invalidate_membership_cache` remains best-effort so membership mutations and
+subject erasure can remove keys written by an older replica during a rolling
+deployment. That deletion is compatibility cleanup, not an access control: a
+failed delete or a stale writer cannot widen the scope returned by new code.
+Deploy this change to **all read-serving replicas before relying on the new
+authorization path**; until then, an older replica can still accept its legacy
+Redis membership cache.
 
 
 ### The ratchet's blind spot — ids that don't arrive in the path
@@ -209,8 +217,10 @@ produce an insecure install:
   random local secrets and re-enable dev conveniences deliberately.
 - **Dev auto-login** is a 404 unless explicitly enabled — the endpoint that
   mints an admin JWT for local demos cannot exist in a default deployment.
-- **Redis is authenticated** and the authz cache signed (above), closing the
-  "internal service, no auth needed" gap.
+- **Redis is authenticated**, closing the "internal service, no auth needed"
+  gap, but it is not project-membership authority. PostgreSQL supplies current
+  membership on authorization reads; `membership:*` deletion is legacy cleanup
+  for rolling deployments and erasure.
 
 ## 5. Offline-first as a security property
 

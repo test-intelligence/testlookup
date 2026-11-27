@@ -12,7 +12,7 @@
 > - **[RELEASE_GATE.md](./RELEASE_GATE.md)** — how GO / CONDITIONAL_GO / NO_GO is decided: input signals, policy layer, band floor, council synthesis, overrides.
 > - **[AI_QUALITY.md](./AI_QUALITY.md)** — the mechanisms that keep the AI layer honest: semantic cache, the human-correction learning loop, evidence grading, cluster integrity.
 > - **[INGESTION_SCALE.md](./INGESTION_SCALE.md)** — ingestion under load: admission gates, shard queues, buffer caps + the drainer, DLQ/recovery, and AI cost controls.
-> - **[SECURITY.md](./SECURITY.md)** — identity, the authz guard family + HMAC-signed membership cache, tenancy layers, secure-by-default deployment, offline-first, audit.
+> - **[SECURITY.md](./SECURITY.md)** — identity, the authz guard family + PostgreSQL-authoritative membership reads (Redis deletion is legacy cleanup), tenancy layers, secure-by-default deployment, offline-first, audit.
 > - **[DEPLOYMENT.md](./DEPLOYMENT.md)** — the topologies: compose variants, the release-image path, k8s base + per-target overlays, CI/CD pipelines, environment gotchas. Step-by-step install guides per mode: [docs/operations/deployment.md](../docs/operations/deployment.md).
 > - **[FRONTEND.md](./FRONTEND.md)** — the SPA: pages→hooks→services→one-Axios layering, Zustand client-state model, the six-theme token system, and the enforcing ratchets.
 > - **[VISUALIZATION_ENGINES_ADR.md](./VISUALIZATION_ENGINES_ADR.md)** — why charts use Recharts + per-type ECharts + three.js: the CSP, bundle-budget and air-gap constraints, the measured spike, and the tooltip-XSS rule.
