@@ -3,10 +3,11 @@ import logging
 import uuid
 from typing import Optional, Sequence
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy import func, or_, select, text
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, InvalidRequestError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.exc import StaleDataError
 
 from app.core.deps import (
     _api_key_bound_project,
@@ -16,7 +17,14 @@ from app.core.deps import (
     require_role,
 )
 from app.db.postgres import get_db
-from app.models.postgres import ReleaseDecision, ReleaseGatePolicy, TestRun, User, UserRole
+from app.models.postgres import (
+    ReleaseDecision,
+    ReleaseGateDecision,
+    ReleaseGatePolicy,
+    TestRun,
+    User,
+    UserRole,
+)
 from app.models.schemas import (
     PolicyDocument,
     PolicySimulateRequest,
@@ -49,6 +57,19 @@ CREATE_RACE_DETAIL = (
     "Another policy version was created for this scope at the same moment. Try again."
 )
 ALREADY_PUBLISHED_DETAIL = "Policy is already published"
+#: D-141: what deleting a version that was ever published is told. Past
+#: verdicts name the version they were judged by, so it is kept.
+DELETE_PUBLISHED_DETAIL = (
+    "Only a draft that was never published can be deleted. A published version "
+    "is kept because past verdicts name it; deactivate it instead."
+)
+#: Batch 8 review F4: what a publish or an edit is told when another admin
+#: deleted the draft (D-141) between this request's read and its write.
+DRAFT_DELETED_DETAIL = "This draft was deleted."
+#: D-141: what deleting a draft a stored decision points at is told.
+DELETE_REFERENCED_DETAIL = (
+    "This draft is named by a stored release decision, so it is kept."
+)
 
 #: The indexes whose violation is a scope race (migration 0210, plus the
 #: project-scope version constraint of 0032). Any other IntegrityError is a
@@ -388,13 +409,18 @@ async def update_policy(
     changed = [field for field, value in update_data.items() if getattr(policy, field) != value]
     for field, value in update_data.items():
         setattr(policy, field, value)
-    if changed:
-        await _record_policy_event(
-            db, policy, "policy.updated", current_user,
-            context={"changed": ", ".join(changed)}, changed_fields=changed,
-        )
-
-    await db.commit()
+    try:
+        if changed:
+            await _record_policy_event(
+                db, policy, "policy.updated", current_user,
+                context={"changed": ", ".join(changed)}, changed_fields=changed,
+            )
+        await db.commit()
+    except StaleDataError:
+        # Review F4: the draft was deleted (D-141) after the read above, so the
+        # UPDATE matched no row. A plain 404, not a 500; nothing is written.
+        await db.rollback()
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=DRAFT_DELETED_DETAIL)
     await db.refresh(policy)
     logger.info("Policy updated: %s v%d by user_id=%s", policy.id, policy.version, current_user.id)
     return policy
@@ -427,7 +453,12 @@ async def publish_policy(
     await _lock_scope(db, policy.project_id)
     # Re-read under the lock: the same draft published by someone else is no
     # longer a draft.
-    await db.refresh(policy)
+    try:
+        await db.refresh(policy)
+    except InvalidRequestError:
+        # Review F4: the row is gone -- another admin deleted the draft (D-141)
+        # while this request waited for the lock. A plain 404, not a 500.
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=DRAFT_DELETED_DETAIL)
     if not policy.is_draft:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=ALREADY_PUBLISHED_DETAIL)
     current = await _active_ids_in_scope(db, policy.project_id, policy.id)
@@ -506,6 +537,67 @@ async def deactivate_policy(
     await bump_analytics_epochs(await _policy_scope_projects(db, policy.project_id))
     logger.info("Policy deactivated: %s v%d by user_id=%s", policy.id, policy.version, current_user.id)
     return policy
+
+
+@router.delete("/{policy_id}", status_code=204)
+async def delete_policy(
+    policy_id: uuid.UUID,
+    # N20: _enforce_policy_binding below confines a project-bound key.
+    current_user: User = Depends(require_role(UserRole.ADMIN, allow_project_key=True)),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a draft that was never published (ADMIN only) (D-141).
+
+    A version that was ever published stays: past verdicts and the version
+    history name it, so it is deactivated instead (409). A draft a stored
+    release decision points at is kept too (409). Records ``policy.updated``
+    with ``changed: draft deleted`` in the same transaction, the way
+    deactivate records its edit of the active flag.
+    """
+    result = await db.execute(
+        select(ReleaseGatePolicy).where(ReleaseGatePolicy.id == policy_id)
+    )
+    policy = result.scalar_one_or_none()
+    if not policy:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Policy not found")
+    _enforce_policy_binding(current_user, policy.project_id)
+    if policy.project_id is not None:
+        # The same scope call create and get make (code review round 4): an
+        # admin passes by role, a bound key only for its own project.
+        from app.core.deps import resolve_project_scope  # noqa: PLC0415
+
+        await resolve_project_scope(db, current_user, str(policy.project_id))
+
+    # Serialise against a concurrent publish of this draft in the same scope,
+    # then re-read it: a publish that committed first makes it a 409 here.
+    await _lock_scope(db, policy.project_id)
+    result = await db.execute(
+        select(ReleaseGatePolicy)
+        .where(ReleaseGatePolicy.id == policy_id)
+        .execution_options(populate_existing=True)
+    )
+    policy = result.scalar_one_or_none()
+    if not policy:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Policy not found")
+    if not policy.is_draft or policy.is_active or policy.activated_at is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=DELETE_PUBLISHED_DETAIL)
+
+    for model in (ReleaseDecision, ReleaseGateDecision):
+        referenced = await db.execute(
+            select(model.id).where(model.policy_id == policy.id).limit(1)
+        )
+        if referenced.scalar_one_or_none() is not None:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=DELETE_REFERENCED_DETAIL)
+
+    await _record_policy_event(
+        db, policy, "policy.updated", current_user,
+        context={"changed": "draft deleted"}, changed_fields=["deleted"],
+        before={"is_draft": True}, after={"deleted": True},
+    )
+    await db.delete(policy)
+    await db.commit()
+    logger.info("Policy draft deleted: %s v%d by user_id=%s", policy.id, policy.version, current_user.id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/simulate", response_model=PolicySimulateResponse)

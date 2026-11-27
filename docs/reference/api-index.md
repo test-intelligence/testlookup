@@ -425,6 +425,7 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | GET | `/api/v1/release-gate-policies/history/{project_id}` | Get Policy History | [Release Gate Policies](api/release-gate-policies.md) |
 | POST | `/api/v1/release-gate-policies/simulate` | Simulate Policy | [Release Gate Policies](api/release-gate-policies.md) |
 | GET | `/api/v1/release-gate-policies/system-history` | Get System Policy History | [Release Gate Policies](api/release-gate-policies.md) |
+| DELETE | `/api/v1/release-gate-policies/{policy_id}` | Delete Policy | [Release Gate Policies](api/release-gate-policies.md) |
 | GET | `/api/v1/release-gate-policies/{policy_id}` | Get Policy | [Release Gate Policies](api/release-gate-policies.md) |
 | PATCH | `/api/v1/release-gate-policies/{policy_id}` | Update Policy | [Release Gate Policies](api/release-gate-policies.md) |
 | POST | `/api/v1/release-gate-policies/{policy_id}/deactivate` | Deactivate Policy | [Release Gate Policies](api/release-gate-policies.md) |
@@ -753,4 +754,4 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/webhooks/minio` | Minio Webhook | [Webhooks](api/webhooks.md) |
 | POST | `/ws/events/{run_id}` | Ingest Live Event | [Live Reporting](api/live-reporting.md) |
 
-Total: **744 HTTP operations**, **630 paths**, **92 domain pages**.
+Total: **745 HTTP operations**, **630 paths**, **92 domain pages**.

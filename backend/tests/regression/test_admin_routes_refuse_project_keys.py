@@ -113,6 +113,8 @@ REVIEWED_OPT_INS: dict[tuple[str, str], tuple[str, str]] = {
         "_enforce_policy_binding", "the stored policy's project; system default refused"),
     ("app/routers/release_gate_policies.py", "deactivate_policy"): (
         "_enforce_policy_binding", "the stored policy's project; system default refused"),
+    ("app/routers/release_gate_policies.py", "delete_policy"): (
+        "_enforce_policy_binding", "D-141: the stored draft's project; system default refused"),
     ("app/routers/release_gate_policies.py", "simulate_policy"): (
         "_enforce_api_key_project_binding", "against the body run's project"),
     # ── re-audit N26: require_role(UserRole.QA_LEAD, allow_project_key=True) ──

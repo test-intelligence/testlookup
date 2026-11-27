@@ -22,7 +22,12 @@ from app.models.schemas import (
 )
 from app.services.activity.service import ActorRef, record as record_activity
 from app.services.notification import gate_notifications
-from app.services.release_council_service import apply_override, get_release_council
+from app.services.release_council_service import (
+    analysis_changed_since,
+    apply_override,
+    decision_evaluated_at,
+    get_release_council,
+)
 
 logger = logging.getLogger("routers.release_readiness")
 
@@ -99,6 +104,17 @@ async def get_release_decision(
     )
     if allow_advisory and response.recommendation.startswith("ADVISORY_"):
         await db.commit()
+    # D-97: say when a person changed a test's category after this stored
+    # decision read the run's analyses. Read-only; the decision is untouched.
+    decided_at = None if council.synthesized else decision_evaluated_at(council)
+    if decided_at is not None:
+        # The decision's pipeline: its root-cause stage start is when the
+        # analyses and corrections it scored were read (review F3).
+        changed_at = await analysis_changed_since(db, run_id, decided_at, pipeline_run_id)
+        if changed_at is not None:
+            response = response.model_copy(
+                update={"analysis_changed_since": True, "analysis_changed_at": changed_at}
+            )
     return response
 
 

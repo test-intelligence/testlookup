@@ -59,9 +59,10 @@ const mockToastSuccess = vi.fn()
 const mockAppMutate = vi.fn()
 const mockDeactivatePolicy = vi.fn()
 const mockRefreshPolicies = vi.fn()
+const mockDeletePolicy = vi.fn()
 /** Every `usePolicies(enabled)` call, so a test can see the list asked for after a refused publish;
  *  `policies` is what the list shows (empty unless a test lists some). */
-const listHook = vi.hoisted(() => ({ enabledCalls: [] as boolean[], policies: [] as unknown[] }))
+const listHook = vi.hoisted(() => ({ enabledCalls: [] as boolean[], policies: [] as unknown[], isError: false }))
 
 vi.mock('react-hot-toast', () => ({
   default: { error: (m: string) => mockToastError(m), success: (m: string) => mockToastSuccess(m) },
@@ -73,7 +74,7 @@ const policyHook = vi.hoisted(() => ({ policy: null as unknown }))
 vi.mock('@/hooks/usePolicyEditor', () => ({
   usePolicies: (enabled: boolean) => {
     listHook.enabledCalls.push(enabled)
-    return { policies: listHook.policies, isLoading: false, isError: false, mutate: mockRefreshPolicies }
+    return { policies: listHook.policies, isLoading: false, isError: listHook.isError, mutate: mockRefreshPolicies }
   },
   usePolicy: () => ({ policy: policyHook.policy, isLoading: false, isError: false }),
 }))
@@ -110,6 +111,7 @@ vi.mock('../services/policyService', async () => {
     updatePolicy: vi.fn(),
     publishPolicy: (...a: unknown[]) => mockPublishPolicy(...a),
     deactivatePolicy: (...a: unknown[]) => mockDeactivatePolicy(...a),
+    deletePolicy: (...a: unknown[]) => mockDeletePolicy(...a),
     simulatePolicy: vi.fn(),
   }
 })
@@ -168,6 +170,7 @@ beforeEach(() => {
   vi.clearAllMocks()
   listHook.enabledCalls.length = 0
   listHook.policies = []
+  listHook.isError = false
   // Every write on this page is ADMIN on the API; these tests author policies.
   // What a QA lead sees is PolicyEditorPage.roles.test.tsx.
   useAuthStore.setState({ user: { id: 'admin', role: 'ADMIN' } as never })
@@ -698,12 +701,32 @@ describe('a published policy: its versions, a new version from it, the simulator
     renderPolicy()
     expect(screen.getByRole('heading', { name: 'View: Payments gate' })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'New version from this' }))
+    // D-140: the header button only asks; the strip's Create draft sends.
+    fireEvent.click(within(strip() as HTMLElement).getByRole('button', { name: 'Create draft' }))
     await waitFor(() => expect(mockCreatePolicy).toHaveBeenCalledTimes(1))
     expect(mockCreatePolicy).toHaveBeenCalledWith({
       project_id: 'proj-pay', name: 'Payments gate', description: 'Nightly gate', rules: DOC_V4,
     })
     await waitFor(() => expect(screen.getByTestId('where')).toHaveTextContent('/policies/pol-v5'))
     expect(mockToastSuccess).toHaveBeenCalledWith('Draft v5 created from v4.')
+  })
+
+  it('D-140: New version from this asks under the header first; Cancel and Escape create nothing', () => {
+    const { container } = renderPolicy()
+    fireEvent.click(screen.getByRole('button', { name: 'New version from this' }))
+    expect(mockCreatePolicy).not.toHaveBeenCalled()
+    const asked = strip() as HTMLElement
+    expect(asked.querySelector('p')?.textContent).toBe(
+      'Create a draft copy of v4? It opens in the editor and changes nothing until you publish it.',
+    )
+    expect(container.querySelector('[data-page-header]')?.nextElementSibling).toBe(asked)
+
+    fireEvent.click(within(asked).getByRole('button', { name: 'Cancel' }))
+    expect(strip()).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'New version from this' }))
+    fireEvent.keyDown(within(strip() as HTMLElement).getByRole('button', { name: 'Cancel' }), { key: 'Escape' })
+    expect(strip()).toBeNull()
+    expect(mockCreatePolicy).not.toHaveBeenCalled()
   })
 
   it('as a QA lead: no New version from this, but Versions and Compare read', () => {
@@ -733,5 +756,107 @@ describe('a published policy: its versions, a new version from it, the simulator
     policyHook.policy = { ...V4, project_id: null }
     renderPolicy()
     expect(runPicker.props[runPicker.props.length - 1].projectId).toBeNull()
+  })
+})
+
+// ── D-141: the list puts the active policy and the drafts first; a draft can be deleted ──
+describe('D-141: active and drafts first, past versions closed, a draft can be deleted', () => {
+  const listRow = (id: string, name: string, over: Record<string, unknown>) => ({
+    id, name, version: 1, project_id: null, created_at: '2026-10-01T00:00:00Z', description: '', rules: {},
+    is_active: false, is_draft: false, ...over,
+  })
+  const ACTIVE = listRow('p-on', 'Live gate', { version: 4, is_active: true })
+  const DRAFT = listRow('p-draft', 'Next gate', { version: 5, is_draft: true })
+  const PAST = listRow('p-old', 'Old gate', { version: 3 })
+  const NO_ACTIVE = 'No active policy: the built-in rule applies.'
+  const past = () => document.querySelector('[data-policy-past-versions]') as HTMLElement | null
+  const primary = () => document.querySelector('[data-primary]') as HTMLElement | null
+
+  it('with only a past version: says the built-in rule applies, and the version is under a closed Past versions', () => {
+    listHook.policies = [PAST]
+    renderAt('/policies')
+    expect(screen.getByText(NO_ACTIVE)).toBeInTheDocument()
+    expect(primary()).toBeNull()
+    const toggle = within(past() as HTMLElement).getByRole('button', { name: /^Past versions/ })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(toggle).toHaveTextContent('1 version')
+    expect(screen.queryByText('Old gate')).toBeNull()
+    fireEvent.click(toggle)
+    expect(within(past() as HTMLElement).getByText('Old gate')).toBeInTheDocument()
+    expect(within(past() as HTMLElement).getByText('Inactive')).toBeInTheDocument()
+    // Kept: a past version offers View, not Delete or Deactivate.
+    expect(within(past() as HTMLElement).getByRole('button', { name: 'View' })).toBeInTheDocument()
+    expect(within(past() as HTMLElement).queryByRole('button', { name: /Delete|Deactivate/ })).toBeNull()
+  })
+
+  it('with an active policy: active first, then the draft; the past version waits behind the section; no built-in sentence', () => {
+    listHook.policies = [DRAFT, PAST, ACTIVE]
+    renderAt('/policies')
+    expect(screen.queryByText(NO_ACTIVE)).toBeNull()
+    const names = Array.from((primary() as HTMLElement).querySelectorAll('.card .font-medium')).map(n => n.textContent)
+    expect(names).toEqual(['Live gate', 'Next gate'])
+    expect(within(past() as HTMLElement).getByRole('button', { name: /^Past versions/ })).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByText('Old gate')).toBeNull()
+  })
+
+  it('a failed list read does not claim that nothing is active', () => {
+    listHook.isError = true
+    renderAt('/policies')
+    expect(screen.getByText('Could not load policies')).toBeInTheDocument()
+    expect(screen.queryByText(NO_ACTIVE)).toBeNull()
+  })
+
+  it('a draft\'s Delete asks under its card; the strip deletes once, toasts, re-reads the list', async () => {
+    listHook.policies = [ACTIVE, DRAFT]
+    mockDeletePolicy.mockResolvedValue(undefined)
+    renderAt('/policies')
+    // Only the draft offers Delete; only the active policy offers Deactivate.
+    expect(screen.getAllByRole('button', { name: 'Delete' })).toHaveLength(1)
+    expect(screen.getAllByRole('button', { name: 'Deactivate' })).toHaveLength(1)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+    expect(mockDeletePolicy).not.toHaveBeenCalled()
+    const asked = strip() as HTMLElement
+    expect(asked.querySelector('p')?.textContent).toBe(
+      'Delete this draft? It was never published, so no verdict used it. This cannot be undone.',
+    )
+    const card = screen.getByText('Next gate').closest('.card') as HTMLElement
+    expect(card.nextElementSibling).toBe(asked.closest('[data-in-page-row]'))
+
+    fireEvent.click(within(asked).getByRole('button', { name: 'Delete' }))
+    expect(strip()).toBeNull()
+    await waitFor(() => expect(mockToastSuccess).toHaveBeenCalledWith('Draft deleted'))
+    expect(mockDeletePolicy).toHaveBeenCalledTimes(1)
+    expect(mockDeletePolicy).toHaveBeenCalledWith('p-draft')
+    expect(mockRefreshPolicies).toHaveBeenCalledTimes(1)
+  })
+
+  it('a refused delete toasts the server sentence and re-reads the list', async () => {
+    listHook.policies = [DRAFT]
+    mockDeletePolicy.mockRejectedValue({
+      response: { status: 409, data: { detail: 'This draft is named by a stored release decision, so it is kept.' } },
+    })
+    renderAt('/policies')
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+    fireEvent.click(within(strip() as HTMLElement).getByRole('button', { name: 'Delete' }))
+    await waitFor(() => expect(mockToastError).toHaveBeenCalledWith('This draft is named by a stored release decision, so it is kept.'))
+    expect(mockRefreshPolicies).toHaveBeenCalledTimes(1)
+  })
+
+  it('Cancel on the Delete question deletes nothing', () => {
+    listHook.policies = [DRAFT]
+    renderAt('/policies')
+    fireEvent.click(screen.getByRole('button', { name: 'Delete' }))
+    fireEvent.click(within(strip() as HTMLElement).getByRole('button', { name: 'Cancel' }))
+    expect(strip()).toBeNull()
+    expect(mockDeletePolicy).not.toHaveBeenCalled()
+  })
+
+  it('a QA lead sees the draft with no Delete', () => {
+    useAuthStore.setState({ user: { id: 'lead', role: 'QA_LEAD' } as never })
+    listHook.policies = [DRAFT]
+    renderAt('/policies')
+    expect(screen.getByText('Next gate')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Delete' })).toBeNull()
   })
 })

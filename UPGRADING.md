@@ -191,6 +191,26 @@ Existing usernames that contain `@` keep working for sign-in.
 | `POST /deep-investigate/{run_id}` in Rules mode | accepted | 422 "requires LLM or Auto mode" |
 | `POST /analyze` for a test with a human correction | returns the correction | the engine's answer, replacing the correction |
 
+### Release gate and gate policies (batch 8)
+
+- **The quick look follows a published gate policy whole.** A project with a
+  published policy can see a different quick-look verdict for the same run:
+  its thresholds and weights now apply, not only its pass-rate bands and P0
+  cap. Projects without a policy see no change. Stored decisions are not
+  re-evaluated. `GET /api/v1/release-readiness/{run_id}` names the policy really
+  used (`policy_level`, `policy_id`, `policy_version`) and lists the rules a
+  quick look cannot check in `input_snapshot.rules_not_checked`.
+- **The same response gains `analysis_changed_since` and
+  `analysis_changed_at`** for a stored decision whose run had a category
+  correction saved after its analyses were read, and `pass_rate_bands` /
+  `band_held_back` for the pass-rate band applied at read time.
+- **`DELETE /api/v1/release-gate-policies/{policy_id}`** (administrators)
+  deletes a never-published draft and answers 409 for any other version; the
+  delete is recorded as `policy.updated`.
+- **Decision trail stages gain an optional `mode_distribution`**, and a
+  root-cause stage answered by more than one engine stores `analysis_mode`
+  `mixed`.
+
 ### The local model path (batch 7)
 
 - **`AI_TIMEOUT_SECONDS` in `.env.example` is now 300** (the code default). An

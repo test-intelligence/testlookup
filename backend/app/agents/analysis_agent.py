@@ -81,6 +81,11 @@ _MAX_ANALYSIS_RETRIES = 1
 # Non-LLM engines and deterministic fallbacks are repeatable; retrying them
 # just burns CPU/LLM fallback budget and returns the same low-confidence answer.
 _DETERMINISTIC_ANALYSIS_ENGINES = {"rules", "ml", "blocked"}
+# D-156 (review F6): the per-test ``mode_used`` values that are an engine
+# answering (analysis_router: llm | ml | rules). Not engines: "hint"
+# (classification_hint_service), "human_corrected" (analysis_corrections) and
+# "unknown" (no engine recorded). Only these count towards a "mixed" stage.
+_ANSWERING_ENGINES = frozenset({"llm", "ml", "rules"})
 _METADATA_CACHE_TTL_SECONDS = 30
 _METADATA_CACHE_MAX_ENTRIES = 64
 _METADATA_CACHE: dict[str, tuple[float, dict[str, dict]]] = {}
@@ -597,6 +602,14 @@ class AnalysisAgent(BaseAgent):
             if audit.get("fallback_from"):
                 fallback_count += 1
         dominant_mode = max(mode_counts, key=mode_counts.get) if mode_counts else None
+        # D-156: three rules answers and one model answer used to read "rules".
+        # When the tests ran on more than one engine the stage says "mixed" and
+        # the split stays in result_data.mode_distribution (the decision trail
+        # exposes it per stage). Only an engine that answered counts towards
+        # "mixed" (_ANSWERING_ENGINES): a QA lead's hint, a replayed human
+        # correction or an unrecorded engine ("unknown") is not a second engine.
+        recorded_engines = [m for m in mode_counts if m in _ANSWERING_ENGINES]
+        stage_mode = "mixed" if len(recorded_engines) > 1 else dominant_mode
         stage_fallback_reason = (
             f"{fallback_count}/{total_analysed} tests fell back from requested engine"
             if fallback_count else None
@@ -619,7 +632,7 @@ class AnalysisAgent(BaseAgent):
                 "budget_skipped": len(budget_skipped),
                 "config_skipped": len(threshold_skipped),
             },
-            analysis_mode=dominant_mode,
+            analysis_mode=stage_mode,
             fallback_reason=stage_fallback_reason,
             project_id=project_id,
         )

@@ -17,6 +17,7 @@
  "DELETE /api/v1/projects/{project_id}/timeline-notes/{note_id}": {"role": "QA_ENGINEER"},
  "DELETE /api/v1/projects/{project_id}/workflows/defaults/{base}": {"project_role": "QA_LEAD"},
  "DELETE /api/v1/projects/{project_id}/workflows/{workflow_id}": {"project_role": "QA_LEAD"},
+ "DELETE /api/v1/release-gate-policies/{policy_id}": {"role": "ADMIN"},
  "DELETE /api/v1/releases/{release_id}": {"role": "ADMIN"},
  "DELETE /api/v1/releases/{release_id}/phases/{phase_id}": {"role": "ADMIN"},
  "DELETE /api/v1/releases/{release_id}/test-runs/{run_id}": {"role": "ADMIN"},

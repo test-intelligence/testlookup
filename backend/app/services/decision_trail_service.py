@@ -165,6 +165,21 @@ async def _load_workflow_events(pipeline_run: AgentPipelineRun) -> list[dict[str
         return fallback_events
 
 
+def _stage_mode_distribution(stage: AgentStageResult) -> Optional[dict[str, int]]:
+    """D-156: the per-engine split a stage stored in ``result_data``, or None.
+
+    The Root Cause stage records ``analysis_mode="mixed"`` when its tests ran
+    on more than one engine; this is the split the page prints beside it.
+    """
+    result_data = getattr(stage, "result_data", None)
+    if not isinstance(result_data, dict):
+        return None
+    dist = result_data.get("mode_distribution")
+    if not isinstance(dist, dict):
+        return None
+    return {str(k): int(v) for k, v in dist.items() if isinstance(v, int) and not isinstance(v, bool)}
+
+
 def _summarize_stage(stage: AgentStageResult) -> dict[str, Any]:
     return {
         "stage_name": stage.stage_name,
@@ -173,6 +188,7 @@ def _summarize_stage(stage: AgentStageResult) -> dict[str, Any]:
         "completed_at": stage.completed_at,
         "duration_seconds": _duration_seconds(stage.started_at, stage.completed_at),
         "analysis_mode": getattr(stage, "analysis_mode", None),
+        "mode_distribution": _stage_mode_distribution(stage),
         "fallback_used": bool(stage.fallback_used) if stage.fallback_used is not None else None,
         "fallback_reason": getattr(stage, "fallback_reason", None),
         "route_rationale": stage.route_rationale,

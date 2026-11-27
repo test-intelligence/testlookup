@@ -139,7 +139,7 @@ export default function RunTestsTab({
   // renderer. Deliberately non-blocking: the table renders with or without
   // this, so a slow or failed attribution fetch degrades to the previous
   // behaviour rather than holding up the failure list.
-  const { data: attributionData } = useRunAttribution(runId)
+  const { data: attributionData, mutate: refreshAttribution } = useRunAttribution(runId)
   const attributionByTestCase = useMemo(() => {
     const map: Record<string, AttributionItem> = {}
     for (const item of attributionData?.items ?? []) {
@@ -154,6 +154,22 @@ export default function RunTestsTab({
     ...(suiteFilter && { suite: suiteFilter }),
   })
   const tcItems = (data?.items ?? []) as TestCase[]
+  // D-72: the attribution is fetched once, but the list polls. When the pipeline writes a category onto a test
+  // already on screen, the verdict beside it was computed before that, so fetch it again. A finished run's
+  // categories never change, so it is never re-fetched there; a new page or filter only records what it shows.
+  const seenCategories = useRef<{ runId: string; byId: Map<string, string> }>({ runId, byId: new Map() })
+  useEffect(() => {
+    if (seenCategories.current.runId !== runId) seenCategories.current = { runId, byId: new Map() }
+    const { byId } = seenCategories.current
+    let changed = false
+    for (const tc of (data?.items ?? []) as TestCase[]) {
+      const category = tc.failure_category ?? ''
+      const before = byId.get(tc.id)
+      if (before !== undefined && before !== category) changed = true
+      byId.set(tc.id, category)
+    }
+    if (changed) void refreshAttribution()
+  }, [data, runId, refreshAttribution])
   const { sorted, sortKey, sortDir, toggleSort } = useTableSort(tcItems, '', 'asc')
   const rows = useMemo(
     () => (sortKey ? sorted : [...sorted].sort((a, b) => Number(isFailing(b.status)) - Number(isFailing(a.status)))),

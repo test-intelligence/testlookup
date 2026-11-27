@@ -237,6 +237,31 @@ test('a quick-look decision: Override is disabled for a QA lead and says why; no
   expect(errors).toEqual([])
 })
 
+// D-104 + review F1: the card states the numbers the verdict used, from the decision's own payload, including
+// the pass-rate bands the gate applied, and says when the band itself set the verdict.
+test('the gate card states the thresholds and the pass-rate bands the verdict used', async ({ page }) => {
+  const decision = {
+    ...gateDecision(true),
+    recommendation: 'CONDITIONAL_GO', risk_score: 10, composite_risk: 10, pass_rate: 92,
+    input_snapshot: { synthesized: true, threshold: 90, no_go_floor_pct: 63, go_threshold: 20, no_go_threshold: 55 },
+    policy_id: 'pol-1', band_policy_id: 'pol-1', band_policy_level: 'project', band_policy_version: 1,
+    release_readiness_band: 'orange', band_held_back: true,
+    pass_rate_bands: { orange_min: 90, yellow_min: 95, green_min: 99 },
+  }
+  const { api, errors } = await openRollout(page, PATH, {
+    handlers: [[/^\/api\/v1\/release-readiness\/[^/]+$/, () => decision], ...releaseGateOn({ clusters: GATE_CLUSTERS })],
+    ready,
+  })
+  const card = page.locator('[data-primary]')
+  await expect(card.locator('[data-verdict-thresholds]')).toHaveText(
+    'Go under risk 20 and at 90% or more · No-Go at risk 55 or under 63% · Pass-rate bands: No-Go under 90%, Conditional under 95%',
+  )
+  await expect(card.locator('[data-band-hold]')).toHaveText('Held back by the pass-rate band: 92.0% is under 95% (Conditional).')
+  await networkQuiet(page, api)
+  expect(api.unhandled).toEqual([])
+  expect(errors).toEqual([])
+})
+
 test('a stored decision: the same QA lead opens the override form', async ({ page }) => {
   const { api, errors } = await openRollout(page, PATH, {
     handlers: [[/^\/api\/v1\/release-readiness\/[^/]+$/, () => gateDecision(false)], ...releaseGateOn({ clusters: GATE_CLUSTERS })],

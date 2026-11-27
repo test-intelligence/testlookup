@@ -7100,6 +7100,13 @@ class ReleaseCouncilResponse(BaseModel):
     # e.g. ``["p0_defects:2>0"]``.
     release_readiness_band: Optional[str] = None
     band_downgrades: List[str] = []
+    # Batch 8 review F1: the band edges the read-time band floor applied
+    # (``{orange_min, yellow_min, green_min}``, the classifier's defaults filled
+    # in): under orange is No-Go, orange is Conditional. ``None`` with no
+    # active policy. ``band_held_back`` is True when the pass-rate band itself
+    # made the verdict stricter (a hard cap is named in ``band_downgrades``).
+    pass_rate_bands: Optional[dict] = None
+    band_held_back: bool = False
     # E8.4: the human-review gate on the value CI reads (section 8.2). While
     # the gate is enforced, an unreviewed AI decision reads PENDING_REVIEW (or
     # ADVISORY_<value> with allow_advisory) and the model's value moves here.
@@ -7113,6 +7120,12 @@ class ReleaseCouncilResponse(BaseModel):
     # quick-look view: no decision has been stored, so there is no time.
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+    # D-97: a person changed a test's category in this run after the stored
+    # decision read its analyses. The decision is NOT recomputed (a signed
+    # decision must not change silently); the gate says "re-evaluate".
+    # Set by ``GET /release-readiness/{run_id}`` only; False on a quick look.
+    analysis_changed_since: bool = False
+    analysis_changed_at: Optional[datetime] = None
 
 
 class ReleaseCouncilOverrideRequest(BaseModel):
@@ -9645,6 +9658,9 @@ class StageDecisionSummary(BaseModel):
     completed_at: Optional[datetime] = None
     duration_seconds: Optional[float] = None
     analysis_mode: Optional[str] = None  # llm|ml|rules|auto|mixed
+    # D-156: tests per engine for a stage that analysed tests (root cause);
+    # "mixed" above means more than one key here. None for other stages.
+    mode_distribution: Optional[Dict[str, int]] = None
     fallback_used: Optional[bool] = None
     fallback_reason: Optional[str] = None
     route_rationale: Optional[str] = None

@@ -41,6 +41,13 @@ import { lazyWithRetry } from '@/utils/lazyWithRetry'
 import { formatCompactDateTime, formatDay } from '@/utils/formatters'
 import { runName, runSeqLabel } from '@/utils/formatters'
 import { DECISION_LABEL } from '@/components/ui/statusVocabulary'
+import {
+  describeBandHold,
+  describeVerdictThresholds,
+  rulesNotChecked,
+  type AnalysisChanged,
+  type BandFloor,
+} from './releaseGateModel'
 
 /**
  * The catalogue's "Context" group (VIZ-408), in its own chunk: it arrives
@@ -155,9 +162,21 @@ function policyLabel(decision: ReleaseCouncilDecision): string {
  * carried both; the page names the band policy beside the stored one.
  */
 type BandProvenance = {
+  band_policy_id?: string | null
   band_policy_level?: string | null
   band_policy_version?: number | null
   band_downgrades?: string[] | null
+}
+
+/**
+ * D-142: the quick look now evaluates with the same policy whose bands it applies. The footer still says the
+ * bands applied (review F1: they can decide the verdict), as "including its pass-rate bands" when they came
+ * from the policy the verdict was evaluated with, and by name when they came from another one.
+ */
+function bandsFromEvaluatedPolicy(decision: ReleaseCouncilDecision & BandProvenance): boolean {
+  if (!decision.band_policy_level || decision.band_policy_level !== decision.policy_level) return false
+  if ((decision.band_policy_version ?? null) !== (decision.policy_version ?? null)) return false
+  return !decision.policy_id || !decision.band_policy_id || decision.policy_id === decision.band_policy_id
 }
 
 function bandPolicyLabel(decision: BandProvenance): string | null {
@@ -365,7 +384,22 @@ export default function ReleaseGatePage() {
   // response has carried these fields since TL-2026-09-19-01-008).
   const bandProvenance = decision as ReleaseCouncilDecision & BandProvenance
   const bandLabel = bandPolicyLabel(bandProvenance)
+  const bandsSamePolicy = bandsFromEvaluatedPolicy(bandProvenance)
   const bandDowngrades = Array.isArray(bandProvenance.band_downgrades) ? bandProvenance.band_downgrades : []
+  // D-104: the numbers the verdict used, from the decision's own snapshot (a missing one is left out), plus
+  // the pass-rate bands the gate applied at read time (review F1: they can floor the verdict).
+  const bandFloor = decision as ReleaseCouncilDecision & BandFloor
+  const appliedBands = bandFloor.pass_rate_bands ?? null
+  const thresholdsLine = describeVerdictThresholds(decision.input_snapshot, appliedBands)
+  const bandHold = bandFloor.band_held_back
+    ? describeBandHold(decision.pass_rate, bandFloor.release_readiness_band, appliedBands)
+    : null
+  // D-142: the policy rules a quick look had no input for.
+  const uncheckedRules = decision.synthesized ? rulesNotChecked(decision.input_snapshot) : []
+  // D-97: a category was corrected in this run after the stored decision read it (read-time; never on a
+  // quick look, which is computed from today's categories).
+  const changed = decision as ReleaseCouncilDecision & AnalysisChanged
+  const analysisChanged = !decision.synthesized && changed.analysis_changed_since === true
 
   // Linked cluster insights, placed under the Context group whose share chart
   // summarises them.
@@ -484,6 +518,19 @@ export default function ReleaseGatePage() {
             {hasEvidence && decision.pass_rate != null && (
               <p className="text-sm text-[var(--color-text-muted)] mt-1">Pass rate: {decision.pass_rate.toFixed(1)}%</p>
             )}
+            {hasEvidence && thresholdsLine && (
+              <p data-verdict-thresholds="" className="text-xs text-[var(--color-text-muted)] mt-1">{thresholdsLine}</p>
+            )}
+            {hasEvidence && bandHold && (
+              <p data-band-hold="" className="text-xs text-[var(--ui-warning)] mt-1">{bandHold}</p>
+            )}
+            {analysisChanged && (
+              <p data-analysis-changed="" className="text-xs text-[var(--ui-warning)] mt-1">
+                A test&apos;s category was corrected after this decision
+                {changed.analysis_changed_at ? ` (${formatCompactDateTime(changed.analysis_changed_at)})` : ''}.{' '}
+                <Link to={analysisHref} className="underline hover:no-underline">Re-evaluate</Link> to include it.
+              </p>
+            )}
             {hasEvidence && decision.original_recommendation && decision.original_recommendation !== decision.recommendation && (
               <p className="text-xs text-[var(--status-broken)] mt-1">
                 Original recommendation: {decision.original_recommendation}
@@ -553,7 +600,10 @@ export default function ReleaseGatePage() {
               <Shield className="w-3.5 h-3.5" />
               Evaluated with{' '}
               <span className="text-[var(--color-text)] font-medium">{policyLabel(decision)}</span>
-              {bandLabel && (
+              {bandLabel && bandsSamePolicy && (
+                <span data-band-policy="">· including its pass-rate bands</span>
+              )}
+              {bandLabel && !bandsSamePolicy && (
                 <span data-band-policy="">
                   · pass-rate bands:{' '}
                   <span className="text-[var(--color-text)] font-medium">{bandLabel}</span>
@@ -566,6 +616,11 @@ export default function ReleaseGatePage() {
               <Shield className="w-3.5 h-3.5" />
               Pass-rate bands:{' '}
               <span className="text-[var(--color-text)] font-medium">{bandLabel}</span>
+            </span>
+          )}
+          {uncheckedRules.length > 0 && (
+            <span data-rules-not-checked="" className="text-[var(--color-text-muted)]">
+              Not checked until deep investigation runs: {uncheckedRules.join(', ')}
             </span>
           )}
           {!overrideMode && (
