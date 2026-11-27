@@ -117,13 +117,17 @@ Emit = Callable[[str, dict], None]
 class ChatTurnError(Exception):
     """A turn that cannot produce an answer, said in words a user can act on."""
 
-    def __init__(self, code: str, message: str, *, retryable: bool) -> None:
+    def __init__(self, code: str, message: str, *, retryable: bool, detail: Optional[str] = None) -> None:
         super().__init__(message)
         self.code = code
         self.message = message
         self.retryable = retryable
+        self.detail = detail
 
     def as_event(self) -> dict:
+        # ``detail`` (the provider's first line, scrubbed) is for the logs, never the event: every reader of the
+        # chat receives the event, and the turn has no role to keep it to admins. The admin reads it in
+        # ``chat_tools_dropped_after_refusal`` / ``chat_turn_failed``.
         return {"code": self.code, "message": self.message, "retryable": self.retryable}
 
 
@@ -131,11 +135,114 @@ class _ToolsUnsupported(Exception):
     """The provider refused the ``tools`` parameter (a model without tool use)."""
 
 
-def _status_code(exc: BaseException) -> Optional[int]:
+class ProviderHTTPError(Exception):
+    """A model call that the provider answered with an HTTP error status.
+
+    Only the model call raises this (``ConversationAgent._converse`` wraps the
+    provider's exception), so :func:`classify_failure` maps a status code to a
+    provider fault only when a provider sent it. Before D-143 it read
+    ``status_code`` off any exception: a ``fastapi.HTTPException(400)`` from
+    internal code read as "the AI provider refused the request".
+    """
+
+    def __init__(self, original: BaseException, status_code: int) -> None:
+        super().__init__(str(original))
+        self.original = original
+        self.status_code = status_code
+
+
+def _raw_status_code(exc: BaseException) -> Optional[int]:
+    """The HTTP status a provider SDK exception carries (on it or its response)."""
     for candidate in (exc, getattr(exc, "response", None)):
         code = getattr(candidate, "status_code", None)
         if isinstance(code, int):
             return code
+    return None
+
+
+def _status_code(exc: BaseException) -> Optional[int]:
+    """The provider's HTTP status, for a provider error only."""
+    return exc.status_code if isinstance(exc, ProviderHTTPError) else None
+
+
+# A 4xx that says something about the request, not the caller: auth (401,
+# 403), a client-side timeout (408) and rate limits (429) are not fixed by
+# dropping the tools, so they are not retried without them.
+_NOT_REQUEST_SHAPE = frozenset({401, 403, 408, 429})
+
+
+# Review findings 3-4: a 4xx about the request's SIZE or CONTENT, which
+# dropping the tool schemas can hide for one call (a shorter prompt, a filter
+# that does not fire twice) but which says nothing about tool use.
+_TOO_LARGE_RE = re.compile(
+    r"context[ _-]?(?:length|window)|maximum context|too many tokens|token limit"
+    r"|(?:prompt|input|message|request) is too long|too large|payload",
+    re.IGNORECASE,
+)
+_CONTENT_FILTER_RE = re.compile(
+    r"content[ _-]?(?:filter|policy|management)|safety|moderation|flagged", re.IGNORECASE,
+)
+
+
+def _too_large(exc: BaseException) -> bool:
+    """A provider 4xx saying the request is too large (413, context length)."""
+    original = getattr(exc, "original", exc)
+    code = _raw_status_code(original)
+    if code == 413:
+        return True
+    return (
+        code is not None and 400 <= code < 500 and code not in _NOT_REQUEST_SHAPE
+        and bool(_TOO_LARGE_RE.search(str(original)))
+    )
+
+
+def _content_refused(exc: BaseException) -> bool:
+    """A provider 4xx from its content filter."""
+    original = getattr(exc, "original", exc)
+    code = _raw_status_code(original)
+    return (
+        code is not None and 400 <= code < 500 and code not in _NOT_REQUEST_SHAPE
+        and bool(_CONTENT_FILTER_RE.search(str(original)))
+    )
+
+
+def _not_about_tools(exc: BaseException) -> bool:
+    return _too_large(exc) or _content_refused(exc)
+
+
+def _refused_request(exc: BaseException) -> bool:
+    """A provider 4xx that a request without ``tools`` may not get (D-143).
+
+    Not auth, rate limits or a client timeout, and not a size or content
+    refusal: those are not about tools (review findings 3-4)."""
+    code = _raw_status_code(exc)
+    return (
+        code is not None and 400 <= code < 500 and code not in _NOT_REQUEST_SHAPE
+        and not _not_about_tools(exc)
+    )
+
+
+_URL_RE = re.compile(r"\b[a-z][a-z0-9+.-]*://\S+", re.IGNORECASE)
+# host:port and dotted lower-case host names (api.example.com,
+# ollama.internal); a model tag such as ``mistral-nemo:12b`` or ``llama3.1``
+# matches neither, so it stays.
+_HOST_PORT_RE = re.compile(r"\b[\w.-]+:\d{2,5}\b")
+_HOST_RE = re.compile(r"\b(?:[a-z0-9-]+\.)+[a-z]{2,}\b(?!\.\w)")
+_DETAIL_CHARS = 200
+
+
+def _provider_detail(exc: BaseException) -> Optional[str]:
+    """The provider's first line, without secrets, URLs or host names."""
+    original = getattr(exc, "original", exc)
+    for line in str(original).splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        line = _URL_RE.sub("[url]", line)
+        line = _HOST_PORT_RE.sub("[host]", line)
+        line = _HOST_RE.sub("[host]", line)
+        line = redact_text(line)
+        return line[:_DETAIL_CHARS].rstrip() or None
     return None
 
 
@@ -196,11 +303,35 @@ def classify_failure(exc: BaseException) -> ChatTurnError:
             "The AI provider could not be reached. Try again shortly.",
             retryable=True,
         )
+    if code is not None and _too_large(exc):
+        # Review finding 4: the most common chat 400. A new conversation or a
+        # shorter question fixes it; the same question here fails again.
+        return ChatTurnError(
+            "too_long",
+            "This conversation is too long for the AI model. Start a new conversation, "
+            "or ask a shorter question.",
+            retryable=False,
+            detail=_provider_detail(exc),
+        )
+    if code is not None and _content_refused(exc):
+        return ChatTurnError(
+            "content_refused",
+            "The AI provider declined to answer this question under its content rules. "
+            "Try wording it differently.",
+            retryable=False,
+            detail=_provider_detail(exc),
+        )
     if code is not None and 400 <= code < 500:
+        # A refusal of the request's shape (D-143): rephrasing does not fix
+        # it and neither does sending it again. The tool-free retry already
+        # ran when the model had tools; what is left is the model or its
+        # settings, which only an admin can change.
         return ChatTurnError(
             "provider_error",
-            f"The AI provider refused the request (HTTP {code}). Try rephrasing the question.",
-            retryable=True,
+            f"The AI provider refused the request (HTTP {code}). An admin needs to check the "
+            "chat model in Settings > AI Configuration.",
+            retryable=False,
+            detail=_provider_detail(exc),
         )
     return ChatTurnError(
         "internal", "Something went wrong while answering. Try again.", retryable=True,
@@ -679,8 +810,9 @@ class ConversationAgent:
                 "chat_turn_failed",
                 session_id=str(session_id),
                 code=failure.code,
-                error_type=type(exc).__name__,
+                error_type=type(getattr(exc, "original", exc)).__name__,
                 error=str(exc)[:300],
+                detail=failure.detail,
                 elapsed_ms=state.timings.since_start(),
             )
             emit("error", failure.as_event())
@@ -982,13 +1114,36 @@ class ConversationAgent:
                     float(settings.CHAT_FIRST_TOKEN_TIMEOUT_SECONDS),
                 )
             except Exception as exc:
-                if not use_tools or not tools_unsupported_error(exc):
+                status = _raw_status_code(exc)
+                # Review finding 4: only the first round, before the history
+                # holds tool calls and results (an OpenAI-wire provider may
+                # refuse tool messages without the tools declared).
+                first_round = stats["rounds"] == 1 and not any(
+                    isinstance(m, ToolMessage) for m in messages
+                )
+                if use_tools and first_round and tools_unsupported_error(exc) and not _not_about_tools(exc):
+                    # The model has no tool use. Remember it (each turn would
+                    # otherwise pay a refused call first) and answer from the
+                    # snapshot and the up-front lookups.
+                    logger.info("chat_tools_unsupported_by_provider", provider=provider, model=model_key[1])
+                    _TOOLS_OFF.add(model_key)
+                elif use_tools and first_round and _refused_request(exc):
+                    # D-143: a 4xx whose wording the tools-refused pattern
+                    # does not know (a template error, a new Ollama message).
+                    # Only the tools differ from the pipeline's calls, which
+                    # the same model answers, so try once without them, for
+                    # THIS turn only: the refusal does not name tools, so it is
+                    # not evidence enough to switch tools off for the process
+                    # (review finding 3).
+                    logger.warning(
+                        "chat_tools_dropped_after_refusal",
+                        provider=provider, model=model_key[1], status=status,
+                        detail=_provider_detail(exc),
+                    )
+                else:
+                    if status is not None:
+                        raise ProviderHTTPError(exc, status) from exc
                     raise
-                # The model has no tool use. Remember it (each turn would
-                # otherwise pay a refused call first) and answer from the
-                # snapshot and the up-front lookups.
-                logger.info("chat_tools_unsupported_by_provider", provider=provider, model=model_key[1])
-                _TOOLS_OFF.add(model_key)
                 use_tools = False
                 stats["tools"] = False
                 continue

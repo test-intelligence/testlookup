@@ -169,6 +169,10 @@ def _turn_error_status(code: str) -> int:
     return {
         "project_required": 422,
         "empty_question": 422,
+        # D-143 review: the question (or the conversation) is too long, or the provider's content filter
+        # refused it: the request is the problem, not the service.
+        "too_long": 422,
+        "content_refused": 422,
         "nothing_to_retry": 409,
         "llm_disabled": 409,
         "budget_exceeded": 429,

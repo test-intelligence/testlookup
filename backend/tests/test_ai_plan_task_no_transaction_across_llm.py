@@ -109,9 +109,11 @@ def test_the_llm_call_runs_with_no_session_open(monkeypatch):
 
 
 def test_no_cases_means_no_llm_call_and_no_write(monkeypatch):
-    state, prompts, result = _run(monkeypatch, [])
-    assert result == {"error": "No approved test cases found for this project"}
-    assert prompts == [] and len(state.sessions) == 1
+    # D-58: no case is a FAILED task (it used to return this error dict as a success).
+    from app.worker import tasks
+
+    with pytest.raises(tasks.AIPlanNotBuilt, match="No approved test cases found for this project"):
+        _run(monkeypatch, [])
 
 
 @pytest.mark.parametrize("unused", [None])

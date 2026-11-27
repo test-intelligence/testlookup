@@ -49,13 +49,16 @@ export function useDocumentTitle(pageTitle?: string, routeKey = ''): void {
   }, [pageTitle, routeKey])
 }
 
+// The legacy paths that only redirect (`/intelligence`, `/flaky-coach`, `/quarantine`, `/reviews`,
+// `/runs/:id/intelligence`, `/agents/run/:id`, `/deep-investigate/:id`, see routing/legacyRedirects)
+// carry no title: the page they land on sets its own before paint.
 const ROUTE_TITLES: Record<string, string> = {
   '/login': 'Login', '/reset-password': 'Reset Password', '/overview': 'Dashboard',
   '/getting-started': 'Getting Started', '/docs': 'Documentation', '/value-metrics': 'Value Metrics',
-  '/intelligence': 'Intelligence', '/runs': 'Runs', '/coverage': 'Coverage', '/coverage/suite': 'Suite Coverage',
+  '/runs': 'Runs', '/coverage': 'Coverage', '/coverage/suite': 'Suite Coverage',
   '/suites': 'Suites', '/failures': 'Failure Analysis', '/trends': 'Trends', '/explore': 'Explorer', '/defects': 'Defects',
   '/search': 'Search', '/chat': 'Ask AI', '/agents': 'Agents', '/deep-investigate': 'Deep Investigation',
-  '/release-gate': 'Release Gate', '/flaky': 'Flaky tests', '/flaky-coach': 'Flaky Coach', '/quarantine': 'Quarantine', '/reviews': 'Review Queue',
+  '/release-gate': 'Release Gate', '/flaky': 'Flaky tests',
   '/test-management': 'Test Management', '/live': 'Live Execution', '/my-failures': 'My Failures',
   '/reports/summary': 'Summary Report', '/settings/profile': 'Profile', '/projects': 'Projects',
   '/releases': 'Releases', '/users': 'Users', '/settings': 'Settings',
@@ -76,13 +79,10 @@ export function routeDocumentTitle(pathname: string): string {
   if (ROUTE_TITLES[path]) return ROUTE_TITLES[path]
   if (/^\/docs\/[^/]+$/.test(path)) return 'Documentation'
   if (path === '/runs/compare') return 'Run Comparison'
-  if (/^\/runs\/[^/]+\/intelligence$/.test(path)) return 'Run Intelligence'
   if (/^\/runs\/[^/]+\/tests\/[^/]+$/.test(path)) return 'Test Case'
   if (/^\/runs\/[^/]+$/.test(path)) return 'Run Details'
   if (/^\/suites\/[^/]+$/.test(path)) return 'Suite Details'
   if (/^\/canonical-test-cases\/[^/]+$/.test(path)) return 'Canonical Test Case'
-  if (/^\/agents\/run\/[^/]+$/.test(path)) return 'Agent Run'
-  if (/^\/deep-investigate\/[^/]+$/.test(path)) return 'Deep Investigation'
   if (/^\/release-gate\/[^/]+$/.test(path)) return 'Release Gate'
   if (path === '/policies/new') return 'New Policy'
   if (/^\/policies\/[^/]+$/.test(path)) return 'Policy Editor'

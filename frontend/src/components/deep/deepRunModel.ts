@@ -26,6 +26,10 @@ export const PRESCAN_LOAD_ERROR = 'Could not load the pre-scan.'
 export const HISTORY_LOAD_ERROR = 'Could not load the history.'
 export const ESTIMATE_LOAD_ERROR = 'Could not load the estimate.'
 export const ESTIMATE_NOT_MEASURED = 'Not measured yet: no completed deep investigation in this project'
+/** `ESTIMATE_NO_MATCHING_RUN` (deep_investigation_insights_service.py), mirrored: past runs used another engine (D-152). */
+export const ESTIMATE_NO_MATCHING_RUN =
+  'No past run with this model: the earlier deep investigations in this project ran with a different engine or model, so their time is no guide.'
+export const ESTIMATE_NOT_MEASURED_MODEL = 'Not measured yet: no past run with this model'
 export const DEEP_ALREADY_IN_PROGRESS = 'Deep investigation already in progress'
 
 /** A pre-scan group's error as one line of text (React text, never markup); a group with no message says so. */
@@ -133,17 +137,18 @@ export function costLine(cost: DeepCost): CostLine {
   return { value: '—', unknown: true, note: cost.note ?? null }
 }
 
-/** `~4 min`, only for a measured estimate (never `~0.5 min` from nothing). */
+/** `~4 min`, only for a measured estimate (never `~0.5 min` from nothing); under a minute is `< 1 min`, never `~0 min`. */
 export function minutesText(estimate: Pick<DeepEstimate, 'measured' | 'minutes_p50'>): string | null {
   if (!estimate.measured || estimate.minutes_p50 == null) return null
   const m = estimate.minutes_p50
+  if (m < 1) return '< 1 min'
   const shown = m < 10 ? (Math.round(m * 10) / 10).toString() : Math.round(m).toString()
   return `~${shown} min`
 }
 
 /** The caption under the cost: the sample it was measured from, or why there is none. */
-export function sampleCaption(estimate: Pick<DeepEstimate, 'measured' | 'sample_pipelines'>): string {
-  if (!estimate.measured) return ESTIMATE_NOT_MEASURED
+export function sampleCaption(estimate: Pick<DeepEstimate, 'measured' | 'sample_pipelines' | 'reason'>): string {
+  if (!estimate.measured) return estimate.reason === ESTIMATE_NO_MATCHING_RUN ? ESTIMATE_NOT_MEASURED_MODEL : ESTIMATE_NOT_MEASURED
   const n = estimate.sample_pipelines
   return `estimate from ${n} past run${n === 1 ? '' : 's'}`
 }

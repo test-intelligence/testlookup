@@ -742,7 +742,10 @@ async def test_a_v1_report_is_never_served_as_the_v2_narrative(world):
                                    **common))
         await db.commit()
     narrative = (await _get(world, path, world.viewer)).json()["narrative"]
-    assert (narrative["label"], narrative["source"], narrative["status"]) == ("AI narrative", "llm", "ready")
+    # D-148: a suite-keyed report says its scope.
+    assert (narrative["label"], narrative["source"], narrative["status"]) == (
+        "AI narrative (checkout suite only)", "llm", "ready",
+    )
     assert narrative["executive_summary"] == "The payment gateway regressed."
     async with world.sessions() as db:
         await db.execute(delete(RunComparisonReport).where(RunComparisonReport.project_id == world.p1))

@@ -3015,7 +3015,7 @@ List Plans
 
 
 
-Source: [backend/app/routers/test_management_plans.py:48](../../../backend/app/routers/test_management_plans.py#L48).
+Source: [backend/app/routers/test_management_plans.py:92](../../../backend/app/routers/test_management_plans.py#L92).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -3148,7 +3148,7 @@ Create Plan
 
 
 
-Source: [backend/app/routers/test_management_plans.py:80](../../../backend/app/routers/test_management_plans.py#L80).
+Source: [backend/app/routers/test_management_plans.py:124](../../../backend/app/routers/test_management_plans.py#L124).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -3229,7 +3229,7 @@ Ai Create Plan
 
 
 
-Source: [backend/app/routers/test_management_plans.py:191](../../../backend/app/routers/test_management_plans.py#L191).
+Source: [backend/app/routers/test_management_plans.py:235](../../../backend/app/routers/test_management_plans.py#L235).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -3242,7 +3242,7 @@ payload: AIOptimizePlanRequest, db: AsyncSession=Depends(get_db), current_user: 
 Direct handler error branches (dependency/service errors can add others):
 
 ```python
-HTTPException(status_code=400, detail='No approved test cases found for this project')
+HTTPException(status_code=400, detail=NO_APPROVED_CASES)
 ```
 
 ### Declared wire contract
@@ -3316,7 +3316,7 @@ Ai Create Plan Async
 
 
 
-Source: [backend/app/routers/test_management_plans.py:241](../../../backend/app/routers/test_management_plans.py#L241).
+Source: [backend/app/routers/test_management_plans.py:279](../../../backend/app/routers/test_management_plans.py#L279).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -3329,6 +3329,8 @@ payload: AIOptimizePlanRequest, db: AsyncSession=Depends(get_db), current_user: 
 Direct handler error branches (dependency/service errors can add others):
 
 ```python
+HTTPException(status_code=400, detail=NO_APPROVED_CASES)
+HTTPException(status_code=status.HTTP_409_CONFLICT, detail=no_model)
 HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail='AI task queue unavailable. Check that the Celery worker and Redis are running.')
 ```
 
@@ -3403,7 +3405,7 @@ Get Plan
 
 
 
-Source: [backend/app/routers/test_management_plans.py:92](../../../backend/app/routers/test_management_plans.py#L92).
+Source: [backend/app/routers/test_management_plans.py:136](../../../backend/app/routers/test_management_plans.py#L136).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_plan_access`.
 
@@ -3484,7 +3486,7 @@ Update Plan
 
 
 
-Source: [backend/app/routers/test_management_plans.py:102](../../../backend/app/routers/test_management_plans.py#L102).
+Source: [backend/app/routers/test_management_plans.py:146](../../../backend/app/routers/test_management_plans.py#L146).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_plan_access`, `require_role.<locals>._check`.
 
@@ -3761,7 +3763,7 @@ List Plan Items
 
 
 
-Source: [backend/app/routers/test_management_plans.py:116](../../../backend/app/routers/test_management_plans.py#L116).
+Source: [backend/app/routers/test_management_plans.py:160](../../../backend/app/routers/test_management_plans.py#L160).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_plan_access`.
 
@@ -3846,7 +3848,7 @@ Add Plan Item
 
 
 
-Source: [backend/app/routers/test_management_plans.py:142](../../../backend/app/routers/test_management_plans.py#L142).
+Source: [backend/app/routers/test_management_plans.py:186](../../../backend/app/routers/test_management_plans.py#L186).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_plan_access`, `require_role.<locals>._check`.
 
@@ -3937,7 +3939,7 @@ Remove Plan Item
 
 
 
-Source: [backend/app/routers/test_management_plans.py:156](../../../backend/app/routers/test_management_plans.py#L156).
+Source: [backend/app/routers/test_management_plans.py:200](../../../backend/app/routers/test_management_plans.py#L200).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_plan_access`, `require_role.<locals>._check`.
 
@@ -4021,7 +4023,7 @@ Record Execution
 
 
 
-Source: [backend/app/routers/test_management_plans.py:168](../../../backend/app/routers/test_management_plans.py#L168).
+Source: [backend/app/routers/test_management_plans.py:212](../../../backend/app/routers/test_management_plans.py#L212).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_plan_access`, `require_role.<locals>._check`.
 

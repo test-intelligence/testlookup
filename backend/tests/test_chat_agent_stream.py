@@ -531,6 +531,122 @@ async def test_a_model_without_tool_use_answers_without_tools_and_is_remembered(
     assert gates["failure"] == []  # not an outage
 
 
+@pytest.mark.asyncio
+async def test_a_400_with_unknown_wording_while_tools_are_bound_retries_without_tools(monkeypatch, gates):
+    """D-143: Ollama answered HTTP 400 in 2 s to the tool-bound call, in words
+    the tools-refused pattern does not know, and the turn failed with "Try
+    rephrasing". The same model answers the pipeline's tool-free calls."""
+    refusal = ProviderError("template: chat:1:2: executing \"chat\" at <.Messages>: unexpected EOF", 400)
+    h = Harness(monkeypatch, [refusal, AIMessage(content="From the snapshot: build 105 failed.")], provider="ollama")
+    events = await h.turn()
+
+    assert kinds(events)[-1] == "done"
+    assert data(events, "done")[0]["meta"]["tools"] is False
+    assert h.model.calls[0]["kwargs"].get("tool_names")  # the first call had tools
+    assert "tool_names" not in h.model.calls[1]["kwargs"]
+    # Review finding 3: the refusal does not name tools, so tools are dropped
+    # for this turn only; the next turn binds them again.
+    assert ("ollama", "scripted-model") not in conv._TOOLS_OFF
+    h.model.script.extend([AIMessage(content="Second answer.")])
+    await h.turn("What failed in build 104?")
+    assert h.model.calls[2]["kwargs"].get("tool_names")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status, text", [
+    (400, "This model's maximum context length is 8192 tokens. However, your messages resulted in 9001 tokens."),
+    (413, "Request entity too large"),
+    (400, "The response was filtered due to the prompt triggering content management policy."),
+])
+async def test_a_size_or_content_refusal_is_not_a_tools_problem(monkeypatch, gates, status, text):
+    """Review findings 3-4: dropping the tool schemas can make these go away
+    for one call; they say nothing about tool use. No tool-free retry, nothing
+    remembered, and a message the reader can act on."""
+    h = Harness(monkeypatch, [ProviderError(text, status), AIMessage(content="would hide it")], provider="openai")
+    events = await h.turn()
+
+    assert len(h.model.calls) == 1
+    assert conv._TOOLS_OFF == set()
+    error = data(events, "error")[0]
+    assert error["code"] in ("too_long", "content_refused")
+    assert "admin" not in error["message"].lower()
+    if error["code"] == "too_long":
+        assert "new conversation" in error["message"]
+
+
+@pytest.mark.asyncio
+async def test_a_400_in_a_later_round_is_not_retried_without_tools(monkeypatch, gates):
+    """Review finding 4: by round 2 the history holds the tool call and its
+    result; a tool-free retry would 400 again and lose the gathered lookups."""
+    refusal = ProviderError("bad request: unexpected field", 400)
+    h = Harness(monkeypatch, [AIMessage(content="", tool_calls=[call("list_recent_runs")]), refusal,
+                              AIMessage(content="would be the retry")])
+    monkeypatch.setattr(crt, "_fetch_recent_runs", lambda s, q: _value(("runs", "listed runs")))
+    events = await h.turn("How are the recent runs trending?")
+
+    assert len(h.model.calls) == 2
+    assert data(events, "error")[0]["code"] == "provider_error"
+    assert conv._TOOLS_OFF == set()
+
+
+def test_a_context_length_400_reads_as_too_long_not_an_admin_problem():
+    exc = conv.ProviderHTTPError(ProviderError("context_length_exceeded: too many tokens", 400), 400)
+    failure = conv.classify_failure(exc)
+    assert failure.code == "too_long" and failure.retryable is False
+    # A client timeout that says "took too long" is not a size problem.
+    late = conv.ProviderHTTPError(ProviderError("request took too long", 408), 408)
+    assert conv.classify_failure(late).code != "too_long"
+
+
+@pytest.mark.asyncio
+async def test_a_400_that_the_tool_free_retry_also_gets_is_a_provider_error_not_rephrase(monkeypatch, gates):
+    first = ProviderError("bad request: something about the model http://ollama.internal:11434/api/chat", 400)
+    second = ProviderError("bad request: something about the model\nsecond line", 400)
+    h = Harness(monkeypatch, [first, second], provider="ollama")
+    events = await h.turn()
+
+    assert len(h.model.calls) == 2  # retried once, without tools
+    error = data(events, "error")[0]
+    assert error["code"] == "provider_error"
+    assert error["retryable"] is False
+    assert "rephras" not in error["message"].lower()
+    # The provider's line is for the admin's log (classify_failure keeps it), never the event every reader gets.
+    assert "detail" not in error
+    # Not remembered as a model without tool use: the tool-free call failed too.
+    assert ("ollama", "scripted-model") not in conv._TOOLS_OFF
+    assert [r["role"] for r in h.store] == ["user"]
+
+
+@pytest.mark.asyncio
+async def test_a_rate_limit_while_tools_are_bound_is_not_retried_without_tools(monkeypatch, gates):
+    h = Harness(monkeypatch, [ProviderError("slow down", 429)], provider="ollama")
+    events = await h.turn()
+    assert len(h.model.calls) == 1
+    assert data(events, "error")[0]["code"] == "rate_limited"
+    assert conv._TOOLS_OFF == set()
+
+
+def test_a_status_code_on_a_non_provider_exception_is_not_a_provider_refusal():
+    """D-143: ``_status_code`` read any exception's ``status_code``, so an
+    internal ``HTTPException(400)`` read as "the AI provider refused"."""
+    from fastapi import HTTPException
+
+    failure = conv.classify_failure(HTTPException(status_code=400, detail="bad"))
+    assert failure.code == "internal"
+    failure = conv.classify_failure(conv.ProviderHTTPError(ProviderError("refused", 400), 400))
+    assert failure.code == "provider_error" and failure.retryable is False
+
+
+def test_the_provider_detail_keeps_the_first_line_without_hosts_or_secrets():
+    exc = ProviderError(
+        "registry.ollama.ai/library/mistral-nemo:12b refused api_key=sk-abc123 at 10.1.2.3:11434\nmore", 400,
+    )
+    detail = conv._provider_detail(exc)
+    assert "mistral-nemo:12b refused" in detail
+    for leaked in ("registry.ollama.ai", "sk-abc123", "10.1.2.3", "11434", "more"):
+        assert leaked not in detail
+
+
 # ── Failures: typed, and never saved as an answer ───────────────────────────
 
 
@@ -675,8 +791,10 @@ def test_a_slot_timeout_is_busy_not_a_provider_timeout():
 
     assert conv.classify_failure(LLMSlotTimeout("full")).code == "busy"
     assert conv.classify_failure(TimeoutError()).code == "timeout"
-    assert conv.classify_failure(ProviderError("x", 401)).code == "provider_auth"
-    assert conv.classify_failure(ProviderError("x", 429)).code == "rate_limited"
+    # A status code counts only on a provider error (D-143): the model call
+    # wraps what the provider raised in ``ProviderHTTPError``.
+    assert conv.classify_failure(conv.ProviderHTTPError(ProviderError("x", 401), 401)).code == "provider_auth"
+    assert conv.classify_failure(conv.ProviderHTTPError(ProviderError("x", 429), 429)).code == "rate_limited"
 
 
 def test_answer_sources_are_what_the_answer_names():

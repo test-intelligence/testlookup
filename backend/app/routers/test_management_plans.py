@@ -36,6 +36,50 @@ from app.services.test_management_service import (
 
 router = APIRouter()
 
+NO_APPROVED_CASES = "No approved test cases found for this project"
+#: D-58: the async route refuses before anything is queued when no model can answer.
+AI_PLAN_NO_MODEL = "A test plan is built by a model, and no model can answer right now."
+
+
+async def _approved_cases(db: AsyncSession, project_id: uuid.UUID) -> list[ManagedTestCase]:
+    result = await db.execute(
+        select(ManagedTestCase).where(
+            ManagedTestCase.project_id == project_id,
+            ManagedTestCase.status.in_(["approved", "active"]),
+        )
+    )
+    return list(result.scalars().all())
+
+
+async def _no_model_reason(db: AsyncSession) -> Optional[str]:
+    """The refusal sentence when the effective model cannot answer, else None.
+
+    Reads the effective AI config (Settings > AI over env) through the request
+    session and asks ``model_status_service`` (the Settings > AI model-status
+    read: an Ollama probe, a cloud key, the offline ceiling) whether the model
+    tier is available. Never raises: ``build_model_status`` degrades to env.
+    """
+    from app.services.ai_config_resolver import get_effective_ai_config  # noqa: PLC0415
+    from app.services.model_status_service import build_model_status  # noqa: PLC0415
+
+    effective = dict(await get_effective_ai_config(db=db))
+    mapped = {
+        "llm_provider": effective.get("provider"),
+        "llm_model": effective.get("model"),
+        "ai_offline_mode": effective.get("offline_mode"),
+        "base_url": effective.get("base_url"),
+        "analysis_mode": effective.get("analysis_mode"),
+    }
+    model_status = await build_model_status({**effective, **{k: v for k, v in mapped.items() if v is not None}})
+    tier = next(
+        (entry for entry in model_status.get("fallback_chain") or [] if entry.get("mode") == "llm"),
+        None,
+    )
+    if tier is None or tier.get("available"):
+        return None
+    reason = str(tier.get("reason") or "").strip() or "Check Settings › AI."
+    return f"{AI_PLAN_NO_MODEL} {reason}"
+
 # Role floors (instance role, taken as a route PARAMETER so the decorator lines
 # and their activity-coverage baseline keys are unchanged). These routes checked
 # project membership only, so a VIEWER created and edited plans and recorded
@@ -201,15 +245,9 @@ async def ai_create_plan(
     # Tenant guard — caller must be a member of the target project.
     await resolve_project_scope(db, current_user, str(payload.project_id))
 
-    result = await db.execute(
-        select(ManagedTestCase).where(
-            ManagedTestCase.project_id == payload.project_id,
-            ManagedTestCase.status.in_(["approved", "active"]),
-        )
-    )
-    cases = result.scalars().all()
+    cases = await _approved_cases(db, payload.project_id)
     if not cases:
-        raise HTTPException(status_code=400, detail="No approved test cases found for this project")
+        raise HTTPException(status_code=400, detail=NO_APPROVED_CASES)
 
     optimization = await ai_optimize_plan(
         [{"title": case.title, "priority": case.priority, "test_type": case.test_type, "estimated_duration_minutes": case.estimated_duration_minutes or 5} for case in cases],
@@ -248,6 +286,14 @@ async def ai_create_plan_async(
     # enqueue a worker task that builds a plan in it.
     from app.core.deps import resolve_project_scope
     await resolve_project_scope(db, current_user, str(payload.project_id))
+    # D-58: refuse up front what the worker cannot do. It used to queue the
+    # task and answer "queued" with no approved case (the task then returned
+    # an error dict as a success) and with no model that could answer.
+    if not await _approved_cases(db, payload.project_id):
+        raise HTTPException(status_code=400, detail=NO_APPROVED_CASES)
+    no_model = await _no_model_reason(db)
+    if no_model is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=no_model)
     try:
         from app.worker.tasks import create_ai_test_plan_task
 

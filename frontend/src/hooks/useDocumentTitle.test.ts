@@ -69,6 +69,17 @@ describe('route document titles', () => {
     expect(routeDocumentTitle('/unknown')).toBe(BASE_DOCUMENT_TITLE)
   })
 
+  it('gives a legacy redirect no title of its own; the page it lands on titles the tab', () => {
+    // These paths only redirect (routing/legacyRedirects), so a title for them is never seen.
+    for (const path of ['/intelligence', '/flaky-coach', '/quarantine', '/reviews', '/agents/run/r1', '/runs/r1/intelligence']) {
+      expect(routeDocumentTitle(path)).toBe(BASE_DOCUMENT_TITLE)
+    }
+    // The real pages beside them keep theirs.
+    expect(routeDocumentTitle('/deep-investigate')).toBe('Deep Investigation')
+    expect(routeDocumentTitle('/flaky')).toBe('Flaky tests')
+    expect(routeDocumentTitle('/runs/r1')).toBe('Run Details')
+  })
+
   it('replaces a previous page title when navigation reaches a custom-header route', () => {
     let navigate: ReturnType<typeof useNavigate>
     const wrapper = ({ children }: PropsWithChildren) =>

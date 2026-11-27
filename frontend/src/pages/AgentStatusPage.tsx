@@ -441,6 +441,41 @@ function usePipelineRowActions(pipeline: AgentPipelineRun, onChanged: () => void
 const ROW_ACTION_BTN =
   'inline-flex items-center gap-1 rounded border border-[var(--color-border)] px-2 py-0.5 text-2xs text-[var(--color-text-secondary)] hover:bg-[var(--color-bg-hover)] disabled:opacity-50 disabled:hover:bg-transparent'
 
+/** `45 s`, `8 min`, `8 min 5 s`. */
+function spanText(totalSeconds: number): string {
+  const s = Math.max(0, Math.round(totalSeconds))
+  if (s < 60) return `${s} s`
+  const rest = s % 60
+  return rest ? `${Math.floor(s / 60)} min ${rest} s` : `${Math.floor(s / 60)} min`
+}
+
+/**
+ * D-153: a same-id resume restarts the row's clock, so "Duration" counts only the last attempt. A finished row
+ * that took more than one attempt says so, with the time since it was first queued: `attempt 2 of 2 (8 min 5 s
+ * in total)`. Null for a first attempt or a row that has not finished.
+ */
+function attemptText(pipeline: Pick<AgentPipelineRun, 'attempt' | 'created_at' | 'completed_at'>): string | null {
+  const n = pipeline.attempt ?? 1
+  if (n <= 1 || !pipeline.completed_at) return null
+  const total = (new Date(pipeline.completed_at).getTime() - new Date(pipeline.created_at).getTime()) / 1000
+  return Number.isFinite(total) ? `attempt ${n} of ${n} (${spanText(total)} in total)` : `attempt ${n} of ${n}`
+}
+
+const plainWords = (value: string) => (value === 'timeout' ? 'timed out' : value.replace(/_/g, ' '))
+
+/** D-153: the DEGRADED tag's title, from the stages that failed or used their fallback (the server's detail). */
+function degradedTitle(pipeline: Pick<AgentPipelineRun, 'stage_quality_detail'>): string {
+  const detail = pipeline.stage_quality_detail
+  if (!detail || detail.issues.length === 0) return 'Some steps did not finish cleanly; the run finished without them.'
+  const parts = detail.issues.map((issue) => {
+    const why = issue.fallback_reason || issue.error_category
+    const what = issue.status === 'failed' ? 'failed' : 'used its fallback'
+    return `${plainWords(issue.stage_name)} ${what}${why ? ` (${plainWords(why)})` : ''}`
+  })
+  const ran = Math.max(detail.stages_run, detail.issues.length)
+  return `${detail.issues.length} of ${ran} step${ran === 1 ? '' : 's'} did not finish cleanly: ${parts.join('; ')}`
+}
+
 /**
  * One pipeline run as one row of the pipelines list (UX redesign P5: a
  * one-line row, so the list stays short above the full-width AI report — it
@@ -475,6 +510,7 @@ function PipelineRow({
           (new Date(pipeline.completed_at).getTime() - new Date(pipeline.started_at).getTime()) / 1000,
         )
       : null
+  const attempts = attemptText(pipeline)
   const reviewedAt =
     publicPipelineStatus(pipeline) === 'passed' &&
     pipeline.review_summary?.state === 'accepted' &&
@@ -513,12 +549,16 @@ function PipelineRow({
           {duration !== null && (
             <span className="text-xs text-[var(--color-text-muted)]">Duration: {duration}s</span>
           )}
+          {attempts && (
+            <span data-testid="pipeline-attempt" className="text-xs text-[var(--color-text-muted)]">· {attempts}</span>
+          )}
           <span className="ml-auto flex flex-wrap items-center gap-2">
             {/* E7.5: the chip only ever shows one of the four public statuses.
                 Degradation is a quality qualifier, not a fifth status, so it gets
                 its own tag and keeps the amber tone that BUG-004 needed. */}
             {isDegradedPipeline(pipeline) && (
               <span
+                title={degradedTitle(pipeline)}
                 data-testid="pipeline-quality-tag"
                 className={`text-2xs font-mono ${STATUS_COLOUR.degraded}`}
               >

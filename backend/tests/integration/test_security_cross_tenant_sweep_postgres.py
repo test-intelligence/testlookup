@@ -195,8 +195,15 @@ async def _seed(
             error_message=f"AssertionError {mark}",
         )
     )
+    # Approved: AI Create Plan refuses up front (400) in a project with no
+    # approved case (D-58), and the POST sweep needs A's control accepted.
     db.add(
-        ManagedTestCase(id=ids["case"], project_id=ids["project"], title=f"case {mark}")
+        ManagedTestCase(
+            id=ids["case"],
+            project_id=ids["project"],
+            title=f"case {mark}",
+            status=TestCaseLifecycleState.APPROVED.value,
+        )
     )
     # GAP-B09: an AI generation batch holding one generated case, still a draft.
     db.add(
@@ -590,10 +597,20 @@ def _post_bodies(project_id: uuid.UUID, mark: str) -> dict[str, dict]:
     }
 
 
-async def test_post_bodies_naming_project_b_are_refused_and_leave_nothing_in_b(world):
+async def test_post_bodies_naming_project_b_are_refused_and_leave_nothing_in_b(
+    world, monkeypatch
+):
     from httpx import ASGITransport, AsyncClient
 
     from app.main import app
+    from app.routers import test_management_plans
+
+    # AI Create Plan also refuses (409) when no model can answer (D-58). This
+    # sweep is about tenancy, not about which model the CI host configures.
+    async def _a_model_answers(_db):
+        return None
+
+    monkeypatch.setattr(test_management_plans, "_no_model_reason", _a_model_answers)
 
     a, b = world.ids["a"]["project"], world.ids["b"]["project"]
     headers = {"Authorization": f"Bearer {world.tokens['lead']}"}
