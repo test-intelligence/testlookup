@@ -113,7 +113,7 @@ Requires your password **and** a live second factor. If workspace policy require
 
 Turning the requirement on takes effect immediately for new password sign-ins. The next token refresh rechecks policy for existing sessions. Affected users sign in again to enroll or verify their authenticator.
 
-**SAML and OIDC sign-ins are exempt from local MFA policy.** Your identity provider handles authentication for those sessions. Password sign-in follows workspace MFA policy for federated and SCIM-provisioned accounts as well. Linked users who enroll a local authenticator can manage its recovery codes in **Profile → Security**.
+**SAML and OIDC sign-ins are exempt from local MFA policy.** Your identity provider handles authentication for those sessions. Password sign-in follows workspace MFA policy for federated and SCIM-provisioned accounts as well. Linked users who enroll a local authenticator can manage its recovery codes in **Profile → Security**. Workspace policy prevents disabling a required local authenticator on a linked account.
 
 After upgrading, older refresh tokens without a recorded authentication method are treated as password-only. Affected users may need to sign in once more through their identity provider or complete local MFA to renew their session.
 

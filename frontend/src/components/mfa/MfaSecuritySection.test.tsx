@@ -258,12 +258,16 @@ describe('MfaSecuritySection', () => {
   })
 
   it.each([false, true])('regenerates recovery codes and gates dismissal (SSO-linked: %s)', async (ssoManaged) => {
-    mockStatus.mockResolvedValue({ ...BASE, enabled: true, sso_managed: ssoManaged, recovery_codes_remaining: 2 })
+    mockStatus.mockResolvedValue({
+      ...BASE, enabled: true, sso_managed: ssoManaged,
+      required_by_policy: ssoManaged, recovery_codes_remaining: 2,
+    })
     mockRegenerate.mockResolvedValue({ recovery_codes: RECOVERY_CODES })
     renderSection()
 
     const regenerate = await screen.findByRole('button', { name: /regenerate recovery codes/i })
     if (ssoManaged) {
+      expect(screen.getByText(/workspace policy requires MFA for your role/i)).toBeInTheDocument()
       expect(screen.queryByRole('button', { name: /turn off two-factor/i })).toBeNull()
     }
     fireEvent.click(regenerate)

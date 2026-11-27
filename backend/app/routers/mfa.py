@@ -547,9 +547,7 @@ async def disable_mfa(
     # Policy is checked *before* the second factor so a user who is not allowed
     # to disable MFA is not asked to burn a recovery code finding that out.
     policy = await mfa_service.load_policy(db)
-    if mfa_service.policy_requires_mfa(current_user, policy) and not await mfa_service.is_sso_managed(
-        db, current_user
-    ):
+    if mfa_service.policy_requires_mfa(current_user, policy):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=(
@@ -647,7 +645,7 @@ async def mfa_status(
         enabled=bool(current_user.mfa_enabled),
         enrolled_at=current_user.mfa_enrolled_at,
         recovery_codes_remaining=await mfa_service.count_unused_recovery_codes(db, current_user),
-        required_by_policy=mfa_service.policy_requires_mfa(current_user, policy) and not sso_managed,
+        required_by_policy=mfa_service.policy_requires_mfa(current_user, policy),
         sso_managed=sso_managed,
         secret_unreadable=unreadable,
     )

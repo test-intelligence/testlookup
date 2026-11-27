@@ -362,10 +362,8 @@ async def is_sso_managed(db: AsyncSession, user: User) -> bool:
        sense but looks purely local. The audit row is written unconditionally
        on the same code path, so it is the reliable signal.
 
-    Used by account-management endpoints to describe IdP ownership and decide
-    whether policy prevents disabling a voluntarily enrolled local factor.
-    It must not exempt a local password login: session assurance records the
-    method that authenticated the current session.
+    Used by account-management endpoints to describe IdP ownership. Local MFA
+    policy is evaluated separately from account linkage.
     """
     linked = await db.execute(
         select(FederatedIdentity.id).where(FederatedIdentity.user_id == user.id).limit(1)
@@ -551,16 +549,17 @@ async def evaluate_login_requirement(
     signed SSO assurance here when policy is re-evaluated during rotation.
     """
     policy = policy if policy is not None else await load_policy(db)
-    strong_assurance = authentication_assurance in (
-        AuthenticationAssurance.MFA,
-        AuthenticationAssurance.SSO,
-    )
+    # SSO assurance comes from the identity provider, independently of any
+    # local authenticator enrolled for password sign-in.
+    if authentication_assurance is AuthenticationAssurance.SSO:
+        return LoginRequirement.NONE
+    local_mfa_assurance = authentication_assurance is AuthenticationAssurance.MFA
     if user.mfa_enabled:
         loaded = await load_totp_secret(db, user)
         if not loaded.usable:
             return LoginRequirement.BROKEN
-        return LoginRequirement.NONE if strong_assurance else LoginRequirement.CHALLENGE
-    if policy_requires_mfa(user, policy) and not strong_assurance:
+        return LoginRequirement.NONE if local_mfa_assurance else LoginRequirement.CHALLENGE
+    if policy_requires_mfa(user, policy) and not local_mfa_assurance:
         return LoginRequirement.ENROLL
     return LoginRequirement.NONE
 

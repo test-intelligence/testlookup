@@ -647,10 +647,9 @@ class MfaStatusResponse(BaseModel):
     enabled: bool
     enrolled_at: Optional[datetime] = None
     recovery_codes_remaining: int = 0
-    # Does workspace policy require this user to hold a second factor?
+    # Does workspace policy require MFA for this user's local password sign-in?
     required_by_policy: bool = False
-    # True when an external IdP owns this account, so the local requirement
-    # does not apply to it.
+    # True when the account is IdP-linked. It may also have a local factor.
     sso_managed: bool = False
     # True when the account is flagged as enrolled but the stored seed cannot
     # be read — MFA is broken, not off, and login is denied until it is fixed.

@@ -1184,7 +1184,7 @@ Replace the recovery-code set. The previous codes stop working.
 A wrong password or a wrong second factor counts toward the account
 lockout; a locked account answers 429.
 
-Source: [backend/app/routers/mfa.py:585](../../../backend/app/routers/mfa.py#L585).
+Source: [backend/app/routers/mfa.py:583](../../../backend/app/routers/mfa.py#L583).
 
 Dependency chain: `OAuth2PasswordBearer`, `_require_interactive_user`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -1276,7 +1276,7 @@ Current MFA state for the caller.
 Readable with an API key (unlike the mutating endpoints) so a CI job can
 report on its owner's posture without being able to change it.
 
-Source: [backend/app/routers/mfa.py:631](../../../backend/app/routers/mfa.py#L631).
+Source: [backend/app/routers/mfa.py:629](../../../backend/app/routers/mfa.py#L629).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 

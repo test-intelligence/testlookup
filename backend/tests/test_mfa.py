@@ -608,6 +608,44 @@ class TestSsoExemption:
         req = await mfa_service.evaluate_login_requirement(db, user)
         assert req is mfa_service.LoginRequirement.CHALLENGE
 
+    async def test_linked_user_can_regenerate_recovery_codes_but_cannot_disable_required_mfa(
+        self, db, client
+    ):
+        user = await make_user(db, username="fed-recovery", role=UserRole.ADMIN)
+        cfg = await self._sso_config(db)
+        db.add(FederatedIdentity(user_id=user.id, sso_config_id=cfg.id, external_id="ext-recovery"))
+        await set_policy(db, require_mfa=True, required_for_role=None)
+
+        enrollment_token = (await login(client, user=user)).json()["enrollment_token"]
+        started = await client.post(
+            "/api/v1/auth/mfa/enroll/start", json={"enrollment_token": enrollment_token}
+        )
+        assert started.status_code == 200
+        confirmed = await client.post(
+            "/api/v1/auth/mfa/enroll/confirm",
+            json={
+                "enrollment_token": enrollment_token,
+                "code": pyotp.TOTP(started.json()["secret"]).now(),
+            },
+        )
+        assert confirmed.status_code == 200
+        enrollment = confirmed.json()
+        headers = {"Authorization": f"Bearer {enrollment['tokens']['access_token']}"}
+        credentials = {"password": PASSWORD, "recovery_code": enrollment["recovery_codes"][0]}
+
+        status_response = await client.get("/api/v1/auth/mfa/status", headers=headers)
+        assert status_response.status_code == 200
+        assert status_response.json()["sso_managed"] is True
+        assert status_response.json()["required_by_policy"] is True
+
+        denied = await client.post("/api/v1/auth/mfa/disable", headers=headers, json=credentials)
+        assert denied.status_code == 403
+        regenerated = await client.post(
+            "/api/v1/auth/mfa/recovery-codes", headers=headers, json=credentials
+        )
+        assert regenerated.status_code == 200
+        assert len(regenerated.json()["recovery_codes"]) == 10
+
     def test_sso_acs_does_not_consult_the_mfa_policy(self):
         """Documented, deliberate, and asserted so it cannot drift silently.
 
@@ -709,6 +747,22 @@ class TestUnreadableSeed:
         )
         assert resp.status_code == 503
         assert resp.headers["X-Refresh-Retry-Safe"] == "1"
+
+    async def test_sso_refresh_does_not_depend_on_the_local_seed(self, db, client):
+        user = await make_user(db, username="sso-unreadable-local-seed")
+        await enroll(db, user)
+        await self._corrupt_seed(db, user)
+        refresh_token = await issue_refresh_token(
+            db, user.id, authentication_assurance=AuthenticationAssurance.SSO
+        )
+        await db.commit()
+
+        refreshed = await client.post(
+            "/api/v1/auth/refresh", json={"refresh_token": refresh_token}
+        )
+        assert refreshed.status_code == 200
+        rotated = decode_token(refreshed.json()["refresh_token"], expected_type="refresh")
+        assert rotated["auth_assurance"] == AuthenticationAssurance.SSO.value
 
     async def test_status_reports_the_break_instead_of_reporting_healthy(self, db, client):
         user = await make_user(db, username="broken4")
