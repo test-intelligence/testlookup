@@ -27,11 +27,11 @@ Use the signal names metrics, logs, and traces as documented upstream. Explain a
 | DOC-E02-S01 · Choose and enable a profile | Product docs | OBS-E02, E03, E04, E06 | Compose, Kubernetes, K3s, OpenShift, managed, and offline guides explain prerequisites and link to the adoption checks. | Verified |
 | DOC-E02-S02 · Verify operation and triage | Product docs | OBS-E01, E02, E03, E04, E06, E08 | Operators can verify readiness and signal freshness, link logs and traces, and follow alert and upload runbooks. | Verified |
 | DOC-E02-S03 · Document custody and proof | Product docs | OBS-E05, E07, E08 | Explain upload recovery, pipeline event replay, identity retention, archive custody, and independent release gates with scope and limits. | Verified |
-| DOC-E03-S01 · Explain the capability on the website | Website | OBS-E01–E08 | Product and self-hosting pages describe supported signals, profiles and operational outcomes and link to the versioned guide. | In progress |
-| DOC-E03-S02 · Publish versioned technical guidance | Website | OBS-E01–E08 | Website docs expose discoverable observability guidance with source provenance and the intended release scope. | In progress |
-| DOC-E03-S03 · Verify generated and rendered output | Website | Website integration | Run applicable content, build, links, search, and browser checks for the new guidance and navigation. | In progress |
-| DOC-E04-S01 · Review claims against code and behavior | Independent review | OBS-E01–E08 | Review each changed surface, then trace links, commands, metrics, trust boundaries, and release status across repositories. | In progress |
-| DOC-E04-S02 · Record verification and ship both branches | Repository maintainer | Product and website delivery | Record test evidence and limits, sign off and push both reviewed branches, and confirm the remote commit IDs. | In progress |
+| DOC-E03-S01 · Explain the capability on the website | Website | OBS-E01–E08 | Product and self-hosting pages describe supported signals, profiles and operational outcomes and link to the versioned guide. | Verified |
+| DOC-E03-S02 · Publish versioned technical guidance | Website | OBS-E01–E08 | Website docs expose discoverable observability guidance with source provenance and the intended release scope. | Verified |
+| DOC-E03-S03 · Verify generated and rendered output | Website | Website integration | Run applicable content, build, links, search, and browser checks for the new guidance and navigation. | Verified |
+| DOC-E04-S01 · Review claims against code and behavior | Independent review | OBS-E01–E08 | Review each changed surface, then trace links, commands, metrics, trust boundaries, and release status across repositories. | Verified |
+| DOC-E04-S02 · Record verification and ship both branches | Repository maintainer | Product and website delivery | Record test evidence and limits, sign off and push both reviewed branches, and confirm the remote commit IDs. | Delivered |
 
 ## Implementation coverage
 
@@ -76,3 +76,11 @@ Independent verification traced the merged application routes and UI labels to t
 | Report and API reference | 61 reporting and release decision tests passed. The website validator passed 113 checks, including exact agreement between OpenAPI and the 233 contract gaps in the generated domain pages. |
 | Product and in-app documentation | Generated references matched. The local guide checks passed, including 77 frontend tests and all 53 Mermaid blocks. |
 | Website source custody | Independent checks matched all 149 pinned file digests to the merged Git objects. The source audit found 35 added API operations and no operation removals. |
+| Website Pages artifact | The crawl verified all 1,708 routes, 79,763 internal links, 33,884 fragments, and 1,178 distinct Git permalinks. Pagefind indexed 1,706 routes. |
+| Website Preview artifact | All 14 integrated output gates passed, including the link and pinned-source crawl. Both profiles built 1,708 pages, indexed 1,706 routes, and reported one verified release entry. |
+| Independent rendered review | Chromium verified desktop and mobile entry from Self-hosting, imported Compose procedures, the active sidebar, and the release page and Atom feed. The website labels the new guide `next` and reports the separately published `v0.1.0` release. |
+| Browser and accessibility matrix | Pages passed 106 axe scans with zero violations. The combined browser run passed all 22 Chromium journeys and the WebKit journey. Firefox reached the aggregate timeout during concurrent verification and passed the same route, search, and 404 checks on an isolated rerun, including the observability page. |
+
+## Delivery
+
+Both repositories use the `docs/production-observability` review branch. The product authoring commit is `79a3499f`. The website commit is `df3957dbad4111a0d1ccf423a188c66c722512be`, with the Next application source locked to `051936fb`. [Product documentation branch](https://github.com/test-intelligence/testlookup/tree/docs/production-observability) · [Website commit](https://github.com/test-intelligence/testlookup-website/commit/df3957dbad4111a0d1ccf423a188c66c722512be).
