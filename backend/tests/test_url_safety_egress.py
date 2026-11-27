@@ -81,7 +81,16 @@ async def test_a_non_resolving_host_is_allowed():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("url", ["", "not a url", "https:///api/v3"])
+@pytest.mark.parametrize(
+    "url",
+    [
+        "",
+        "not a url",
+        "https:///api/v3",
+        "https://user:pass@ghe.example/api/v3",
+        "https://ghe.example/api/v3#@127.0.0.1",
+    ],
+)
 async def test_a_url_without_a_host_is_invalid(url):
     assert await url_safety.egress_block_reason(url) == "invalid_url"
 

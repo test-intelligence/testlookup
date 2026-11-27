@@ -84,7 +84,7 @@ async def world(monkeypatch):
     def getaddrinfo(host, *_a, **_k):
         raise socket.gaierror(socket.EAI_NONAME, "Name or service not known")
 
-    monkeypatch.setattr(integration_probe_service, "get_http_client", lambda: fake)
+    monkeypatch.setattr(integration_probe_service, "get_integration_http_client", lambda: fake)
     monkeypatch.setattr(app_metrics_service, "get_http_client", lambda: fake)
     monkeypatch.setattr(url_safety.socket, "getaddrinfo", getaddrinfo)
     monkeypatch.setattr(settings, "AI_OFFLINE_MODE", False)

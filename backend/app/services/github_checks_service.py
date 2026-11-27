@@ -50,7 +50,7 @@ import structlog
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.http_client import http_verify
+from app.core.http_client import create_integration_http_client
 from app.core.config import settings
 from app.db.postgres import AsyncSessionLocal
 from app.models.postgres import GitHubIntegration, Project, TestRun, User
@@ -312,7 +312,7 @@ async def test_connection(
         "User-Agent": "TestLookup/1.0",
     }
     try:
-        async with httpx.AsyncClient(verify=http_verify(), timeout=10.0) as client:
+        async with create_integration_http_client(timeout=10.0) as client:
             resp = await client.get(url, headers=headers)
     except Exception as exc:
         return {
@@ -1002,7 +1002,7 @@ async def post_check_run_for_run(run_id: uuid.UUID) -> Optional[dict[str, Any]]:
         }
 
         async def _do_post() -> httpx.Response:
-            async with httpx.AsyncClient(verify=http_verify(), timeout=15.0) as client:
+            async with create_integration_http_client(timeout=15.0) as client:
                 return await client.post(url, headers=headers, json=payload)
 
         from app.services.resilience import async_retry

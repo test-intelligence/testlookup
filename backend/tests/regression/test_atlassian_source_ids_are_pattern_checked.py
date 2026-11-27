@@ -125,7 +125,7 @@ def _page(_request: httpx.Request) -> httpx.Response:
 async def test_confluence_sends_nothing_for_a_malformed_id(bad):
     client, seen = _transport(_page)
     domain, email, token = _confluence_settings()
-    with domain, email, token, patch.object(confluence_connector, "get_http_client", return_value=client):
+    with domain, email, token, patch.object(confluence_connector, "get_integration_http_client", return_value=client):
         with pytest.raises(ConnectorFetchError):
             await ConfluenceKnowledgeConnector().fetch_content(_URL_WITHOUT_ID, bad, allowed_space_keys=frozenset({"QA"}))
     assert seen == []
@@ -135,7 +135,7 @@ async def test_confluence_sends_nothing_for_a_malformed_id(bad):
 @pytest.mark.parametrize("bad", _BAD_IDS)
 async def test_jira_sends_nothing_for_a_malformed_id(bad):
     client, seen = _transport(lambda _r: httpx.Response(200, json={"fields": {"summary": "s"}}))
-    with patch.object(jira_connector, "get_http_client", return_value=client):
+    with patch.object(jira_connector, "get_integration_http_client", return_value=client):
         with pytest.raises(ConnectorFetchError):
             await _jira().fetch_content(_URL_WITHOUT_ID, bad)
     assert seen == []
@@ -146,7 +146,7 @@ async def test_jira_sends_nothing_for_a_malformed_id(bad):
 async def test_confluence_request_path_is_always_the_content_path(external_id):
     client, seen = _transport(_page)
     domain, email, token = _confluence_settings()
-    with domain, email, token, patch.object(confluence_connector, "get_http_client", return_value=client):
+    with domain, email, token, patch.object(confluence_connector, "get_integration_http_client", return_value=client):
         content = await ConfluenceKnowledgeConnector().fetch_content(
             _CONFLUENCE_URL, external_id, allowed_space_keys=frozenset({"QA"}),
         )
@@ -161,7 +161,7 @@ async def test_jira_request_path_is_always_the_issue_path(external_id):
     client, seen = _transport(
         lambda _r: httpx.Response(200, json={"key": "ABC-123", "fields": {"summary": "s", "issuetype": {"name": "Story"}}})
     )
-    with patch.object(jira_connector, "get_http_client", return_value=client):
+    with patch.object(jira_connector, "get_integration_http_client", return_value=client):
         content = await _jira().fetch_content(_JIRA_URL, external_id)
 
     assert [r.url.path for r in seen] == ["/rest/api/3/issue/ABC-123"]
@@ -176,7 +176,7 @@ async def test_the_epic_child_query_quotes_the_key():
         return httpx.Response(200, json={"issues": [{"key": "ABC-124", "fields": {"summary": "child"}}]})
 
     client, seen = _transport(handler)
-    with patch.object(jira_connector, "get_http_client", return_value=client):
+    with patch.object(jira_connector, "get_integration_http_client", return_value=client):
         content = await _jira().fetch_content(_JIRA_URL, "ABC-123")
 
     assert [r.url.path for r in seen] == ["/rest/api/3/issue/ABC-123", "/rest/api/3/search/jql"]

@@ -109,7 +109,7 @@ def world(monkeypatch):
     monkeypatch.setattr(secret_service, "has_secret", has_secret)
     monkeypatch.setattr(router, "log_settings_change", AsyncMock())
     monkeypatch.setattr(url_safety.socket, "getaddrinfo", getaddrinfo)
-    monkeypatch.setattr(integration_probe_service, "get_http_client", lambda: fake)
+    monkeypatch.setattr(integration_probe_service, "get_integration_http_client", lambda: fake)
     monkeypatch.setattr(integration_probe_service, "persist_probe_results", persist)
     monkeypatch.setattr(settings, "AI_OFFLINE_MODE", False)
     return SimpleNamespace(secrets=secrets, store=store, expire=expire, state=state, persist=persist)
@@ -265,7 +265,7 @@ async def test_a_probe_timeout_is_timeout(world, monkeypatch):
     def slow(request):
         raise httpx.ReadTimeout("slow", request=request)
 
-    monkeypatch.setattr(integration_probe_service, "get_http_client",
+    monkeypatch.setattr(integration_probe_service, "get_integration_http_client",
                         lambda: httpx.AsyncClient(transport=httpx.MockTransport(slow)))
     result = await integration_probe_service.probe_prometheus(_probe_cfg())
     assert result.status == "timeout"

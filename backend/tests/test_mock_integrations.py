@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import uuid
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -81,7 +82,7 @@ def test_the_fake_refuses_documents_and_messages_the_real_services_refuse():
 async def test_jira_probe_tells_healthy_from_bad_credentials_from_a_server_error(fake, monkeypatch):
     from app.services import integration_probe_service as probe
 
-    monkeypatch.setattr(probe, "get_http_client", lambda: fake.client)
+    monkeypatch.setattr(probe, "get_integration_http_client", lambda: fake.client)
     config = {"jira_enabled": True, "jira_domain": DOMAIN, "jira_email": fake.state.jira_email}
 
     healthy = await probe.probe_jira({**config, "jira_api_token": fake.state.jira_token})
@@ -108,7 +109,7 @@ async def test_defect_dialog_lists_jira_projects_and_issue_types(fake, monkeypat
     async def no_webhook(db, pid, user=None):
         return False
 
-    monkeypatch.setattr(svc, "get_http_client", lambda: fake.client)
+    monkeypatch.setattr(svc, "get_integration_http_client", lambda: fake.client)
     monkeypatch.setattr(svc, "resolve_jira_config", resolved)
     monkeypatch.setattr(svc, "_webhook_target_available", no_webhook)
     # A lead on a project without a Jira key sees every Jira project the account can.
@@ -134,13 +135,46 @@ async def test_defect_dialog_reports_rejected_credentials_instead_of_empty_picke
     async def no_webhook(db, pid, user=None):
         return False
 
-    monkeypatch.setattr(svc, "get_http_client", lambda: fake.client)
+    monkeypatch.setattr(svc, "get_integration_http_client", lambda: fake.client)
     monkeypatch.setattr(svc, "resolve_jira_config", resolved)
     monkeypatch.setattr(svc, "_webhook_target_available", no_webhook)
     patch_jira_key_scope(monkeypatch)
     svc._metadata_cache_clear()
     meta = await svc.get_metadata(None, str(uuid.uuid4()))
     assert meta["available"] is False and meta["reason"] == "jira_http_401"
+
+
+@pytest.mark.asyncio
+async def test_defect_jira_reads_and_writes_use_the_pinned_client(monkeypatch):
+    from app.services import defect_jira_service as svc
+
+    get_result, post_result = object(), object()
+    client = SimpleNamespace(
+        get=AsyncMock(return_value=get_result),
+        post=AsyncMock(return_value=post_result),
+    )
+    cfg = {
+        "domain": DOMAIN,
+        "email": "bot@example.test",
+        "api_token": "not-a-real-token",
+    }
+    monkeypatch.setattr(svc, "get_integration_http_client", lambda: client)
+
+    assert await svc._jira_get(cfg, "/rest/api/3/issue/QA-1", {"fields": "status"}) is get_result
+    assert await svc._jira_post(cfg, "/rest/api/3/issue", {"fields": {"summary": "Failure"}}) is post_result
+
+    client.get.assert_awaited_once_with(
+        f"https://{DOMAIN}/rest/api/3/issue/QA-1",
+        headers=svc._headers(cfg),
+        params={"fields": "status"},
+        timeout=15.0,
+    )
+    client.post.assert_awaited_once_with(
+        f"https://{DOMAIN}/rest/api/3/issue",
+        headers=svc._headers(cfg),
+        json={"fields": {"summary": "Failure"}},
+        timeout=15.0,
+    )
 
 
 def test_the_issue_description_is_a_valid_atlassian_document():
@@ -166,16 +200,24 @@ def test_the_issue_description_is_a_valid_atlassian_document():
 async def test_fix_version_sync_uses_the_deployments_tls_policy(fake, monkeypatch):
     """An on-prem Jira behind an internal CA is trusted through HTTP_CA_BUNDLE
     for defect filing; the version sync built its own client and ignored it."""
+    import ssl
+
+    from app.core import http_client
     from app.core.config import settings
     from app.services import jira_release_sync as sync
+    from app.services import url_safety
 
-    built: list[dict] = []
-    transport = httpx.ASGITransport(app=create_app(fake.state))
-    real_client = httpx.AsyncClient  # sync.httpx IS httpx: patching it patches this name too
+    ca_files: list[str | None] = []
+    transport_contexts: list[ssl.SSLContext] = []
+    tls_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
 
-    def client_factory(*args, **kwargs):
-        built.append(kwargs)
-        return real_client(transport=transport, timeout=kwargs.get("timeout"))
+    def create_context(*, cafile=None):
+        ca_files.append(cafile)
+        return tls_context
+
+    def pinned_transport(**kwargs):
+        transport_contexts.append(kwargs["verify"])
+        return httpx.ASGITransport(app=create_app(fake.state))
 
     async def resolved(db):
         return _cfg(fake.state)
@@ -186,21 +228,22 @@ async def test_fix_version_sync_uses_the_deployments_tls_policy(fake, monkeypatc
     monkeypatch.setattr(settings, "HTTP_CA_BUNDLE", "/etc/testlookup-ca/bundle.pem")
     monkeypatch.setattr(sync, "resolve_jira_config", resolved)
     monkeypatch.setattr(sync, "_ssrf_block_reason", not_blocked)
-    monkeypatch.setattr(sync.httpx, "AsyncClient", client_factory)
+    monkeypatch.setattr(http_client.ssl, "create_default_context", create_context)
+    monkeypatch.setattr(url_safety, "IntegrationEgressAsyncHTTPTransport", pinned_transport)
     fake.state.add_version("QA", "2026.10")
 
     versions = await sync._authorized_get(None, "/project/QA/versions")
 
     assert [v["name"] for v in versions] == ["2026.10"]
-    assert built and built[0]["verify"] == "/etc/testlookup-ca/bundle.pem"
+    assert ca_files == ["/etc/testlookup-ca/bundle.pem"]
+    assert transport_contexts == [tls_context]
 
 
 @pytest.mark.asyncio
 async def test_fix_version_sync_names_a_rejected_credential(fake, monkeypatch):
+    from app.core import http_client
     from app.services import jira_release_sync as sync
-
-    transport = httpx.ASGITransport(app=create_app(fake.state))
-    real_client = httpx.AsyncClient
+    from app.services import url_safety
 
     async def resolved(db):
         return _cfg(fake.state, api_token="revoked")
@@ -210,7 +253,12 @@ async def test_fix_version_sync_names_a_rejected_credential(fake, monkeypatch):
 
     monkeypatch.setattr(sync, "resolve_jira_config", resolved)
     monkeypatch.setattr(sync, "_ssrf_block_reason", not_blocked)
-    monkeypatch.setattr(sync.httpx, "AsyncClient", lambda *a, **k: real_client(transport=transport))
+    monkeypatch.setattr(http_client, "public_http_verify", lambda: True)
+    monkeypatch.setattr(
+        url_safety,
+        "IntegrationEgressAsyncHTTPTransport",
+        lambda **_kwargs: httpx.ASGITransport(app=create_app(fake.state)),
+    )
     with pytest.raises(sync.JiraSyncUnavailable, match="401"):
         await sync._authorized_get(None, "/project/QA/versions")
 
@@ -251,7 +299,7 @@ async def test_a_knowledge_source_reads_the_jira_configured_in_settings(fake, mo
     monkeypatch.setattr(settings, "JIRA_EMAIL", "")
     monkeypatch.setattr(settings, "JIRA_API_TOKEN", "")
     monkeypatch.setattr(svc, "resolve_jira_config", resolved)
-    monkeypatch.setattr(jira_connector, "get_http_client", lambda: fake.client)
+    monkeypatch.setattr(jira_connector, "get_integration_http_client", lambda: fake.client)
     _epic(fake.state)
 
     connector = await registry.bind_to_deployment(registry.get_connector("jira_epic"), db=None)
@@ -263,6 +311,54 @@ async def test_a_knowledge_source_reads_the_jira_configured_in_settings(fake, mo
     assert not fake.state.requests_to("GET", "/rest/api/3/search?")
     assert all(r["path"] != "/rest/api/3/search" for r in fake.state.requests)
     assert (await connector.test_connection())["success"] is True
+    assert fake.state.requests_to("GET", "/rest/api/3/myself")
+
+
+@pytest.mark.asyncio
+async def test_confluence_testing_and_fetching_use_the_pinned_client(monkeypatch):
+    from app.core.config import settings
+    from app.services.connectors import confluence_connector
+
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        if request.url.path == "/wiki/api/v2/spaces":
+            return httpx.Response(200, json={"results": [{"key": "QA"}]})
+        return httpx.Response(200, json={
+            "id": "12345",
+            "title": "Runbook",
+            "space": {"key": "QA"},
+            "body": {"storage": {"value": "<p>Checkout recovery steps</p>"}},
+            "version": {"number": 4},
+        })
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    monkeypatch.setattr(settings, "AI_OFFLINE_MODE", False)
+    monkeypatch.setattr(settings, "CONFLUENCE_DOMAIN", "wiki.example.test")
+    monkeypatch.setattr(settings, "CONFLUENCE_EMAIL", "bot@example.test")
+    monkeypatch.setattr(settings, "CONFLUENCE_API_TOKEN", "not-a-real-token")
+    monkeypatch.setattr(
+        confluence_connector, "get_integration_http_client", lambda: client,
+    )
+
+    connector = confluence_connector.ConfluenceKnowledgeConnector()
+    try:
+        assert (await connector.test_connection())["success"] is True
+        content = await connector.fetch_content(
+            "https://wiki.example.test/wiki/spaces/QA/pages/12345/Runbook",
+            "12345",
+            allowed_space_keys=frozenset({"QA"}),
+        )
+    finally:
+        await client.aclose()
+
+    assert "Checkout recovery steps" in content.raw_text
+    assert content.metadata["space_key"] == "QA"
+    assert [request.url.path for request in seen] == [
+        "/wiki/api/v2/spaces",
+        "/wiki/rest/api/content/12345",
+    ]
 
 
 @pytest.mark.asyncio

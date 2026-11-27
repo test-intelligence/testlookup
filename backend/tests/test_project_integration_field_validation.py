@@ -30,7 +30,13 @@ from app.core.integration_values import (
     valid_pod_name,
     valid_splunk_index,
 )
-from app.models.schemas import IntegrationsConfigUpdate, ProjectCreate, ProjectUpdate
+from app.models.schemas import (
+    GitHubIntegrationWrite,
+    GitLabConfigWrite,
+    IntegrationsConfigUpdate,
+    ProjectCreate,
+    ProjectUpdate,
+)
 
 BAD_INDEXES = ["main | delete", "a b", '"x"', "-x", "x" * 81, "idx*", "a=b", "(x)", "x'y"]
 BAD_NAMESPACES = ["QA", "qa_payments", "-qa", "qa-", "q" * 64, "qa testing", "qa.payments"]
@@ -222,8 +228,48 @@ def test_valid_pod_name(value, ok):
     ("http://10.0.0.5", None),
     ("splunk.corp", INTEGRATION_URL_SENTENCE),
     ("https://u@splunk.corp", INTEGRATION_URL_SENTENCE),
+    ("https://splunk.corp/api#@127.0.0.1", INTEGRATION_URL_SENTENCE),
     ("https://[::1", INTEGRATION_URL_SENTENCE),
     ("javascript:alert(1)", INTEGRATION_URL_SENTENCE),
 ])
 def test_integration_url_problem(url: str, problem: Optional[str]):
     assert integration_url_problem(url) == problem
+
+
+@pytest.mark.parametrize(
+    "model, field",
+    [
+        (GitHubIntegrationWrite, "api_base_url"),
+        (GitLabConfigWrite, "base_url"),
+    ],
+)
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://user:pass@integration.example/api",
+        "https://integration.example/api#@127.0.0.1",
+    ],
+)
+def test_credentialed_integration_bases_reject_ambiguous_urls(model, field, url):
+    values = {field: url}
+    if model is GitHubIntegrationWrite:
+        values.update(repo_owner="owner", repo_name="repo")
+    with pytest.raises(ValidationError) as caught:
+        model(**values)
+    assert caught.value.errors()[0]["type"] == "integration_url"
+
+
+@pytest.mark.parametrize(
+    "model, field, url",
+    [
+        (GitHubIntegrationWrite, "api_base_url", "https://ghe.corp.example/api/v3"),
+        (GitLabConfigWrite, "base_url", "http://10.0.0.5:8080/gitlab"),
+    ],
+)
+def test_credentialed_integration_bases_keep_normal_self_hosted_urls(
+    model, field, url
+):
+    values = {field: url}
+    if model is GitHubIntegrationWrite:
+        values.update(repo_owner="owner", repo_name="repo")
+    assert getattr(model(**values), field) == url

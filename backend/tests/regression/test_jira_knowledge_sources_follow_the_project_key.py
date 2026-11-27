@@ -255,7 +255,7 @@ class _Http:
 
 async def _fetch_epic(monkeypatch, **kwargs) -> str:
     http = _Http()
-    monkeypatch.setattr(jira_connector, "get_http_client", lambda: http)
+    monkeypatch.setattr(jira_connector, "get_integration_http_client", lambda: http)
     connector = JiraKnowledgeConnector().with_config(
         {"domain": "jira.example.test", "email": "bot@example.test", "api_token": "not-a-real-token"},
     )
@@ -298,7 +298,7 @@ class _Answer:
 
 
 async def _fetch(monkeypatch, answer: _Answer, **kwargs) -> FetchedContent:
-    monkeypatch.setattr(jira_connector, "get_http_client", lambda: answer)
+    monkeypatch.setattr(jira_connector, "get_integration_http_client", lambda: answer)
     connector = JiraKnowledgeConnector().with_config(
         {"domain": "jira.example.test", "email": "bot@example.test", "api_token": "not-a-real-token"},
     )
