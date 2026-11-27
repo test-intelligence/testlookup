@@ -25,7 +25,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.http_client import http_verify
+from app.core.http_client import create_integration_http_client
 from app.models.postgres import Release
 
 logger = structlog.get_logger(__name__)
@@ -59,7 +59,7 @@ async def _milestones(db: AsyncSession, project_id: uuid.UUID) -> list[Any]:
     if block:
         raise GitLabSyncUnavailable(f"Target host is not allowed ({block})")
     try:
-        async with httpx.AsyncClient(verify=http_verify(), timeout=_TIMEOUT, follow_redirects=False) as client:
+        async with create_integration_http_client(timeout=_TIMEOUT) as client:
             resp = await client.get(url, headers={"PRIVATE-TOKEN": target.pat, "Accept": "application/json"},
                                     params={"per_page": _PAGE_SIZE})
     except httpx.HTTPError as exc:

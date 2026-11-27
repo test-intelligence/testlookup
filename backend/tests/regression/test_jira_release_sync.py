@@ -186,8 +186,8 @@ class TestTheGatesCannotBeBypassed:
         src = inspect.getsource(jira)
 
         # One egress point, so a future caller cannot add a request that skips
-        # a gate. If a second `httpx` call appears, this fails.
-        assert src.count("httpx.AsyncClient") == 1
+        # the guarded integration transport.
+        assert src.count("create_integration_http_client") == 2  # import + call
         # The GUARD, not the word: `AI_OFFLINE_MODE` also appears in prose
         # explaining why it is checked, and counting those made this assert
         # against 3 rather than 1.

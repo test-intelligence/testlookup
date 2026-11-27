@@ -40,6 +40,8 @@ _shared_client: Optional[httpx.AsyncClient] = None
 _shared_loop: Optional[asyncio.AbstractEventLoop] = None
 _public_client: Optional[httpx.AsyncClient] = None
 _public_loop: Optional[asyncio.AbstractEventLoop] = None
+_integration_client: Optional[httpx.AsyncClient] = None
+_integration_loop: Optional[asyncio.AbstractEventLoop] = None
 
 
 def http_verify() -> Union[bool, str]:
@@ -152,13 +154,62 @@ def get_public_http_client() -> httpx.AsyncClient:
     return _public_client
 
 
+def create_integration_http_client(
+    *,
+    timeout: httpx.Timeout | float = 30.0,
+    limits: httpx.Limits | None = None,
+) -> httpx.AsyncClient:
+    """Create a closeable client whose sockets enforce integration egress policy."""
+    from app.services.url_safety import IntegrationEgressAsyncHTTPTransport
+
+    return httpx.AsyncClient(
+        transport=IntegrationEgressAsyncHTTPTransport(
+            verify=public_http_verify(),
+            limits=limits,
+        ),
+        trust_env=False,
+        follow_redirects=False,
+        timeout=timeout,
+    )
+
+
+def get_integration_http_client() -> httpx.AsyncClient:
+    """Return a pooled client for credential-bearing integration requests."""
+    global _integration_client, _integration_loop
+    try:
+        current_loop = asyncio.get_running_loop()
+    except RuntimeError:
+        current_loop = None
+    loop_changed = (
+        current_loop is not None
+        and _integration_loop is not None
+        and current_loop is not _integration_loop
+    )
+    if (
+        _integration_client is None
+        or _integration_client.is_closed
+        or loop_changed
+    ):
+        _integration_client = create_integration_http_client(
+            timeout=httpx.Timeout(30.0, connect=10.0),
+            limits=httpx.Limits(
+                max_connections=100,
+                max_keepalive_connections=20,
+                keepalive_expiry=60.0,
+            ),
+        )
+        _integration_loop = current_loop
+        logger.debug("http_client.integration_client_created")
+    return _integration_client
+
+
 async def close_http_client() -> None:
     """Close the shared client on application shutdown.
 
     Safe to call more than once. Called from the FastAPI lifespan handler
     so that in-flight requests drain cleanly before the process exits.
     """
-    global _shared_client, _public_client
+    global _shared_client, _public_client, _integration_client
     if _shared_client is not None and not _shared_client.is_closed:
         try:
             await _shared_client.aclose()
@@ -171,6 +222,13 @@ async def close_http_client() -> None:
         except Exception as exc:  # noqa: BLE001
             logger.debug("http_client.public_close_failed error=%s", exc)
     _public_client = None
-    global _shared_loop, _public_loop
+    if _integration_client is not None and not _integration_client.is_closed:
+        try:
+            await _integration_client.aclose()
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("http_client.integration_close_failed error=%s", exc)
+    _integration_client = None
+    global _shared_loop, _public_loop, _integration_loop
     _shared_loop = None
     _public_loop = None
+    _integration_loop = None

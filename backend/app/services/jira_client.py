@@ -17,7 +17,7 @@ from typing import Any, Optional, cast
 import httpx
 
 from app.core.config import settings
-from app.core.http_client import get_http_client
+from app.core.http_client import get_integration_http_client as get_http_client
 from app.services.resilience import async_retry
 from app.services.url_safety import egress_block_reason
 

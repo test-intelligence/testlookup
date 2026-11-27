@@ -826,7 +826,7 @@ async def test_integrations_offline_mode_switches_off_are_not_probed(
     from app.services import integration_probe_service as probes
 
     client = _RecordingClient()
-    monkeypatch.setattr(probes, "get_http_client", lambda: client)
+    monkeypatch.setattr(probes, "get_integration_http_client", lambda: client)
     for key, value in enable.items():
         monkeypatch.setattr(settings, key, value)
 

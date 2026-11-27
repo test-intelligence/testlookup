@@ -17,7 +17,7 @@ import httpx
 from langchain_core.tools import tool
 
 from app.core.config import settings
-from app.core.http_client import get_http_client
+from app.core.http_client import get_integration_http_client as get_http_client
 from app.core.integration_values import TARGET_NOT_ALLOWED, valid_splunk_index
 from app.services.input_sanitizer import sanitize_query_param, sanitize_service_name
 from app.services.integration_config_service import IntegrationRuntimeConfig

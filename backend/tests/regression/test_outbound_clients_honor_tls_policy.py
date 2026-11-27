@@ -66,7 +66,9 @@ def test_every_outbound_client_passes_the_tls_policy():
             scanned += 1
             if not _honours_policy(call):
                 offenders.append(f"{path.relative_to(APP.parent)}:{call.lineno}")
-    assert scanned >= 16, f"the scan found only {scanned} clients -- did the pattern drift?"
+    # Credential-bearing integration callers now share the guarded factory in
+    # ``http_client.py``; seven independent clients intentionally remain.
+    assert scanned >= 7, f"the scan found only {scanned} clients -- did the pattern drift?"
     assert not offenders, (
         "httpx clients that ignore HTTP_CA_BUNDLE / HTTP_VERIFY_TLS; pass "
         "verify=http_verify() (from app.core.http_client) or use get_http_client():\n  "
@@ -115,14 +117,27 @@ async def _commit_attribution(svc):
 ])
 async def test_an_internal_ca_bundle_reaches_the_client(monkeypatch, module, call):
     import importlib
+    import ssl
 
+    from app.core import http_client
     from app.core.config import settings
 
     svc = importlib.import_module(module)
     _Recorder.seen = []
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    cafiles = []
+
+    def create_default_context(*, cafile=None):
+        cafiles.append(cafile)
+        return context
+
     monkeypatch.setattr(settings, "HTTP_CA_BUNDLE", BUNDLE)
+    monkeypatch.setattr(http_client.ssl, "create_default_context", create_default_context)
     monkeypatch.setattr(svc.httpx, "AsyncClient", _Recorder)
 
     await call(svc)
 
-    assert _Recorder.seen and _Recorder.seen[0].get("verify") == BUNDLE
+    assert cafiles == [BUNDLE]
+    assert _Recorder.seen and _Recorder.seen[0].get("trust_env") is False
+    transport = _Recorder.seen[0]["transport"]
+    assert transport._pool._ssl_context is context
