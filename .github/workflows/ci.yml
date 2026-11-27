@@ -957,6 +957,7 @@ jobs:
           tests/integration/test_release_gate_policy_single_active_postgres.py
           tests/integration/test_migration_0211_0212_postgres.py
           tests/integration/test_release_gate_summary_postgres.py
+          tests/integration/test_release_decision_analysis_changed_postgres.py
           tests/integration/test_releases_list_gate_owner_postgres.py
           tests/test_compliance_packs_project_list.py
           tests/integration/test_migration_0213_postgres.py
