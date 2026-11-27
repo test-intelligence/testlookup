@@ -53,6 +53,7 @@ class _Client:
     def __init__(self, responses):
         self.responses = list(responses)
         self.calls: list[tuple] = []
+        self.post_fields: list[dict] = []
 
     async def __aenter__(self):
         return self
@@ -62,7 +63,11 @@ class _Client:
 
     async def post(self, url, **kwargs):
         self.calls.append(("POST", url, kwargs["files"]["file"][1].read()))
-        return self.responses.pop(0)
+        self.post_fields.append({"headers": dict(kwargs["headers"]), "data": dict(kwargs["data"])})
+        response = self.responses.pop(0)
+        if isinstance(response, BaseException):
+            raise response
+        return response
 
     async def get(self, url, **_kwargs):
         self.calls.append(("GET", url, None))
@@ -157,6 +162,121 @@ def test_a_503_without_retry_after_backs_off_from_the_base(fake, tmp_path):
     fake.install(_Resp(503), _Resp(503), _Resp(202, {"task_id": "t1"}))
     _upload(tmp_path)
     assert fake.sleeps == [0.5, 1.0]
+
+
+TASK = "11111111-1111-4111-8111-111111111111"
+RUN = "22222222-2222-4222-8222-222222222222"
+
+
+def _unconfirmed(**changes):
+    headers = {"X-Upload-Task-ID": TASK, "X-Upload-Run-ID": RUN, "Location": f"/api/v1/ingest/uploads/{TASK}"}
+    headers.update(changes)
+    return _Resp(503, {"detail": "Queue confirmation unavailable; processing may still start"}, headers)
+
+
+def test_receipt_bearing_503_polls_original_identity_and_never_reposts(fake, tmp_path):
+    fake.install(_unconfirmed(Location="https://other.invalid/unrelated"),
+                 _Resp(200, {"task_id": TASK, "run_id": RUN, "state": "pending"}),
+                 _Resp(200, {"task_id": TASK, "run_id": RUN, "state": "succeeded", "result": {"total": 1}}))
+    result = _upload(tmp_path)
+    assert (result["task_id"], result["run_id"], result["state"], result["publication_confirmed"]) == (TASK, RUN, "succeeded", True)
+    assert [method for method, _, _ in fake.client.calls] == ["POST", "GET", "GET"]
+    assert all(url == f"http://tl.test/api/v1/ingest/uploads/{TASK}" for method, url, _ in fake.client.calls if method == "GET")
+
+
+def test_ambiguous_receipt_with_poll_outage_still_never_reposts(fake, tmp_path):
+    fake.install(_unconfirmed(), _Resp(503, headers={"Retry-After": "0"}),
+                 _Resp(200, {"task_id": TASK, "run_id": RUN, "state": "succeeded"}))
+    assert _upload(tmp_path)["task_id"] == TASK
+    assert fake.sleeps == [1.0]
+    assert len([call for call in fake.client.calls if call[0] == "POST"]) == 1
+
+
+@pytest.mark.parametrize("changed", [{"task_id": RUN}, {"run_id": TASK}])
+def test_unconfirmed_poll_refuses_a_different_receipt_before_progress(fake, tmp_path, changed):
+    fake.install(_unconfirmed(), _Resp(200, {"task_id": TASK, "run_id": RUN, "state": "pending", **changed}))
+    with pytest.raises(CLIError, match="Status identity differs"):
+        _upload(tmp_path)
+    assert [method for method, _, _ in fake.client.calls] == ["POST", "GET"]
+
+
+def test_incomplete_receipt_cannot_fall_back_to_a_fresh_upload(fake, tmp_path):
+    fake.install(_unconfirmed(**{"X-Upload-Run-ID": "invalid"}))
+    with pytest.raises(CLIError, match="receipt is incomplete"):
+        _upload(tmp_path)
+    assert len(fake.client.calls) == 1
+
+
+def test_shedding_retry_reuses_one_generated_idempotency_key(fake, tmp_path):
+    import uuid
+
+    fake.install(_Resp(429), _Resp(503), _Resp(202, {"task_id": "t1"}))
+    _upload(tmp_path)
+    keys = {post["headers"]["Idempotency-Key"] for post in fake.client.post_fields}
+    assert len(keys) == 1
+    uuid.UUID(next(iter(keys)))
+    assert len({json.dumps(post["data"], sort_keys=True) for post in fake.client.post_fields}) == 1
+
+
+def test_transport_ambiguity_keeps_explicit_key_without_automatic_repost(fake, tmp_path):
+    fake.install(httpx.ReadTimeout("response lost"))
+    with pytest.raises(CLIError, match="--idempotency-key source:job-42"):
+        asyncio.run(upload._upload_file(path=_report(tmp_path), project="p", build="1", idempotency_key="source:job-42"))
+    assert len(fake.client.calls) == 1
+    assert fake.client.post_fields[0]["headers"]["Idempotency-Key"] == "source:job-42"
+
+
+@pytest.mark.parametrize("value", ["", " leading", "newline\n", "a" * 129, "non-ascii-é", "/path"])
+def test_idempotency_option_rejects_invalid_keys_before_sending(fake, tmp_path, value):
+    fake.install()
+    result = runner.invoke(app, ["upload", "file", str(_report(tmp_path)), "-p", "p", "-b", "1", "--idempotency-key", value])
+    assert result.exit_code == 2
+    assert fake.client.calls == []
+
+
+def test_ambiguous_timeout_preserves_receipt_in_machine_output(fake, tmp_path):
+    fake.install(_unconfirmed(), *[_Resp(200, {"task_id": TASK, "run_id": RUN, "state": "pending"}) for _ in range(4)])
+    result = runner.invoke(app, ["upload", "file", str(_report(tmp_path)), "-p", "p", "-b", "1", "--wait", "--wait-timeout", "3", "--no-commit-range", "--no-run-context", "--output", "json"])
+    assert result.exit_code == 1
+    body = json.loads(result.stdout)
+    assert (body["task_id"], body["run_id"], body["state"], body["publication_confirmed"]) == (TASK, RUN, "pending", False)
+    assert len([call for call in fake.client.calls if call[0] == "POST"]) == 1
+    assert sum(fake.sleeps) <= 3
+
+
+def test_ambiguous_terminal_failure_is_nonzero_and_keeps_receipt(fake, tmp_path):
+    fake.install(_unconfirmed(), _Resp(200, {"task_id": TASK, "run_id": RUN, "state": "failed", "error": {"code": "parse_error", "message": "Invalid report"}}))
+    result = runner.invoke(app, ["upload", "file", str(_report(tmp_path)), "-p", "p", "-b", "1", "--no-commit-range", "--no-run-context", "--output", "json"])
+    assert result.exit_code == 1
+    body = json.loads(result.stdout)
+    assert (body["task_id"], body["run_id"], body["state"]) == (TASK, RUN, "failed")
+    assert len([call for call in fake.client.calls if call[0] == "POST"]) == 1
+
+
+def test_directory_pending_receipt_stays_in_json_and_is_counted_once(fake, tmp_path):
+    directory = tmp_path / "reports"
+    directory.mkdir()
+    _report(directory)
+    fake.install(_unconfirmed(), *[_Resp(200, {"task_id": TASK, "run_id": RUN, "state": "pending"}) for _ in range(3)])
+    result = runner.invoke(app, ["upload", "dir", str(directory), "-p", "p", "-b", "1", "--wait", "--wait-timeout", "3", "--no-commit-range", "--no-run-context", "--output", "json"])
+    assert result.exit_code == 1
+    assert json.loads(result.stdout) == [{"task_id": TASK, "run_id": RUN, "total_results": 0, "publication_confirmed": False, "state": "pending"}]
+    assert "Ingested 0/1 files (1 errors)" in result.stderr
+    assert [method for method, _, _ in fake.client.calls].count("POST") == 1
+    assert sum(fake.sleeps) == 3
+
+
+def test_directory_terminal_receipt_failure_stays_in_json_without_second_wait(fake, tmp_path):
+    directory = tmp_path / "reports"
+    directory.mkdir()
+    _report(directory)
+    fake.install(_unconfirmed(), _Resp(200, {"task_id": TASK, "run_id": RUN, "state": "failed", "error": {"message": "Invalid report"}}))
+    result = runner.invoke(app, ["upload", "dir", str(directory), "-p", "p", "-b", "1", "--wait", "--no-commit-range", "--no-run-context", "--output", "json"])
+    assert result.exit_code == 1
+    body = json.loads(result.stdout)[0]
+    assert (body["task_id"], body["run_id"], body["state"]) == (TASK, RUN, "failed")
+    assert "Ingested 0/1 files (1 errors)" in result.stderr
+    assert [method for method, _, _ in fake.client.calls] == ["POST", "GET"]
 
 
 def test_a_client_error_is_not_retried(fake, tmp_path):

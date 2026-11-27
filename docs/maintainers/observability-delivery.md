@@ -16,14 +16,14 @@ Status meanings: **Open** is planned; **In progress** has partial implementation
 
 | Epic | Capability | Iteration sequence |
 |---|---|---|
-| OBS-E01 | Safe correlated application telemetry | 1: privacy, errors, worker log context; 3: worker tracing and clients |
+| OBS-E01 | Safe correlated application telemetry | 1: privacy, errors and worker log context. 7: Celery trace propagation and build-scoped MCP HTTP logs. |
 | OBS-E02 | Reliable metric collection | 1: bounded reads, queue coverage and SQL outcomes; 2: producers, exporters and access |
 | OBS-E03 | Alerting and scheduled detection | 1: low-volume webhook and new outcome rules; 3: schedules, discovery and routing |
-| OBS-E04 | Durable log and trace platform | 2: profile contract; 3: collection, storage, offline and BYO profiles |
-| OBS-E05 | Durable operational and audit evidence | 2: event outbox/replay; 3: audit archive and retention |
-| OBS-E06 | Objectives and capacity | 2: SLIs and series budget; 4: measured objectives, burn rates and capacity |
-| OBS-E07 | DevSecOps and operational rollout gates | 1: scan authorization and semantic rule tests; 3-4: full signal, security and rollout |
-| OBS-E08 | Safe ingestion and worker lifecycle | 1: bounded publication, retention and readiness reset; 2: durable reconciliation |
+| OBS-E04 | Durable log and trace platform | 4: profile contract, collection, storage and offline package. |
+| OBS-E05 | Durable operational and audit evidence | 5: event outbox, replay, audit archive and retention. |
+| OBS-E06 | Objectives and capacity | 6: measured journeys, scoped budgets, sampling and capacity. |
+| OBS-E07 | DevSecOps and operational rollout gates | 1: scan authorization and semantic rule tests. 7: delivery evidence, security controls and rollout. |
+| OBS-E08 | Safe ingestion and worker lifecycle | 1: bounded publication and startup reset. 8: durable upload recovery and process-bound readiness. |
 
 | Story | Outcome | Status |
 |---|---|---|
@@ -46,30 +46,30 @@ Status meanings: **Open** is planned; **In progress** has partial implementation
 | OBS-E03-S04 | Observe durable expected-run and last-success state | Verification |
 | OBS-E03-S05 | Detect missing targets and required telemetry | Verification |
 | OBS-E03-S06 | Detect monitoring and notification path outages independently | In progress |
-| OBS-E04-S01 | Define the production telemetry and ownership contract | Open |
-| OBS-E04-S02 | Deploy bounded and secure log/trace collection | Open |
-| OBS-E04-S03 | Provide central log search and working trace-to-log navigation | Open |
-| OBS-E04-S04 | Persist incident traces with explicit small-install and HA options | Open |
-| OBS-E04-S05 | Adapt and verify Kubernetes, K3s and OpenShift monitoring | Open |
-| OBS-E04-S06 | Package offline telemetry and document cloud/BYO adapters | Open |
-| OBS-E05-S01 | Persist failed pipeline event delivery with stable IDs | Open |
-| OBS-E05-S02 | Replay events idempotently and expose fleet health | Open |
-| OBS-E05-S03 | Protect operational audit history and archive integrity | Open |
-| OBS-E05-S04 | Retain security events without deleting SCIM authority evidence | Open |
-| OBS-E06-S01 | Define and emit durable journey success indicators | Open |
-| OBS-E06-S02 | Add scoped error budgets, burn alerts and runbooks | Open |
-| OBS-E06-S03 | Bound metric cardinality and installation scope | Open |
-| OBS-E06-S04 | Measure storage, sampling and resource limits | Open |
-| OBS-E07-S01 | Run semantic telemetry and mounted-configuration checks in CI | In progress |
-| OBS-E07-S02 | Verify the full signal path against a disposable stack | Open |
-| OBS-E07-S03 | Add useful application source security analysis | Open |
-| OBS-E07-S04 | Validate infrastructure security policy in CI | Open |
-| OBS-E07-S05 | Run authenticated dynamic security checks in isolation | Open |
-| OBS-E07-S06 | Verify every deployed role and rehearse production handoff | Open |
+| OBS-E04-S01 | Define the production telemetry and ownership contract | Verification |
+| OBS-E04-S02 | Deploy bounded and secure log/trace collection | Verification |
+| OBS-E04-S03 | Provide central log search and working trace-to-log navigation | Verification |
+| OBS-E04-S04 | Persist incident traces with explicit small-install and HA options | Verification |
+| OBS-E04-S05 | Adapt and verify Kubernetes, K3s and OpenShift monitoring | Verification |
+| OBS-E04-S06 | Package offline telemetry and document cloud/BYO adapters | Verification |
+| OBS-E05-S01 | Persist failed pipeline event delivery with stable IDs | Verification |
+| OBS-E05-S02 | Replay events idempotently and expose fleet health | Verification |
+| OBS-E05-S03 | Protect operational audit history and archive integrity | In progress |
+| OBS-E05-S04 | Retain security events without deleting SCIM authority evidence | Verification |
+| OBS-E06-S01 | Define and emit durable journey success indicators | Verification |
+| OBS-E06-S02 | Add scoped error budgets, burn alerts and runbooks | Verification |
+| OBS-E06-S03 | Bound metric cardinality and installation scope | Verification |
+| OBS-E06-S04 | Measure storage, sampling and resource limits | Verification |
+| OBS-E07-S01 | Run semantic telemetry and mounted-configuration checks in CI | Verification |
+| OBS-E07-S02 | Verify the full signal path against a disposable stack | Verification |
+| OBS-E07-S03 | Add useful application source security analysis | Verification |
+| OBS-E07-S04 | Validate infrastructure security policy in CI | Verification |
+| OBS-E07-S05 | Run authenticated dynamic security checks in isolation | Verification |
+| OBS-E07-S06 | Verify every deployed role and rehearse production handoff | Verification |
 | OBS-E07-S07 | Require same-SHA secret-scan success before publication and promotion | Verification |
 | OBS-E08-S01 | Keep upload publication off the API event loop | Verification |
-| OBS-E08-S02 | Preserve queued batch payloads after ambiguous publication | In progress |
-| OBS-E08-S03 | Clear stale worker readiness before replacement startup | In progress |
+| OBS-E08-S02 | Preserve queued batch payloads after ambiguous publication | Verification |
+| OBS-E08-S03 | Clear stale worker readiness before replacement startup | Verification |
 
 ## Iteration 1: critical correctness and signal foundations
 
@@ -213,3 +213,19 @@ This iteration builds on `849323c9` and uses the existing backend and release ve
 | OBS-E07-S07 | The published main SHA passed the existing independent secret-scan verifier. Active main rules require the Gitleaks check, and local fixtures cover absent, pending, failed and unrelated evidence. | Verify the hosted check and release authorization on the new candidate. |
 
 Two native workers consumed the existing delivery probe through a disposable Valkey broker. With the locked Celery and OpenTelemetry versions, both emitted a span with the supplied parent and an operational log with the matching trace, span and hashed task ID. Native Prometheus and Alertmanager delivered firing and resolved notifications to a separate disposable TLS receiver. The homelab role inventory was read-only.
+
+## Iteration 8 — safe ingestion and worker replacement
+
+This iteration builds on `a025d087`. Upload recovery now uses an immutable task and run identity backed by a PostgreSQL receipt. Worker probes verify the current parent generation in the operating system.
+
+| Story | Change | Remaining acceptance |
+|---|---|---|
+| OBS-E08-S01 | Both upload handlers publish through four bounded off-loop slots with a three-second foreground wait. Dedicated Redis publication connections have two-second socket deadlines and disable automatic publish retries. The HTTP liveness route answered during a blocked publisher in each format. | Measure upload and unrelated API latency at site traffic while the broker is degraded. |
+| OBS-E08-S02 | Migration 0265 persists a receipt before object staging. An optional key reuses the same task and run. Workers serialize consumers for that receipt and persist the terminal outcome before queued-payload cleanup. The CLI and browser poll the original receipt after an ambiguous response. Project reset refuses while accepted work can still create runs. [Upload recovery](../operations/upload-dispatch-recovery.md), [client recovery](../operations/upload-client-recovery.md). | Roll out the schema and ingestion workers before the API, verify the selected object provider's failure behavior, and measure the rollout workload. |
+| OBS-E08-S03 | Worker entrypoints clear stale markers and metric files before importing Celery. The lightweight probe checks the current Linux parent identity and its ready generation, and warm shutdown removes worker readiness while the parent drains. [Worker readiness](../operations/worker-readiness.md). | Verify container replacement and readiness through the orchestrator in the selected deployment. |
+
+The publisher retains its slot until the underlying synchronous call returns. The receipt gives operators a stable recovery identity when delivery confirmation is lost, with an explicit retry after diagnosis. The probe uses local process state in place of a broker inspection on each readiness check. [Python executor cancellation](https://docs.python.org/3.14/library/concurrent.futures.html), [Celery publication and retries](https://docs.celeryq.dev/en/main/userguide/calling.html#message-sending-retry), [transactional outbox considerations](https://docs.aws.amazon.com/prescriptive-guidance/latest/cloud-design-patterns/transactional-outbox.html), [Kubernetes probe behavior](https://kubernetes.io/docs/concepts/workloads/pods/probes/).
+
+The disposable PostgreSQL 16.15 database ran the full migration chain, then downgraded and reapplied 0265. Downgrade refused pending receipts and terminal receipts with outstanding cleanup. A real scoped API key submitted JSON and JUnit through the API, a pinned Valkey broker and a Celery worker. Controlled loss of publish confirmation and a failure before send both recovered under the original receipts. Independent reads found two runs, three persisted test cases and no remaining queued payloads. The worker used the shipped two-connection budget. With the shipped API pool and a held storage write, three parallel uploads received a retryable refusal before reservation and the liveness route responded.
+
+On Linux, the prefork consumer initially failed to connect to the unavailable broker and remained live and unready. It became ready after isolated Valkey started, processed work, and cleared readiness while draining. The retained-volume fixture also verified that a forced process exit could leave an old marker while its replacement rejected it and preserved its own metric files. The 27 reference Compose and Kubernetes profiles rendered with their queues, processes and security policies intact.

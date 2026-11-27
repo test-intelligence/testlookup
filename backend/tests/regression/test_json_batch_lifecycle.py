@@ -80,7 +80,7 @@ def _batch(project_id: uuid.UUID, **extra: Any) -> dict[str, Any]:
 
 
 @pytest.fixture
-def world(monkeypatch):
+def world(monkeypatch, upload_receipt_store):
     """The real app and real upload_status, over an in-memory Redis and storage."""
     project_id = uuid.uuid4()
     user = SimpleNamespace(
@@ -133,6 +133,7 @@ def world(monkeypatch):
     try:
         yield SimpleNamespace(
             project_id=project_id, storage=storage, store=store, published=published, run_id=run_id,
+            receipts=upload_receipt_store,
         )
     finally:
         for dep in overrides:
@@ -147,6 +148,24 @@ async def _post(path: str, **kwargs: Any):
 async def _get(path: str):
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
         return await client.get(path)
+
+
+@pytest.fixture
+def capture_durable_status(world, monkeypatch):
+    from app.worker import upload_receipts as boundary
+
+    def capture(task_id):
+        row = world.receipts[task_id]
+
+        async def persist(receipt_id, *, state, **status_payload):
+            assert receipt_id == task_id
+            row.state = state
+            row.status_payload = status_payload
+
+        monkeypatch.setattr(boundary, "active_receipt_id", lambda: task_id)
+        monkeypatch.setattr(boundary, "persist_active_status", persist)
+
+    return capture
 
 
 @contextmanager
@@ -209,10 +228,12 @@ async def test_a_batch_task_id_can_be_polled_straight_away(world):
     assert poll.json()["run_id"] == world.run_id
 
 
-async def test_after_the_task_body_runs_the_poll_reads_succeeded_with_the_total(world):
+async def test_batch_worker_reports_success_and_keeps_payload_for_durable_cleanup(world, capture_durable_status):
     resp = await _post("/api/v1/ingest", json=_batch(world.project_id))
+    assert resp.status_code == 202, resp.text
     task_id = resp.json()["task_id"]
     (published,) = world.published
+    capture_durable_status(task_id)
 
     def _run():
         with _worker(task_id=task_id) as w:
@@ -228,7 +249,7 @@ async def test_after_the_task_body_runs_the_poll_reads_succeeded_with_the_total(
     assert body["result"]["total"] == 2
     assert body["result"]["passed"] == 1 and body["result"]["failed"] == 1
     w.retry.assert_not_called()
-    assert published["kwargs"]["payload_storage_key"] in world.storage.deleted
+    assert published["kwargs"]["payload_storage_key"] in world.storage.objects
 
 
 async def test_an_unconfirmed_publish_is_a_503_with_a_retained_payload_and_poll_id(world, monkeypatch):
@@ -240,7 +261,8 @@ async def test_an_unconfirmed_publish_is_a_503_with_a_retained_payload_and_poll_
     assert resp.status_code == 503, resp.text
     assert len(world.storage.objects) == 1, "an accepted message may still need its batch"
     task_id = resp.headers["X-Upload-Task-ID"]
-    assert _status(world, task_id)["state"] == "pending"
+    poll = await _get(f"/api/v1/ingest/uploads/{task_id}")
+    assert poll.status_code == 200 and poll.json()["state"] == "pending"
     assert resp.headers["Location"] == f"/api/v1/ingest/uploads/{task_id}"
 
 
@@ -469,10 +491,11 @@ def test_the_upload_form_names_every_format_the_server_reads():
     assert missing == [], f"the upload form does not name: {missing}"
 
 
-async def test_a_batch_commit_range_failure_reaches_the_poll(world):
+async def test_a_batch_commit_range_failure_reaches_the_poll(world, capture_durable_status):
     resp = await _post("/api/v1/ingest", json=_batch(world.project_id, commit_range=[{"sha": "abc1234"}]))
     task_id = resp.json()["task_id"]
     (published,) = world.published
+    capture_durable_status(task_id)
 
     def _run():
         with _worker(task_id=task_id) as w:

@@ -80,7 +80,7 @@ _JUNIT = (
 
 
 @pytest.fixture
-def file_route(monkeypatch):
+def file_route(monkeypatch, upload_receipt_store):
     """The real app with auth, DB, storage and the broker replaced; yields the queued task kwargs."""
     pytest.importorskip("asyncpg")
     from app.core.deps import get_api_key_context, get_current_user_or_api_key, get_db

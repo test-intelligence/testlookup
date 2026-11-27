@@ -8748,3 +8748,39 @@ class DropFolderBuild(Base):
     )
     queued_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     task_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+
+
+class UploadDispatchReceipt(Base):
+    """Durable upload identity created before its object or broker publication."""
+
+    __tablename__ = "upload_dispatch_receipts"
+    __table_args__ = (
+        UniqueConstraint("project_id", "actor_digest", "kind", "idempotency_digest", name="uq_upload_receipt_idempotency"),
+        CheckConstraint("kind IN ('batch','file')", name="ck_upload_receipt_kind"),
+        CheckConstraint("state IN ('pending','parsing','ingesting','succeeded','failed')", name="ck_upload_receipt_state"),
+        CheckConstraint("(state IN ('succeeded','failed')) = (completed_at IS NOT NULL)", name="ck_upload_receipt_terminal"),
+        Index("ix_upload_receipt_cleanup", text("payload_deleted_at ASC NULLS FIRST"), "completed_at", postgresql_where=text("completed_at IS NOT NULL")),
+        Index("ix_upload_receipt_project_created", "project_id", "created_at"),
+        Index("ix_upload_receipt_outstanding", "project_id", postgresql_where=text("payload_deleted_at IS NULL")),
+        CheckConstraint("payload_deleted_at IS NULL OR completed_at IS NOT NULL", name="ck_upload_receipt_cleanup_terminal"),
+    )
+
+    task_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    # No run FK: durable admission precedes the worker's TestRun INSERT.
+    run_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    # Keep cleanup custody if a project is removed outside the soft-delete API.
+    project_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    actor_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    kind: Mapped[str] = mapped_column(String(8), nullable=False)
+    idempotency_digest: Mapped[Optional[str]] = mapped_column(String(64))
+    request_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    payload_sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    storage_key: Mapped[str] = mapped_column(String(1000), nullable=False)
+    task_kwargs: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    state: Mapped[str] = mapped_column(String(12), nullable=False, server_default="pending")
+    status_payload: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
+    payload_ready_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    payload_deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())

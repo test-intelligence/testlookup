@@ -347,7 +347,10 @@ def configure_middlewares(app: FastAPI) -> None:
         allow_origins=settings.CORS_ORIGINS,
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-        allow_headers=["Content-Type", "Authorization", "X-API-Key", "X-Webhook-Secret", "X-Request-ID"],
+        allow_headers=[
+            "Content-Type", "Authorization", "X-API-Key", "X-Webhook-Secret", "X-Request-ID",
+            "Idempotency-Key",
+        ],
         # E8.3: the two review headers must be exposed, or a browser cannot read
         # them and the SPA would show an AI report with no review state.
         # X-Request-ID: VIZ-210 -- a cross-origin client can quote it in an error.

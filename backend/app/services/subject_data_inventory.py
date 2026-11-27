@@ -389,6 +389,14 @@ _E_POSTGRES: tuple[Location, ...] = (
     _row("pipeline_event_outbox", "payload", match="none", export_as="none", category=None,
          erase="keep_record", label="Pending pipeline timeline evidence",
          reason="Pending redacted delivery data follows the source project and run retention."),
+    _row("upload_dispatch_receipts", "actor_digest", match="none", export_as="none", category=None,
+         erase="keep_record", label="Upload retry identity digests",
+         reason="A hashed account UUID scopes upload retries without retaining account names or credentials. "
+                "Unresolved work retains recovery custody; cleaned terminal receipts become eligible for expiry after 30 days."),
+    _row("upload_dispatch_receipts", "task_kwargs", match="none", export_as="none", category=None,
+         erase="keep_record", label="Recoverable upload metadata",
+         reason="CI report metadata contains source-system labels rather than account identity. "
+                "Queued content and recovery metadata are removed after durable terminal outcome."),
 )
 _E_OBJECTS: tuple[Location, ...] = (
     _store("objects:subject-exports/", "objects", match="id_key", erase="delete", label="Their data exports",

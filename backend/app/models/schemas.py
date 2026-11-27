@@ -6291,6 +6291,10 @@ class UploadStatusResponse(BaseModel):
     progress: Optional[dict] = None
     result: Optional[dict] = None
     error: Optional[dict] = None
+    payload_state: Optional[Literal["reserved", "ready", "deleted"]] = None
+    accepted_at: Optional[datetime] = None
+    payload_ready_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
 
 
 class LiveSessionState(BaseModel):

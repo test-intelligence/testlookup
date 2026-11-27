@@ -5,9 +5,8 @@ business outcome. A publish error or request timeout cannot establish whether
 the broker accepted the message. Callers must retain its object and status
 seed, including when a timed-out publication finishes later.
 
-This is not a durable dispatch outbox: API exit can interrupt publication and
-unconfirmed uploads still need reconciliation. The finite executor and slots
-bound outstanding publications even when broker calls outlive their callers.
+The PostgreSQL upload receipt records recoverable work across API exits. The
+finite executor and slots bound calls that outlive their HTTP wait.
 """
 from __future__ import annotations
 
@@ -15,11 +14,13 @@ import asyncio
 import contextvars
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from functools import partial
 from typing import Any
+
+from app.worker.celery_app import celery_app
 
 
 UPLOAD_PUBLISH_TIMEOUT_SECONDS = 3.0
+_BROKER_SOCKET_TIMEOUT_SECONDS = 2.0
 _MAX_PENDING_PUBLISHES = 4
 _PUBLISH_EXECUTOR = ThreadPoolExecutor(
     max_workers=_MAX_PENDING_PUBLISHES, thread_name_prefix="upload-publish"
@@ -39,6 +40,25 @@ def _consume_result(future: asyncio.Future[Any]) -> None:
         future.exception()
 
 
+def _send_upload(task: Any, kwargs: dict[str, Any], task_id: str) -> None:
+    # The default Kombu Redis transport can wait indefinitely for a reply on a
+    # half-open socket. Isolate upload connections from the shared publisher and
+    # consumer pools and put a deadline on each connect or socket operation.
+    with celery_app.connection_for_write(
+        connect_timeout=_BROKER_SOCKET_TIMEOUT_SECONDS,
+        transport_options={
+            "socket_connect_timeout": _BROKER_SOCKET_TIMEOUT_SECONDS,
+            "socket_timeout": _BROKER_SOCKET_TIMEOUT_SECONDS,
+            "retry_on_timeout": False,
+            "max_retries": 0,
+        },
+    ) as connection:
+        task.apply_async(
+            kwargs=kwargs, task_id=task_id, ignore_result=True, retry=False,
+            connection=connection,
+        )
+
+
 async def publish_upload(
     task: Any, *, kwargs: dict[str, Any], task_id: str
 ) -> None:
@@ -53,14 +73,9 @@ async def publish_upload(
     if not _PUBLISH_SLOTS.acquire(blocking=False):
         raise UploadPublisherBusy("upload publisher is busy")
     try:
-        publish = partial(
-            task.apply_async,
-            kwargs=kwargs,
-            task_id=task_id,
-            ignore_result=True,
-            retry=False,
+        future = _PUBLISH_EXECUTOR.submit(
+            contextvars.copy_context().run, _send_upload, task, kwargs, task_id,
         )
-        future = _PUBLISH_EXECUTOR.submit(contextvars.copy_context().run, publish)
     except BaseException:
         _PUBLISH_SLOTS.release()
         raise

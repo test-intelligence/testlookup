@@ -24,16 +24,17 @@ previous revision — the one OOM-looping at 2 GiB, 6 restarts — stayed alive
 serving the queue while its replacement sat NotReady beside it. The deploy
 script reported DEGRADED for the same reason.
 
-Fix: the ``worker_ready`` signal writes a sentinel file and ``worker_shutdown``
-removes it; the probe checks for the file. ``worker_ready`` fires once the
-consumer has connected to the broker and started consuming, which is exactly
-what readiness should mean here, and a file check costs nothing under load.
-Liveness stays on ``pgrep`` and remains what catches a dead worker.
+The launcher clears retained state before imports. ``worker_ready`` publishes
+its current parent generation and Linux process identity after the consumer
+starts. The stdlib readiness/liveness probes use local files and /proc without
+contacting the broker. A retained file and a probe's own shell cannot pass.
 """
 from __future__ import annotations
 
 import pathlib
 import re
+import json
+import os
 
 import pytest
 
@@ -46,6 +47,16 @@ pytestmark = pytest.mark.regression
 _K8S = pathlib.Path(__file__).resolve().parents[3] / "k8s" / "base"
 _MANIFESTS = ("worker-deployments.yaml", "worker-children-deployment.yaml")
 _SENTINEL = "/tmp/celery-worker-ready"
+
+
+@pytest.fixture(autouse=True)
+def _portable_process_fixture(monkeypatch):
+    from app.worker import worker_process
+
+    monkeypatch.setattr(worker_process, "process_identity", lambda pid: {
+        "pid": pid, "started": "100", "pid_namespace": 200, "boot_id": "b" * 36,
+    })
+    monkeypatch.delenv(worker_process.GENERATION_ENV, raising=False)
 
 
 def _worker_containers():
@@ -74,7 +85,8 @@ def test_every_worker_reports_readiness_from_the_sentinel():
     checked = 0
     for name, container in _worker_containers():
         cmd = container["readinessProbe"]["exec"]["command"]
-        assert _SENTINEL in cmd, f"{name}: readiness does not check {_SENTINEL}"
+        assert cmd == ["python", "-m", "app.worker.worker_process", "probe", "--mode=ready"], name
+        assert container["command"][:4] == ["python", "-m", "app.worker.worker_process", "celery"], name
         checked += 1
     assert checked >= 5, f"expected every queue worker covered, saw {checked}"
 
@@ -83,7 +95,8 @@ def test_liveness_still_catches_a_dead_worker():
     """Readiness got cheaper; liveness must not have been weakened with it."""
     for name, container in _worker_containers():
         live = " ".join(container["livenessProbe"]["exec"]["command"])
-        assert "pgrep" in live, f"{name}: liveness no longer proves the process exists"
+        assert "app.worker.worker_process probe --mode=alive" in live, name
+        assert "pgrep" not in live and "sh -c" not in live, name
 
 
 def test_the_signal_handlers_write_and_clear_the_same_path(tmp_path, monkeypatch):
@@ -95,6 +108,7 @@ def test_the_signal_handlers_write_and_clear_the_same_path(tmp_path, monkeypatch
     sentinel = tmp_path / "celery-worker-ready"
     monkeypatch.setattr(celery_app, "READY_SENTINEL", str(sentinel))
 
+    celery_app._prepare_worker_metrics_directory()
     celery_app._mark_worker_ready()
     assert sentinel.is_file(), "worker_ready did not write the sentinel"
 
@@ -132,7 +146,9 @@ def test_replacement_clears_preserved_marker_before_becoming_ready(tmp_path, mon
     # No broker connection or metrics listener is needed for this lifecycle proof.
     monkeypatch.delenv("PROMETHEUS_MULTIPROC_DIR", raising=False)
     worker_ready.send(sender=None)
-    assert sentinel.read_text(encoding="utf-8") == "ready\n"
+    value = json.loads(sentinel.read_text(encoding="utf-8"))
+    assert value["identity"]["pid"] == os.getpid()
+    assert len(value["generation"]) == 32
     worker_shutdown.send(sender=None)
     assert not sentinel.exists()
 
@@ -175,7 +191,7 @@ def test_no_compose_celery_service_inherits_the_api_probe(service):
 
 @pytest.mark.parametrize("service", ["worker", "worker-children"])
 def test_compose_workers_report_health_from_the_sentinel(service):
-    assert _release_services()[service]["healthcheck"]["test"] == ["CMD", "test", "-f", _SENTINEL]
+    assert _release_services()[service]["healthcheck"]["test"] == ["CMD", "python", "-m", "app.worker.worker_process", "probe", "--mode=ready"]
 
 
 def test_compose_beat_check_matches_beat_and_not_itself():

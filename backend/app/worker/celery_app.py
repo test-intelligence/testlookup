@@ -15,6 +15,7 @@ from celery.signals import (
     worker_process_init,
     worker_process_shutdown,
     worker_ready,
+    worker_shutting_down,
     worker_shutdown,
 )
 from celery.schedules import crontab
@@ -836,30 +837,22 @@ def _bind_task_log_context(task_id=None, task=None, **_kwargs: object) -> None:
 
 @celeryd_init.connect
 def _prepare_worker_metrics_directory(**_kwargs: object) -> None:
-    """Remove metrics from an earlier worker parent before it forks children.
+    """Keep the launcher's early reset, with a fallback for direct Celery CLI use.
 
-    Kubernetes ``emptyDir`` survives a container restart in the same pod, and
-    Compose may restart a container without recreating its tmpfs mount. Keeping
-    those files would make the replacement worker report the previous process
-    group's counters again. ``celeryd_init`` runs once in the parent before the
-    prefork pool starts, so it cannot race with live child observations.
+    Celery imports task modules before celeryd_init. The reference launcher
+    clears old metric files before those imports and this idempotent check
+    preserves current parent files already mapped by prometheus_client.
     """
-    import os
-
-    multiproc_dir = os.environ.get("PROMETHEUS_MULTIPROC_DIR")
-    if not multiproc_dir:
-        return
     try:
-        for entry in os.scandir(multiproc_dir):
-            if entry.is_file() and entry.name.endswith(".db"):
-                os.unlink(entry.path)
-    except OSError as exc:
+        from app.worker.worker_process import prepare_startup
+
+        prepare_startup(READY_SENTINEL)
+    except Exception as exc:  # noqa: BLE001 — direct legacy launches keep their failure diagnostics
         import structlog
 
         structlog.get_logger(__name__).error(
             "worker_metrics_directory_reset_failed",
-            directory=multiproc_dir,
-            error=str(exc),
+            error_type=type(exc).__name__,
         )
 
 
@@ -960,8 +953,7 @@ def _clear_task_log_context(task=None, state=None, **_kwargs: object) -> None:
             bind_contextvars(**parent_context)
 
 
-#: Readiness sentinel. Written once the worker has booted and connected to the
-#: broker; removed before replacement startup and on shutdown.
+#: Generation-owned state. The stdlib launcher clears it before Celery imports.
 READY_SENTINEL = "/tmp/celery-worker-ready"
 
 
@@ -983,31 +975,30 @@ def _mark_worker_ready(**_kwargs: object) -> None:
     while the replacement sat NotReady beside it.
 
     ``worker_ready`` fires after the consumer has connected to the broker and
-    begun consuming, which is exactly the condition readiness should express,
-    and a file check costs nothing under load. Liveness stays on ``pgrep`` and
-    remains the thing that catches a dead worker.
+    begun consuming. Publish the current launch generation and process identity
+    so a preserved file cannot make its replacement ready before startup.
+    The stdlib probes verify this state without importing Celery or contacting
+    the broker, and liveness checks the current parent process.
     """
-    try:
-        with open(READY_SENTINEL, "w", encoding="utf-8") as fh:
-            fh.write("ready\n")
-    except OSError:  # noqa: BLE001 — readiness must never stop a worker booting
-        pass
+    from app.worker.worker_process import mark_ready
+
+    mark_ready(READY_SENTINEL)
 
 
-@celeryd_init.connect
 @worker_shutdown.connect
 def _clear_worker_ready(**_kwargs: object) -> None:
-    """A previous worker's marker must not make its replacement Ready.
+    """Release only this parent's state after its shutdown finishes."""
+    from app.worker.worker_process import clear_current
 
-    SIGKILL/OOM skips worker_shutdown, and a pod's emptyDir survives a
-    container restart. celeryd_init clears it before this consumer starts.
-    """
-    import os
+    clear_current(READY_SENTINEL)
 
-    try:
-        os.remove(READY_SENTINEL)
-    except OSError:  # noqa: BLE001 — already gone, or never written
-        pass
+
+@worker_shutting_down.connect
+def _stop_worker_readiness(**_kwargs: object) -> None:
+    """Warm shutdown stops new readiness while the live parent drains children."""
+    from app.worker.worker_process import clear_ready
+
+    clear_ready(READY_SENTINEL)
 
 
 @worker_ready.connect

@@ -13,11 +13,13 @@ keys / JWTs must still be members of the target project (enforced by
 ``resolve_project_scope``).
 """
 import re
+import threading
 import uuid
 from datetime import datetime
+from typing import Any
 
 import structlog
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, Form, Header, HTTPException, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -34,7 +36,12 @@ logger = structlog.get_logger("routers.ingest")
 
 MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 MB
 _READ_CHUNK_SIZE = 1 * 1024 * 1024  # 1 MB chunks when streaming uploads
-_DISPATCH_RESPONSES = {
+# Leave room for the lock holder's metadata/storage-configuration query in the
+# shipped 2+1 pool. Rejected work keeps its durable receipt for keyed recovery.
+_PREPARATION_SLOTS = threading.BoundedSemaphore(1)
+_UPLOAD_PREPARATIONS: set[Any] = set()
+_DISPATCH_RESPONSES: dict[int | str, dict[str, Any]] = {
+    409: {"description": "The upload identity conflicts with existing content or a deleted run."},
     503: {
         "description": (
             "Upload admission or queue confirmation unavailable. If Location and "
@@ -123,19 +130,110 @@ def _unconfirmed_dispatch(task_id: str, run_id: str) -> HTTPException:
     )
 
 
-async def _discard_unpublished_upload(storage_key: str, task_id: str) -> None:
-    """Clean up only when bounded admission proves no publish was submitted."""
-    from app.db.storage import get_storage_provider
-    from app.services import upload_status
+async def _publish_receipt(row) -> None:
+    from app.services.upload_receipts import TERMINAL_STATES
+    from app.worker.tasks import ingest_uploaded_file, ingest_uploaded_results
+    from app.worker.upload_dispatch import publish_upload
 
-    await upload_status.clear_pending_status(task_id)
+    if row.state in TERMINAL_STATES:
+        return
+    task = ingest_uploaded_results if row.kind == "batch" else ingest_uploaded_file
     try:
-        await get_storage_provider().delete_object(storage_key)
-    except Exception as exc:  # noqa: BLE001 — cleanup must preserve the refusal
-        logger.warning(
-            "unpublished_upload_cleanup_failed", task_id=task_id,
-            error_type=type(exc).__name__,
+        await publish_upload(task, kwargs={**row.task_kwargs, "upload_receipt_id": str(row.task_id)}, task_id=str(row.task_id))
+    except Exception as exc:  # noqa: BLE001 — durable identity covers refused, unknown and late publication
+        logger.warning("upload_dispatch_unconfirmed", task_id=str(row.task_id), error_type=type(exc).__name__)
+        raise _unconfirmed_dispatch(str(row.task_id), str(row.run_id)) from exc
+
+
+async def _stage_upload(*, content: bytes, metadata: dict, kind: str, project_id: str,
+                        actor_id: str, run_id: str, storage_key: str,
+                        task_kwargs: dict, idempotency_key: str | None,
+                        content_type: str):
+    import asyncio
+    import hashlib
+
+    from app.db.storage import get_storage_provider
+    from app.services import upload_receipts as receipts
+    from app.worker import upload_receipts as boundary
+
+    try:
+        key_digest = receipts.idempotency_digest(idempotency_key)
+        content_digest = receipts.request_digest(content, metadata)
+    except ValueError as exc:
+        raise HTTPException(422, detail=str(exc)) from None
+    if not _PREPARATION_SLOTS.acquire(blocking=False):
+        raise HTTPException(503, detail="Upload preparation is busy; try again later.", headers={"Retry-After": "1"})
+    task_id = str(uuid.uuid4())
+    try:
+        row = await boundary.reserve_upload(
+            task_id=task_id, run_id=run_id, project_id=project_id, actor_id=actor_id,
+            kind=kind, key_digest=key_digest, content_digest=content_digest,
+            payload_sha256=hashlib.sha256(content).hexdigest(), storage_key=storage_key, task_kwargs=task_kwargs,
         )
+    except receipts.UploadIdentityConflict as exc:
+        _PREPARATION_SLOTS.release()
+        raise HTTPException(409, detail=str(exc)) from None
+    except receipts.UploadProjectUnavailable as exc:
+        _PREPARATION_SLOTS.release()
+        raise HTTPException(409, detail=str(exc)) from None
+    except receipts.UploadAdmissionFull as exc:
+        _PREPARATION_SLOTS.release()
+        raise HTTPException(503, detail=str(exc), headers={"Retry-After": "60"}) from None
+    except Exception as exc:  # noqa: BLE001 — an uncertain commit may have reserved this identity
+        _PREPARATION_SLOTS.release()
+        raise _unconfirmed_dispatch(task_id, run_id) from exc
+    except BaseException:
+        _PREPARATION_SLOTS.release()
+        raise
+    task_id, run_id = str(row.task_id), str(row.run_id)
+    if row.state in receipts.TERMINAL_STATES:
+        _PREPARATION_SLOTS.release()
+        return row
+    # Serialize object preparation against both another keyed POST and a
+    # consumer. Identical retries can repair interrupted storage safely.
+    try:
+        connection = await boundary.acquire_upload_lock(task_id)
+    except BaseException as exc:
+        _PREPARATION_SLOTS.release()
+        if not isinstance(exc, Exception):
+            raise
+        raise _unconfirmed_dispatch(task_id, run_id) from exc
+    if connection is None:
+        _PREPARATION_SLOTS.release()
+        raise _unconfirmed_dispatch(task_id, run_id)
+
+    async def prepare():
+        try:
+            latest = await boundary.read_upload(task_id)
+            if latest is None:
+                raise RuntimeError("Reserved upload receipt is unavailable")
+            if latest.state not in receipts.TERMINAL_STATES and latest.payload_ready_at is None:
+                # Shield the whole preparation lifetime. A local provider's
+                # filesystem thread can outlive cancellation of its coroutine.
+                await get_storage_provider().put_object(latest.storage_key, content, content_type=content_type)
+                await boundary.mark_payload_ready(task_id)
+            return latest
+        finally:
+            try:
+                await boundary.release_upload_lock(connection, task_id)
+            finally:
+                _PREPARATION_SLOTS.release()
+
+    preparation = asyncio.create_task(prepare())
+    _UPLOAD_PREPARATIONS.add(preparation)
+
+    def finished(future):
+        _UPLOAD_PREPARATIONS.discard(future)
+        if not future.cancelled():
+            future.exception()
+
+    preparation.add_done_callback(finished)
+    try:
+        row = await asyncio.wait_for(asyncio.shield(preparation), boundary.OBJECT_OPERATION_TIMEOUT_SECONDS)
+    except Exception as exc:  # noqa: BLE001 — the real preparer retains its lock until its write ends
+        raise _unconfirmed_dispatch(task_id, run_id) from exc
+    await _publish_receipt(row)
+    return row
 
 
 @router.post(
@@ -147,6 +245,10 @@ async def _discard_unpublished_upload(storage_key: str, task_id: str) -> None:
 )
 async def ingest_batch(
     payload: IngestPayload,
+    idempotency_key: str | None = Header(
+        None, alias="Idempotency-Key", max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+        description="Reuse for identical logical upload retries within receipt retention.",
+    ),
     db: AsyncSession = Depends(get_db),
     auth: tuple[User, None] = Depends(get_api_key_context),
 ):
@@ -187,9 +289,6 @@ async def ingest_batch(
     await enforce_redis_memory_backpressure()
     await enforce_ingest_rate_limit(str(target_project_id))
 
-    from app.worker.tasks import ingest_uploaded_results
-    from app.db.storage import get_storage_provider
-
     run_id = await _resolve_run_id(
         db,
         target_project_id,
@@ -200,64 +299,20 @@ async def ingest_batch(
         jenkins_job=payload.jenkins_job,
     )
     await _refuse_deleted_build(db, run_id, payload.build_number)
+    # Authentication's last-used writes are committed before the independent
+    # receipt/preparation boundary needs this process's bounded pool.
+    await db.commit()
     import json
     batch_storage_key = f"uploads/{target_project_id}/{run_id}/queued/{uuid.uuid4().hex}.json"
-    try:
-        await get_storage_provider().put_object(
-            batch_storage_key,
-            # JSON mode: a result's started_at / finished_at is a datetime, which plain json.dumps refuses (every
-            # such batch answered 503). The worker reads the ISO text back through report_timings.to_utc.
-            json.dumps(payload.model_dump(mode="json"), separators=(",", ":")).encode("utf-8"),
-            content_type="application/json",
-        )
-    except Exception as exc:  # noqa: BLE001
-        logger.error("batch_ingest_storage_failed", run_id=run_id, error=str(exc))
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Upload storage is temporarily unavailable",
-        ) from exc
-
-    # D-69: the same lifecycle as ingest_file. Allocate the task id and seed
-    # "pending" before publishing, so GET /ingest/uploads/{task_id} finds the
-    # batch from the first poll; the worker advances it to ingesting and then
-    # succeeded or failed. Seeding first means a fast worker cannot finish
-    # before this request writes "pending".
-    from app.services import upload_status
-
-    task_id = str(uuid.uuid4())
-    await upload_status.set_status(
-        task_id, run_id=run_id, project_id=str(target_project_id),
-        state=upload_status.STATE_PENDING,
+    row = await _stage_upload(
+        content=json.dumps(payload.model_dump(mode="json"), sort_keys=True, separators=(",", ":")).encode(),
+        metadata={}, kind="batch", project_id=str(target_project_id), actor_id=str(current_user.id),
+        run_id=run_id, storage_key=batch_storage_key,
+        task_kwargs={"run_id": run_id, "payload_storage_key": batch_storage_key},
+        idempotency_key=idempotency_key if isinstance(idempotency_key, str) else None,
+        content_type="application/json",
     )
-    from app.worker.upload_dispatch import UploadPublisherBusy, publish_upload
-
-    try:
-        await publish_upload(
-            ingest_uploaded_results,
-            kwargs=dict(
-                run_id=run_id,
-                payload_storage_key=batch_storage_key,
-                user_id=str(current_user.id),
-            ),
-            task_id=task_id,
-        )
-    except UploadPublisherBusy as exc:
-        # The helper did not submit a call, so no late message can need these.
-        await _discard_unpublished_upload(batch_storage_key, task_id)
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Upload publisher is busy; try again later.",
-            headers={"Retry-After": "1"},
-        ) from exc
-    except Exception as exc:  # noqa: BLE001 — publication may already have succeeded
-        # Keep both the payload and pending seed. A timeout cannot cancel the
-        # publisher thread, and even an immediate error can follow acceptance.
-        # Only the worker may advance this task's monotonic business status.
-        logger.warning(
-            "batch_ingest_dispatch_unconfirmed", run_id=run_id, task_id=task_id,
-            error_type=type(exc).__name__,
-        )
-        raise _unconfirmed_dispatch(task_id, run_id) from exc
+    run_id, task_id = str(row.run_id), str(row.task_id)
 
     logger.info(
         "batch_ingest_accepted",
@@ -271,16 +326,17 @@ async def ingest_batch(
     # answer, and it must be answerable BEFORE the worker finishes. Recorded as
     # an attempt (own session, survives a caller rollback) precisely because a
     # report that arrived and then failed to ingest is the case worth seeing.
-    await record_activity(
-        None,
-        project_id=target_project_id,
-        event_type="run.received",
-        actor=ActorRef.from_user(current_user),
-        entity_id=run_id,
-        entity_label=f"Build {payload.build_number}",
-        context={"result_count": len(payload.results), "source": "json_batch"},
-        group_key=f"run:{run_id}:received",
-    )
+    if row.state not in ("succeeded", "failed"):
+        await record_activity(
+            None,
+            project_id=target_project_id,
+            event_type="run.received",
+            actor=ActorRef.from_user(current_user),
+            entity_id=run_id,
+            entity_label=f"Build {payload.build_number}",
+            context={"result_count": len(payload.results), "source": "json_batch"},
+            group_key=f"upload:{task_id}",
+        )
 
     return IngestResponse(
         run_id=run_id,
@@ -488,6 +544,10 @@ async def ingest_file(
     # context as JSON text. Validated and redacted by ``schemas.RunContext`` below,
     # BEFORE any storage write or Celery kwarg; a malformed one is a 422.
     run_context: str = Form(None, max_length=16384),
+    idempotency_key: str | None = Header(
+        None, alias="Idempotency-Key", max_length=128, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+        description="Reuse for identical logical upload retries within receipt retention.",
+    ),
     db: AsyncSession = Depends(get_db),
     auth: tuple[User, None] = Depends(get_api_key_context),
 ):
@@ -577,8 +637,6 @@ async def ingest_file(
     await enforce_redis_memory_backpressure()
     await enforce_ingest_rate_limit(str(target_project_id))
 
-    from app.worker.tasks import ingest_uploaded_file
-
     # Stream-read the upload with a hard cap so an attacker cannot OOM the
     # server by POSTing a multi-gigabyte file.
     content = await _read_upload_bounded(file, MAX_FILE_SIZE)
@@ -635,32 +693,8 @@ async def ingest_file(
 
     # Keep large uploads out of the Celery broker.  The worker receives only
     # this server-generated key and fetches the bytes from object storage.
-    from app.db.storage import get_storage_provider
     queued_storage_key = (
         f"uploads/{target_project_id}/{run_id}/queued/{uuid.uuid4().hex}"
-    )
-    try:
-        await get_storage_provider().put_object(
-            queued_storage_key,
-            content,
-            content_type="application/zip" if is_archive else "application/octet-stream",
-        )
-    except Exception as exc:  # noqa: BLE001
-        logger.error("file_ingest_storage_failed", run_id=run_id, error=str(exc))
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Upload storage is temporarily unavailable",
-        ) from exc
-
-
-    # Allocate the Celery task ID and seed its status before publishing. A fast
-    # worker can otherwise finish before this request writes "pending", which
-    # would hide the terminal result from every subsequent poll.
-    task_id = str(uuid.uuid4())
-    from app.services import upload_status
-    await upload_status.set_status(
-        task_id, run_id=run_id, project_id=str(target_project_id),
-        state=upload_status.STATE_PENDING,
     )
 
     task_kwargs = dict(
@@ -675,7 +709,6 @@ async def ingest_file(
         branch=branch,
         commit_hash=commit_hash,
         release_name=release_name,
-        user_id=str(current_user.id),
         disabled_formats=disabled_formats,
         run_ai=run_ai,
         ci_provider=ci_provider,
@@ -698,25 +731,19 @@ async def ingest_file(
         # Sent only when true, so a task queued here still binds a worker that
         # predates the field (the run_context rule above).
         task_kwargs["commit_range_truncated"] = True
-    from app.worker.upload_dispatch import UploadPublisherBusy, publish_upload
-
-    try:
-        await publish_upload(ingest_uploaded_file, kwargs=task_kwargs, task_id=task_id)
-    except UploadPublisherBusy as exc:
-        await _discard_unpublished_upload(queued_storage_key, task_id)
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Upload publisher is busy; try again later.",
-            headers={"Retry-After": "1"},
-        ) from exc
-    except Exception as exc:  # noqa: BLE001 — publication may already have succeeded
-        # Retain the original object and polling identity even if the worker
-        # has not started yet. A late accepted publish still needs both.
-        logger.warning(
-            "file_ingest_dispatch_unconfirmed", run_id=run_id, task_id=task_id,
-            error_type=type(exc).__name__,
-        )
-        raise _unconfirmed_dispatch(task_id, run_id) from exc
+    await db.commit()
+    identity_metadata = {key: value for key, value in task_kwargs.items()
+                         if key not in {"run_id", "file_storage_key", "user_id", "disabled_formats"}}
+    # Feature policy can change between attempts. Bind the client format
+    # request, while the first receipt keeps its accepted parser policy.
+    identity_metadata["file_format"] = format
+    row = await _stage_upload(
+        content=content, metadata=identity_metadata, kind="file", project_id=str(target_project_id),
+        actor_id=str(current_user.id), run_id=run_id, storage_key=queued_storage_key,
+        task_kwargs=task_kwargs, idempotency_key=idempotency_key if isinstance(idempotency_key, str) else None,
+        content_type="application/zip" if is_archive else "application/octet-stream",
+    )
+    run_id, task_id = str(row.run_id), str(row.task_id)
 
     logger.info(
         "file_ingest_accepted",
@@ -729,16 +756,17 @@ async def ingest_file(
     )
 
     # Epic ACT — see the note on the JSON path above.
-    await record_activity(
-        None,
-        project_id=target_project_id,
-        event_type="run.received",
-        actor=ActorRef.from_user(current_user),
-        entity_id=run_id,
-        entity_label=f"Build {build_number}",
-        context={"source_format": detected_format, "file_name": file.filename},
-        group_key=f"run:{run_id}:received",
-    )
+    if row.state not in ("succeeded", "failed"):
+        await record_activity(
+            None,
+            project_id=target_project_id,
+            event_type="run.received",
+            actor=ActorRef.from_user(current_user),
+            entity_id=run_id,
+            entity_label=f"Build {build_number}",
+            context={"source_format": detected_format, "file_name": file.filename},
+            group_key=f"upload:{task_id}",
+        )
 
     return IngestResponse(
         run_id=run_id,
@@ -765,7 +793,10 @@ async def get_upload_status(
     """
     from app.services import upload_status
 
-    record = await upload_status.get_status(task_id)
+    from app.services.upload_receipts import get_receipt, status_record
+
+    receipt = await get_receipt(db, task_id)
+    record = status_record(receipt) if receipt is not None else await upload_status.get_status(task_id)
     if not record:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -793,7 +824,98 @@ async def get_upload_status(
         progress=record.get("progress"),
         result=record.get("result"),
         error=record.get("error"),
+        payload_state=(
+            "deleted" if receipt.payload_deleted_at else "ready" if receipt.payload_ready_at else "reserved"
+        ) if receipt is not None else None,
+        accepted_at=receipt.created_at if receipt is not None else None,
+        payload_ready_at=receipt.payload_ready_at if receipt is not None else None,
+        completed_at=receipt.completed_at if receipt is not None else None,
     )
+
+
+async def _authorized_receipt(task_id: str, db: AsyncSession, auth):
+    from app.services.upload_receipts import get_receipt
+
+    current_user, bound_project_id = auth
+    ensure_ingest_role(current_user)
+    row = await get_receipt(db, task_id)
+    if row is None:
+        raise HTTPException(404, detail="Durable upload receipt not found or expired")
+    if bound_project_id is not None and bound_project_id != row.project_id:
+        raise HTTPException(403, detail="This API key is restricted to a different project")
+    await resolve_project_scope(db, current_user, str(row.project_id))
+    return row
+
+
+@router.post(
+    "/uploads/{task_id}/retry", response_model=IngestResponse, status_code=202,
+    responses=_DISPATCH_RESPONSES, summary="Resume a retained upload using its original identity",
+)
+async def retry_upload(task_id: str, db: AsyncSession = Depends(get_db),
+                       auth: tuple[User, None] = Depends(get_api_key_context)):
+    from app.services import upload_receipts as receipts
+    from app.services.ingestion_backpressure import enforce_redis_memory_backpressure
+    from app.services.ingestion_rate_limit import enforce_ingest_rate_limit
+    from app.worker import upload_receipts as boundary
+
+    row = await _authorized_receipt(task_id, db, auth)
+    await db.commit()
+    if row.state not in receipts.TERMINAL_STATES:
+        await enforce_redis_memory_backpressure()
+        await enforce_ingest_rate_limit(str(row.project_id))
+        if not _PREPARATION_SLOTS.acquire(blocking=False):
+            raise _unconfirmed_dispatch(str(row.task_id), str(row.run_id))
+        try:
+            connection = await boundary.acquire_upload_lock(str(row.task_id))
+        except BaseException as exc:
+            _PREPARATION_SLOTS.release()
+            if not isinstance(exc, Exception):
+                raise
+            raise _unconfirmed_dispatch(str(row.task_id), str(row.run_id)) from exc
+        if connection is None:
+            _PREPARATION_SLOTS.release()
+            raise _unconfirmed_dispatch(str(row.task_id), str(row.run_id))
+        else:
+            try:
+                latest = await boundary.read_upload(str(row.task_id))
+                if latest is None:
+                    raise RuntimeError("Upload receipt is unavailable")
+                row = latest
+                await boundary.ensure_payload_ready(row)
+            except Exception as exc:  # noqa: BLE001 — original payload and identity remain recoverable
+                raise _unconfirmed_dispatch(str(row.task_id), str(row.run_id)) from exc
+            finally:
+                try:
+                    await boundary.release_upload_lock(connection, str(row.task_id))
+                finally:
+                    _PREPARATION_SLOTS.release()
+            await _publish_receipt(row)
+            if row.state not in receipts.TERMINAL_STATES:
+                await record_activity(
+                    None, project_id=row.project_id, event_type="run.upload_resumed",
+                    actor=ActorRef.from_user(auth[0]), entity_id=str(row.run_id),
+                    entity_label=str(row.run_id), context={"source": "upload_retry"},
+                    group_key=f"run:{row.run_id}:upload_retry:{row.task_id}",
+                )
+    return IngestResponse(run_id=str(row.run_id), task_id=str(row.task_id), total_results=0)
+
+
+# activity: none - removes ephemeral queued bytes after an immutable receipt outcome, matching worker/hourly cleanup; run data and retained archives stay intact.
+@router.post("/uploads/{task_id}/cleanup", summary="Remove a terminal upload's temporary queued payload")
+async def cleanup_upload(task_id: str, db: AsyncSession = Depends(get_db),
+                         auth: tuple[User, None] = Depends(get_api_key_context)):
+    from app.services.upload_receipts import TERMINAL_STATES
+    from app.worker.upload_receipts import cleanup_terminal_upload
+
+    row = await _authorized_receipt(task_id, db, auth)
+    await db.commit()
+    if row.state not in TERMINAL_STATES:
+        raise HTTPException(409, detail="The upload is unresolved; its queued payload must be retained")
+    try:
+        cleaned = await cleanup_terminal_upload(str(row.task_id))
+    except Exception as exc:  # noqa: BLE001 — cleanup failure leaves the receipt for another attempt
+        raise HTTPException(503, detail="Upload payload cleanup is temporarily unavailable") from exc
+    return {"task_id": str(row.task_id), "cleaned": cleaned}
 
 
 _PLAYWRIGHT_ROOT_RE = re.compile(r'\{\s*"config"\s*:\s*\{')

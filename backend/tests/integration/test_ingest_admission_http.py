@@ -25,7 +25,7 @@ pytest.importorskip("asyncpg")
 from app.core.config import settings  # noqa: E402
 from app.services import ingestion_backpressure  # noqa: E402
 
-pytestmark = pytest.mark.asyncio
+pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("upload_receipt_store")]
 
 JUNIT = b"<testsuite name='s' tests='1'><testcase name='t'/></testsuite>"
 

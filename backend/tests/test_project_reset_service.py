@@ -57,7 +57,7 @@ def _project(name: str = "GoogleSearch", *, active: bool = True):
     )
 
 
-def _fake_db(*, project, run_count=0, full_table_counts=None):
+def _fake_db(*, project, run_count=0, full_table_counts=None, unresolved_upload=None):
     """Mock async session: returns canned counts and swallows deletes.
 
     Sequence of ``execute`` calls inside reset_project:
@@ -95,6 +95,7 @@ def _fake_db(*, project, run_count=0, full_table_counts=None):
 
     db = SimpleNamespace(
         execute=AsyncMock(side_effect=results),
+        scalar=AsyncMock(return_value=unresolved_upload),
         add=MagicMock(),
         commit=AsyncMock(),
         flush=AsyncMock(),
@@ -126,6 +127,23 @@ async def test_reset_project_runs_mode_deletes_runs_only():
     db.commit.assert_awaited_once()
     # An audit log row is added on success.
     assert db.add.called
+
+
+@pytest.mark.asyncio
+async def test_unresolved_upload_prevents_reset_before_data_changes():
+    from app.services.project_reset_service import ResetBlockedByUpload, reset_project
+
+    project = _project()
+    db = _fake_db(project=project, run_count=2, unresolved_upload=uuid.uuid4())
+    with pytest.raises(ResetBlockedByUpload, match="Resolve pending uploads"):
+        await reset_project(
+            db, project_id=project.id, mode="runs", confirmation_name=project.name,
+        )
+    db.scalar.assert_awaited_once()
+    assert "upload_dispatch_receipts" in str(db.scalar.await_args.args[0])
+    assert db.execute.await_count == 2
+    db.commit.assert_not_awaited()
+    db.add.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -312,6 +330,7 @@ def _mongo_phase_db(*, project, run_ids, journal):
 
     return SimpleNamespace(
         execute=execute,
+        scalar=AsyncMock(return_value=None),
         get_bind=lambda: SimpleNamespace(dialect=SimpleNamespace(name="sqlite")),
         stream_scalars=stream_scalars,
         add=MagicMock(),

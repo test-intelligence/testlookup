@@ -121,7 +121,7 @@ class _Storage:
 
 
 @pytest.fixture
-def harness(monkeypatch):
+def harness(monkeypatch, upload_receipt_store):
     """The real app, with auth / DB / storage / broker / Redis seams replaced."""
     project_id = uuid.uuid4()
     user = SimpleNamespace(

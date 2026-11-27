@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-import json
 import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -16,14 +15,16 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from celery import Celery
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
+from kombu.exceptions import OperationalError
 
+from app.bootstrap import configure_middlewares
+from app.core.config import settings
 from app.core.deps import get_api_key_context, get_db
-from app.routers import ingest
-from app.services import upload_status
+from app.routers import health, ingest
 from app.worker import tasks, upload_dispatch
-from tests.regression.test_upload_status import _fake_redis_with_store
 
 pytestmark = pytest.mark.asyncio
 
@@ -55,9 +56,10 @@ def publisher(monkeypatch):
 
 
 @pytest.fixture
-def world(monkeypatch, publisher):
+def world(monkeypatch, publisher, upload_receipt_store):
     app = FastAPI()
     app.include_router(ingest.router)
+    app.include_router(health.router)
     project_id = uuid.uuid4()
     user = SimpleNamespace(
         id=uuid.uuid4(), username="upload-review", full_name="Upload review",
@@ -72,9 +74,7 @@ def world(monkeypatch, publisher):
 
     app.dependency_overrides[get_db] = db
     app.dependency_overrides[get_api_key_context] = auth
-    redis, records = _fake_redis_with_store()
     storage = _Storage()
-    monkeypatch.setattr("app.db.redis_client.get_redis", lambda: redis)
     monkeypatch.setattr("app.db.storage.get_storage_provider", lambda: storage)
     monkeypatch.setattr(ingest, "resolve_project_scope", AsyncMock())
     monkeypatch.setattr(ingest, "record_activity", AsyncMock())
@@ -87,7 +87,8 @@ def world(monkeypatch, publisher):
         "app.services.ingestion_rate_limit.enforce_ingest_rate_limit", AsyncMock()
     )
     return SimpleNamespace(
-        app=app, project_id=project_id, records=records, storage=storage
+        app=app, project_id=project_id, storage=storage,
+        receipts=upload_receipt_store,
     )
 
 
@@ -138,7 +139,12 @@ async def test_confirmed_publish_keeps_202_and_the_original_task_contract(world,
     message, = published
     assert response.json()["task_id"] == message["task_id"]
     assert response.json()["run_id"] == message["kwargs"]["run_id"]
+    connection = message["options"].pop("connection")
     assert message["options"] == {"ignore_result": True, "retry": False}
+    assert connection.transport_options["socket_connect_timeout"] == 2
+    assert connection.transport_options["socket_timeout"] == 2
+    assert connection.transport_options["retry_on_timeout"] is False
+    assert connection.transport_options["max_retries"] == 0
     assert _storage_key(message) in world.storage.objects
     assert (await _poll(world, message["task_id"])).json()["state"] == "pending"
 
@@ -171,11 +177,10 @@ async def test_accepted_then_error_retains_payload_and_pending_poll_identity(wor
 async def test_worker_terminal_result_survives_an_unconfirmed_publish(world, monkeypatch, kind):
     def publish(*, kwargs, task_id, **_options):
         # Model a worker that completed before the broker client's error.
-        world.records[f"upload:status:{task_id}"] = json.dumps({
-            "task_id": task_id, "run_id": kwargs["run_id"],
-            "project_id": str(world.project_id), "state": "succeeded",
-            "result": {"total": 1},
-        })
+        row = world.receipts[task_id]
+        assert str(row.run_id) == kwargs["run_id"]
+        row.state = "succeeded"
+        row.status_payload = {"result": {"total": 1}}
         raise ConnectionError("fake acknowledgement lost")
 
     monkeypatch.setattr(_task(kind), "apply_async", publish)
@@ -187,33 +192,38 @@ async def test_worker_terminal_result_survives_an_unconfirmed_publish(world, mon
 
 
 @pytest.mark.parametrize("kind", ["batch", "file"])
-async def test_timeout_keeps_event_loop_responsive_and_late_publication_identity(world, monkeypatch, kind):
-    monkeypatch.setattr(upload_dispatch, "UPLOAD_PUBLISH_TIMEOUT_SECONDS", 0.05)
+async def test_timeout_keeps_health_responsive_and_late_publication_identity(world, monkeypatch, kind):
+    monkeypatch.setattr(upload_dispatch, "UPLOAD_PUBLISH_TIMEOUT_SECONDS", 1.25)
+    started = threading.Event()
     release = threading.Event()
     finished = threading.Event()
     accepted = []
-    ticks = []
-    stop = asyncio.Event()
 
     def publish(**message):
+        started.set()
         try:
-            assert release.wait(2), "test did not release the fake broker"
+            assert release.wait(4), "test did not release the fake broker"
             accepted.append(message)
         finally:
             finished.set()
 
-    async def heartbeat():
-        while not stop.is_set():
-            ticks.append(1)
-            await asyncio.sleep(0.002)
-
     monkeypatch.setattr(_task(kind), "apply_async", publish)
-    ticker = asyncio.create_task(heartbeat())
+    upload = asyncio.create_task(_post(world, kind))
     try:
-        response = await asyncio.wait_for(_post(world, kind), timeout=1)
+        assert await asyncio.to_thread(started.wait, 1)
+        async with AsyncClient(
+            transport=ASGITransport(app=world.app), base_url="http://testserver"
+        ) as client:
+            # Leave headroom inside the shipped five-second liveness timeout.
+            live = await asyncio.wait_for(client.get("/health/live"), timeout=1)
+            assert live.status_code == 200
+            assert live.json()["status"] == "alive"
+            assert not upload.done(), "the health request waited for the upload"
+            assert not finished.is_set(), "the health request waited for the broker"
+
+        response = await asyncio.wait_for(asyncio.shield(upload), timeout=2)
         assert response.status_code == 503
         assert not finished.is_set(), "HTTP must return while publication is still blocked"
-        assert len(ticks) >= 2, "the synchronous publisher blocked the event loop"
         task_id = response.headers["X-Upload-Task-ID"]
         run_id = response.headers["X-Upload-Run-ID"]
         assert (await _poll(world, task_id)).json()["state"] == "pending"
@@ -224,16 +234,13 @@ async def test_timeout_keeps_event_loop_responsive_and_late_publication_identity
         assert message["task_id"] == task_id
         assert message["kwargs"]["run_id"] == run_id
         assert _storage_key(message) in world.storage.objects
-        # A later worker still advances the SAME monotonic polling record.
-        await upload_status.set_status(
-            task_id, run_id=run_id, project_id=str(world.project_id),
-            state="succeeded", result={"total": 1},
-        )
+        world.receipts[task_id].state = "succeeded"
         assert (await _poll(world, task_id)).json()["state"] == "succeeded"
     finally:
         release.set()
-        stop.set()
-        await ticker
+        if not upload.done():
+            upload.cancel()
+        await asyncio.gather(upload, return_exceptions=True)
         await asyncio.to_thread(finished.wait, 1)
 
 
@@ -260,6 +267,61 @@ async def test_timeout_does_not_release_capacity_until_the_real_publish_finishes
     finally:
         release.set()
         assert await asyncio.to_thread(finished.wait, 1)
+
+
+async def test_retry_free_broker_socket_deadline_releases_a_stalled_publisher(publisher, monkeypatch):
+    requests = []
+    disconnected = asyncio.Event()
+
+    async def withhold_reply(reader, writer):
+        try:
+            requests.append(await reader.read(4096))
+            await reader.read()
+        finally:
+            writer.close()
+            await writer.wait_closed()
+            disconnected.set()
+
+    monkeypatch.setattr(upload_dispatch, "_BROKER_SOCKET_TIMEOUT_SECONDS", 0.15)
+    monkeypatch.setattr(upload_dispatch, "UPLOAD_PUBLISH_TIMEOUT_SECONDS", 1)
+    async with await asyncio.start_server(withhold_reply, "127.0.0.1", 0) as server:
+        port = server.sockets[0].getsockname()[1]
+        with Celery(broker=f"redis://127.0.0.1:{port}/0", set_as_current=False) as app:
+            @app.task(name="test.upload_publish_probe", shared=False)
+            def probe():
+                return None
+
+            monkeypatch.setattr(upload_dispatch, "celery_app", app)
+            with pytest.raises(OperationalError):
+                await upload_dispatch.publish_upload(probe, kwargs={}, task_id="socket-probe")
+            await asyncio.wait_for(disconnected.wait(), timeout=1)
+            assert len(requests) == 1 and requests[0]
+            assert upload_dispatch._PUBLISH_SLOTS.acquire(blocking=False)
+            upload_dispatch._PUBLISH_SLOTS.release()
+
+
+async def test_allowed_origin_can_send_upload_key_and_read_receipt(monkeypatch):
+    origin = "https://fixture.example"
+    monkeypatch.setattr(settings, "CORS_ORIGINS_RAW", origin)
+    app = FastAPI()
+    configure_middlewares(app)
+    app.include_router(ingest.router)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+        preflight = await client.options(
+            "/api/v1/ingest/file",
+            headers={
+                "Origin": origin,
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "authorization,idempotency-key",
+            },
+        )
+        assert preflight.status_code == 200
+        assert preflight.headers["Access-Control-Allow-Origin"] == origin
+        assert "idempotency-key" in preflight.headers["Access-Control-Allow-Headers"].lower()
+        response = await client.post("/api/v1/ingest/file", headers={"Origin": origin})
+        exposed = {value.strip().lower() for value in response.headers["Access-Control-Expose-Headers"].split(",")}
+        assert {"location", "x-upload-task-id", "x-upload-run-id"} <= exposed
 
 
 async def test_request_cancellation_keeps_the_slot_until_publication_ends(publisher):
@@ -291,8 +353,9 @@ async def test_request_cancellation_keeps_the_slot_until_publication_ends(publis
 
 
 @pytest.mark.parametrize("kind", ["batch", "file"])
-async def test_known_capacity_refusal_discards_only_its_unsubmitted_upload(world, monkeypatch, kind):
-    # Unlike a publish error, a full admission semaphore proves no call started.
+async def test_publisher_capacity_refusal_keeps_the_durably_staged_upload(world, monkeypatch, kind):
+    # A full publisher semaphore proves no call started. The accepted receipt
+    # and bytes remain available for recovery without a second logical upload.
     assert upload_dispatch._PUBLISH_SLOTS.acquire(blocking=False)
     publish = AsyncMock()
     monkeypatch.setattr(_task(kind), "apply_async", publish)
@@ -301,10 +364,11 @@ async def test_known_capacity_refusal_discards_only_its_unsubmitted_upload(world
     finally:
         upload_dispatch._PUBLISH_SLOTS.release()
     assert response.status_code == 503
-    assert response.headers["Retry-After"] == "1"
-    assert "busy" in response.json()["detail"]
-    assert world.storage.objects == {}
-    assert world.records == {}
+    task_id = response.headers["X-Upload-Task-ID"]
+    row = world.receipts[task_id]
+    assert row.storage_key in world.storage.objects
+    assert row.payload_ready_at is not None
+    assert (await _poll(world, task_id)).json()["state"] == "pending"
     publish.assert_not_called()
 
 
@@ -318,5 +382,5 @@ async def test_authorization_refusal_still_precedes_storage_and_publication(worl
     response = await _post(world, kind)
     assert response.status_code == 403
     assert world.storage.objects == {}
-    assert world.records == {}
+    assert world.receipts == {}
     dispatch.assert_not_awaited()

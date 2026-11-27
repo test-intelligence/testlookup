@@ -233,6 +233,7 @@ def _spec(
 _SPECS: tuple[ActivityEventSpec, ...] = (
     # ── runs ────────────────────────────────────────────────────────────────
     _spec("run.received", "runs", "run", "Report received for {entity_label}", "attempt"),
+    _spec("run.upload_resumed", "runs", "run", "Upload delivery resumed for {entity_label}", "attempt"),
     _spec("run.completed", "runs", "run", "{entity_label} completed — {failed} failed of {total}"),
     _spec("run.ingest_failed", "runs", "run", "Ingestion failed for {entity_label}: {error}", "attempt"),
     _spec("run.deleted", "runs", "run", "{entity_label} was deleted", "attempt"),

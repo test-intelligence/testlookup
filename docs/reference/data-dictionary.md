@@ -163,6 +163,7 @@ Current SQLAlchemy metadata, without a database connection. All columns, server/
 | [test_suite_owners](#test_suite_owners) | TestSuiteOwner | 6 |
 | [test_suites](#test_suites) | TestSuite | 8 |
 | [timeline_notes](#timeline_notes) | TimelineNote | 9 |
+| [upload_dispatch_receipts](#upload_dispatch_receipts) | UploadDispatchReceipt | 17 |
 | [user_invitations](#user_invitations) | UserInvitation | 13 |
 | [user_ui_dismissals](#user_ui_dismissals) | UserUIDismissal | 4 |
 | [users](#users) | User | 20 |
@@ -6229,6 +6230,44 @@ Constraints and indexes:
 - `ForeignKeyConstraint` `unnamed`: `project_id`
 - `PrimaryKeyConstraint` `unnamed`: `id`
 - Index `ix_timeline_notes_project_starts` (unique=False): `timeline_notes.project_id, timeline_notes.starts_on`; options `{}`
+
+## upload_dispatch_receipts
+
+[backend/app/models/postgres.py:8753](../../backend/app/models/postgres.py#L8753)
+
+Durable upload identity created before its object or broker publication.
+
+| Column | SQL type | Nullable | PK | Default | Foreign key / on delete |
+|---|---|---|---|---|---|
+| `task_id` | `UUID` | False | True | `—` |  |
+| `run_id` | `UUID` | False | False | `—` |  |
+| `project_id` | `UUID` | False | False | `—` |  |
+| `actor_digest` | `VARCHAR(64)` | False | False | `—` |  |
+| `kind` | `VARCHAR(8)` | False | False | `—` |  |
+| `idempotency_digest` | `VARCHAR(64)` | True | False | `—` |  |
+| `request_digest` | `VARCHAR(64)` | False | False | `—` |  |
+| `payload_sha256` | `VARCHAR(64)` | False | False | `—` |  |
+| `storage_key` | `VARCHAR(1000)` | False | False | `—` |  |
+| `task_kwargs` | `JSONB` | False | False | `—` |  |
+| `state` | `VARCHAR(12)` | False | False | `server=pending` |  |
+| `status_payload` | `JSONB` | False | False | `server='{}'::jsonb` |  |
+| `payload_ready_at` | `DATETIME` | True | False | `—` |  |
+| `completed_at` | `DATETIME` | True | False | `—` |  |
+| `payload_deleted_at` | `DATETIME` | True | False | `—` |  |
+| `created_at` | `DATETIME` | False | False | `server=now()` |  |
+| `updated_at` | `DATETIME` | False | False | `server=now()` |  |
+
+Constraints and indexes:
+
+- `CheckConstraint` `ck_upload_receipt_cleanup_terminal`: `payload_deleted_at IS NULL OR completed_at IS NOT NULL`
+- `CheckConstraint` `ck_upload_receipt_kind`: `kind IN ('batch','file')`
+- `CheckConstraint` `ck_upload_receipt_state`: `state IN ('pending','parsing','ingesting','succeeded','failed')`
+- `CheckConstraint` `ck_upload_receipt_terminal`: `(state IN ('succeeded','failed')) = (completed_at IS NOT NULL)`
+- `PrimaryKeyConstraint` `unnamed`: `task_id`
+- `UniqueConstraint` `uq_upload_receipt_idempotency`: `project_id, actor_digest, kind, idempotency_digest`
+- Index `ix_upload_receipt_cleanup` (unique=False): `payload_deleted_at ASC NULLS FIRST, upload_dispatch_receipts.completed_at`; options `{"postgresql_where": "completed_at IS NOT NULL"}`
+- Index `ix_upload_receipt_outstanding` (unique=False): `upload_dispatch_receipts.project_id`; options `{"postgresql_where": "payload_deleted_at IS NULL"}`
+- Index `ix_upload_receipt_project_created` (unique=False): `upload_dispatch_receipts.project_id, upload_dispatch_receipts.created_at`; options `{}`
 
 ## user_invitations
 

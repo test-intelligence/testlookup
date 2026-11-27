@@ -78,12 +78,12 @@ These are current retained cohorts. Authorized retention and run cascades remove
 | Journey | Available evidence and gap | Required completion contract / owner |
 |---|---|---|
 | `api_durable` | Process response counters lack durable accepted requests and never-returning outcomes. | Durable/independent attempted-request accounting, declared request timeout, and customer-facing response deadline; backend/SRE. |
-| `upload_acceptance` | JSON/file 202 precedes durable normalized TestRun. Advisory Redis status expires after 24 h and has no acceptance/completion timestamps; task SUCCESS cannot repair that denominator. | One durable accepted upload identity/receipt and terminal persisted usable result, with measured size/workflow deadlines; backend. |
+| `upload_acceptance` | New JSON and file uploads retain a SQL receipt with separate reservation, payload-ready and terminal timestamps. Older uploads rely on expiring Redis status. | Validate the receipt retention window at site load, measure size-specific deadlines and add a cohort collector over `payload_ready_at` and the terminal outcome. |
 | `live_event_acceptance` | Redis stream acceptance/checkpoints and replay protocols exist. SQL attempt/event receipts begin at projection, so counting them alone is success-biased. | Complete accepted event/batch denominator plus durable projection and visibility time, replay deduplication and explicit freshness/recovery bounds; backend. |
 | `scheduled_history` | Nightly slot observations and digest delivery state detect current due/never-delivered work, but retain latest observations rather than every expected slot. | Immutable enabled expected-slot history, deduplicated generation versus confirmed delivery, existing nightly 1 h / weekly-dispatch 25 h grace respected, and owner-adopted schedule objectives; backend/SRE. |
 | `backup_verified_restore` | CronJob success is process completion, not proof of a restorable archive or a successful restore. | Durable expected backup/archive verification receipts, declared RPO/RTO and periodic successful isolated restore of all required stores/artifacts; SRE. |
 
-This stage adds indexes and derives existing records. Complete accepted-upload/live-event, schedule-history and verified-restore objectives remain open until their durable boundaries and safe lifecycle changes have been implemented and tested.
+The collector derives the SQL cohorts listed above. Upload receipts provide a source for future completion measurements. Raw live-event acceptance, complete schedule history and verified restore still require their own durable evidence.
 
 ## Known-workload verification
 

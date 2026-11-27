@@ -9,6 +9,7 @@ contain breaking changes; [UPGRADING.md](UPGRADING.md) lists them).
 
 ### Added
 
+- JSON and report uploads persist a PostgreSQL receipt before writing the queued payload or publishing a task. Clients can recover the same upload through `Idempotency-Key`, status polling, or an authorized retry of the retained receipt.
 - Delivery verification checks mounted rule inventories, targeted source security, rendered infrastructure and all Kubernetes application image identities. An optional disposable release gate verifies both worker roles, durable completion and correlated telemetry.
 - Optional API objectives report scoped availability, latency, error budgets and measurement coverage. Retained SQL cohorts expose downstream and AI completion, including missed deadlines, and a disposable benchmark measures telemetry capacity.
 - Pipeline events use a PostgreSQL outbox with stable IDs for MongoDB replay, shared delivery health, and project-scoped recovery. Audit archives support independent integrity verification, and an opt-in identity retention policy preserves SCIM authority events.
@@ -24,7 +25,8 @@ contain breaking changes; [UPGRADING.md](UPGRADING.md) lists them).
 - Operational metrics bound workflow stage, task and queue labels and remove per-project dimensions from case governance events. Detailed case and workflow state remains in the application. The durable Compose profile accepts an explicit API trace sampling ratio.
 - Weekly digest and nightly maintenance alerts follow durable delivery and execution state. They detect overdue work even when a worker never started the task or was replaced.
 - Celery queue depth reads all configured broker priority lists, including child work, and reports unknown counts when a list cannot be read.
-- Upload publication uses bounded background threads; uncertain queue confirmation retains the payload and returns polling identifiers so callers can check before resubmitting.
+- Upload publication bounds Redis socket operations and uses a finite background pool. The CLI and browser preserve the receipt after ambiguous queue confirmation and poll the original upload.
+- Worker probes verify the running Celery parent's process identity. Startup clears readiness and stale multiprocess metrics before task imports, and graceful shutdown clears readiness as draining begins.
 - Trace exporters sanitize exception events and custom text as well as URL attributes. Browser error batches use UTF-8 byte limits; unexpected core API errors return a correlated request identifier. Worker task context and startup readiness markers are reset between executions.
 - Image publication and release authorization require trusted successful secret-scan evidence for the exact main commit. Main pushes scan the full tracked candidate tree as well as added history, so an unchanged secret from an earlier failed push still blocks publication. Webhook failure alerts detect failures at low traffic volumes.
 

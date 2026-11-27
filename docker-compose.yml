@@ -401,7 +401,13 @@ services:
       target: development
     container_name: testlookup_worker
     restart: unless-stopped
-    command: celery -A app.worker.celery_app worker --loglevel=info --concurrency=${CELERY_CONCURRENCY:-4} -Q default,critical,ingestion,ai_analysis --max-tasks-per-child=200
+    command: python -m app.worker.worker_process celery -A app.worker.celery_app worker --loglevel=info --concurrency=${CELERY_CONCURRENCY:-4} -Q default,critical,ingestion,ai_analysis --max-tasks-per-child=200
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.worker.worker_process", "probe", "--mode=ready"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
     volumes:
       - ./backend:/app
     tmpfs:
@@ -451,7 +457,13 @@ services:
       target: development
     container_name: testlookup_worker_children
     restart: unless-stopped
-    command: celery -A app.worker.celery_app worker --loglevel=info --concurrency=1 --prefetch-multiplier=1 -Q agent_children --max-tasks-per-child=25
+    command: python -m app.worker.worker_process celery -A app.worker.celery_app worker --loglevel=info --concurrency=1 --prefetch-multiplier=1 -Q agent_children --max-tasks-per-child=25
+    healthcheck:
+      test: ["CMD", "python", "-m", "app.worker.worker_process", "probe", "--mode=ready"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
     volumes:
       - ./backend:/app
     tmpfs:

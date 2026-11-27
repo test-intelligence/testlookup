@@ -216,6 +216,8 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/api/v1/ingest` | Ingest test results (JSON batch) | [Ingest](api/ingest.md) |
 | POST | `/api/v1/ingest/file` | Upload test result file (JUnit/TestNG XML, Allure/Cypress/Playwright JSON) | [Ingest](api/ingest.md) |
 | GET | `/api/v1/ingest/uploads/{task_id}` | Poll the status of an uploaded report's async processing | [Ingest](api/ingest.md) |
+| POST | `/api/v1/ingest/uploads/{task_id}/cleanup` | Remove a terminal upload's temporary queued payload | [Ingest](api/ingest.md) |
+| POST | `/api/v1/ingest/uploads/{task_id}/retry` | Resume a retained upload using its original identity | [Ingest](api/ingest.md) |
 | GET | `/api/v1/integration-health/history/{provider}` | Get Provider History | [Integration Health](api/integration-health.md) |
 | POST | `/api/v1/integration-health/probe` | Trigger Probe | [Integration Health](api/integration-health.md) |
 | GET | `/api/v1/integration-health/status` | Get All Status | [Integration Health](api/integration-health.md) |
@@ -761,4 +763,4 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/webhooks/minio` | Minio Webhook | [Webhooks](api/webhooks.md) |
 | POST | `/ws/events/{run_id}` | Ingest Live Event | [Live Reporting](api/live-reporting.md) |
 
-Total: **752 HTTP operations**, **637 paths**, **92 domain pages**.
+Total: **754 HTTP operations**, **639 paths**, **92 domain pages**.

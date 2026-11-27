@@ -51824,6 +51824,30 @@
       "UploadStatusResponse": {
         "description": "Async status of an uploaded report (GET /api/v1/ingest/uploads/{task_id}).\n\nstate: pending | parsing | ingesting | succeeded | failed.",
         "properties": {
+          "accepted_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accepted At"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
           "error": {
             "anyOf": [
               {
@@ -51835,6 +51859,34 @@
               }
             ],
             "title": "Error"
+          },
+          "payload_ready_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payload Ready At"
+          },
+          "payload_state": {
+            "anyOf": [
+              {
+                "enum": [
+                  "reserved",
+                  "ready",
+                  "deleted"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payload State"
           },
           "progress": {
             "anyOf": [
@@ -69673,6 +69725,26 @@
         "operationId": "ingest_batch_api_v1_ingest_post",
         "parameters": [
           {
+            "description": "Reuse for identical logical upload retries within receipt retention.",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 128,
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Reuse for identical logical upload retries within receipt retention.",
+              "title": "Idempotency-Key"
+            }
+          },
+          {
             "in": "header",
             "name": "X-API-Key",
             "required": false,
@@ -69709,6 +69781,9 @@
               }
             },
             "description": "Successful Response"
+          },
+          "409": {
+            "description": "The upload identity conflicts with existing content or a deleted run."
           },
           "422": {
             "content": {
@@ -69761,6 +69836,26 @@
         "operationId": "ingest_file_api_v1_ingest_file_post",
         "parameters": [
           {
+            "description": "Reuse for identical logical upload retries within receipt retention.",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 128,
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Reuse for identical logical upload retries within receipt retention.",
+              "title": "Idempotency-Key"
+            }
+          },
+          {
             "in": "header",
             "name": "X-API-Key",
             "required": false,
@@ -69797,6 +69892,9 @@
               }
             },
             "description": "Successful Response"
+          },
+          "409": {
+            "description": "The upload identity conflicts with existing content or a deleted run."
           },
           "422": {
             "content": {
@@ -69902,6 +70000,156 @@
           }
         ],
         "summary": "Poll the status of an uploaded report's async processing",
+        "tags": [
+          "Ingest"
+        ]
+      }
+    },
+    "/api/v1/ingest/uploads/{task_id}/cleanup": {
+      "post": {
+        "operationId": "cleanup_upload_api_v1_ingest_uploads__task_id__cleanup_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Remove a terminal upload's temporary queued payload",
+        "tags": [
+          "Ingest"
+        ]
+      }
+    },
+    "/api/v1/ingest/uploads/{task_id}/retry": {
+      "post": {
+        "operationId": "retry_upload_api_v1_ingest_uploads__task_id__retry_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IngestResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "409": {
+            "description": "The upload identity conflicts with existing content or a deleted run."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "description": "Upload admission or queue confirmation unavailable. If Location and X-Upload-Task-ID are present, processing may still start: poll the existing upload before resubmitting.",
+            "headers": {
+              "Location": {
+                "description": "Existing upload status URL, when dispatch is unconfirmed",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Upload-Run-ID": {
+                "description": "Existing run identifier, when dispatch is unconfirmed",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Upload-Task-ID": {
+                "description": "Existing upload task identifier, when dispatch is unconfirmed",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Resume a retained upload using its original identity",
         "tags": [
           "Ingest"
         ]

@@ -19,7 +19,7 @@ pytest.importorskip("asyncpg")
 
 from app.models.postgres import UserRole  # noqa: E402
 
-pytestmark = pytest.mark.asyncio
+pytestmark = [pytest.mark.asyncio, pytest.mark.usefixtures("upload_receipt_store")]
 
 
 @pytest.fixture
@@ -205,27 +205,16 @@ async def test_ingest_file_happy_path(client, auth_as, mock_celery_dispatch):
     assert resp.json()["run_id"]
 
 
-async def test_ingest_file_seeds_pending_before_worker_can_finish(client, auth_as):
+async def test_ingest_file_has_ready_receipt_before_worker_can_finish(client, auth_as, upload_receipt_store):
     """An eager worker cannot have its terminal result overwritten by pending."""
     project_id = uuid.uuid4()
     auth_as(accessible_projects={project_id})
-    status_record: dict = {}
-    events: list[str] = []
-
-    async def _set_status(task_id, *, state, **fields):
-        events.append(state)
-        status_record.clear()
-        status_record.update(task_id=task_id, state=state, **fields)
-        return True
-
     def _finish_immediately(task_id: str):
-        events.append("publish")
-        status_record.clear()
-        status_record.update(
-            task_id=task_id,
-            state="succeeded",
-            result={"total": 1, "failed": 0},
-        )
+        row = upload_receipt_store[task_id]
+        assert row.payload_ready_at is not None
+        assert row.state == "pending"
+        row.state = "succeeded"
+        row.status_payload = {"result": {"total": 1, "failed": 0}}
         return type("T", (), {"id": task_id})()
 
     task = MagicMock()
@@ -234,10 +223,7 @@ async def test_ingest_file_seeds_pending_before_worker_can_finish(client, auth_a
         lambda *, kwargs, task_id, **_options: _finish_immediately(task_id)
     )
 
-    with (
-        patch("app.worker.tasks.ingest_uploaded_file", task),
-        patch("app.services.upload_status.set_status", side_effect=_set_status),
-    ):
+    with patch("app.worker.tasks.ingest_uploaded_file", task):
         resp = await client.post(
             "/api/v1/ingest/file",
             files={"file": ("results.xml", _MIN_JUNIT_XML, "application/xml")},
@@ -245,37 +231,19 @@ async def test_ingest_file_seeds_pending_before_worker_can_finish(client, auth_a
         )
 
     assert resp.status_code == 202, resp.text
-    assert events[:2] == ["pending", "publish"]
-    assert status_record["state"] == "succeeded"
-    assert status_record["result"] == {"total": 1, "failed": 0}
+    row = upload_receipt_store[resp.json()["task_id"]]
+    assert row.state == "succeeded"
+    assert row.status_payload["result"] == {"total": 1, "failed": 0}
     task.apply_async.assert_called_once()
     assert task.apply_async.call_args.kwargs["task_id"] == resp.json()["task_id"]
 
 
-async def test_ingest_file_unconfirmed_dispatch_preserves_pending_status(client, auth_as):
+async def test_ingest_file_unconfirmed_dispatch_preserves_pending_status(client, auth_as, upload_receipt_store):
     project_id = uuid.uuid4()
     auth_as(accessible_projects={project_id})
-    events: list[tuple[str, str]] = []
-
-    async def _set_status(task_id, *, state, **_fields):
-        events.append(("set", state))
-        return True
-
-    async def _clear_pending(task_id):
-        events.append(("clear", task_id))
-        return True
-
     task = MagicMock()
     task.apply_async.side_effect = RuntimeError("broker unavailable")
-    with (
-        patch("app.worker.tasks.ingest_uploaded_file", task),
-        patch("app.services.upload_status.set_status", side_effect=_set_status),
-        patch(
-            "app.services.upload_status.clear_pending_status",
-            side_effect=_clear_pending,
-            create=True,
-        ),
-    ):
+    with patch("app.worker.tasks.ingest_uploaded_file", task):
         resp = await client.post(
             "/api/v1/ingest/file",
             files={"file": ("results.xml", _MIN_JUNIT_XML, "application/xml")},
@@ -285,7 +253,8 @@ async def test_ingest_file_unconfirmed_dispatch_preserves_pending_status(client,
     assert resp.status_code == 503
     assert "processing may still start" in resp.json()["detail"]
     assert resp.headers["Location"] == f'/api/v1/ingest/uploads/{resp.headers["X-Upload-Task-ID"]}'
-    assert events == [("set", "pending")], "an unconfirmed publish must keep its polling identity"
+    row = upload_receipt_store[resp.headers["X-Upload-Task-ID"]]
+    assert row.state == "pending" and row.payload_ready_at is not None
 
 
 async def test_manual_upload_mints_fresh_run_when_build_label_exists(

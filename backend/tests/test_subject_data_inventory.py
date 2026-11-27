@@ -454,16 +454,17 @@ def test_7_pinned_counts():
     # Batch 5 D-53 (deliberate, 2026-11-23): + flaky_quarantine_requests.proposed_by_user_id, a reference,
     # exported like approved_by_user_id (179 -> 180, FKs 126 -> 127)
     # OBS-E05 adds one transient pipeline delivery store linked to project and run retention.
-    assert counts == (181, 127, 26, 8, 10, 8, 1, 1), (
+    # OBS-E08 adds scoped upload identity digests and transient recovery metadata.
+    assert counts == (183, 127, 28, 8, 10, 8, 1, 1), (
         f"(locations, postgres_fk, postgres_other, objects, mongo, redis, chroma, logs) = {counts}: a location was "
         "added or moved — classify it in subject_data_inventory.py and update this pin deliberately"
     )
     erase = collections.Counter(location.erase for location in locations)
     assert (erase["delete"], erase["pseudonymise"] + erase["reference"], erase["keep_audit"], erase["keep_record"],
-            erase["no_personal_data"], erase["out_of_scope"]) == (21, 108, 24, 9, 13, 6), erase
+            erase["no_personal_data"], erase["out_of_scope"]) == (21, 108, 24, 11, 13, 6), erase
     assert (erase["pseudonymise"], erase["reference"]) == (11, 97), erase
     exported = sum(1 for location in locations if location.export_as != "none")
-    assert (exported, len(locations) - exported) == (124, 57)
+    assert (exported, len(locations) - exported) == (124, 59)
 
 
 # ── (8) fail-open, and the module stays pure data ────────────────────────────

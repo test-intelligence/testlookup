@@ -64,6 +64,9 @@ spec:
           image: ghcr.io/test-intelligence/testlookup/backend:v0.1.0
           imagePullPolicy: IfNotPresent
           command:
+            - python
+            - -m
+            - app.worker.worker_process
             - celery
             - -A
             - app.worker.celery_app
@@ -119,7 +122,7 @@ spec:
               memory: 2Gi
           livenessProbe:
             exec:
-              command: [sh, -c, "pgrep -f 'celery.*worker' > /dev/null"]
+              command: [python, -m, app.worker.worker_process, probe, --mode=alive]
             initialDelaySeconds: 30
             periodSeconds: 60
             timeoutSeconds: 5
@@ -128,12 +131,14 @@ spec:
             # A file written by the worker_ready signal — see the note in
             # worker-deployments.yaml. `inspect ping` measures responsiveness,
             # not health, so a busy worker reads as NotReady and the rollout
-            # deadlocks. Liveness (pgrep, above) still catches a dead worker.
+            # deadlocks. The local parent-identity liveness probe still catches a dead worker.
             exec:
               command:
-                - test
-                - -f
-                - /tmp/celery-worker-ready
+                - python
+                - -m
+                - app.worker.worker_process
+                - probe
+                - --mode=ready
             initialDelaySeconds: 15
             periodSeconds: 30
             timeoutSeconds: 5

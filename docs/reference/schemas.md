@@ -55642,6 +55642,30 @@ These are the full generated JSON Schema definitions, including required fields,
 {
   "description": "Async status of an uploaded report (GET /api/v1/ingest/uploads/{task_id}).\n\nstate: pending | parsing | ingesting | succeeded | failed.",
   "properties": {
+    "accepted_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Accepted At"
+    },
+    "completed_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Completed At"
+    },
     "error": {
       "anyOf": [
         {
@@ -55653,6 +55677,34 @@ These are the full generated JSON Schema definitions, including required fields,
         }
       ],
       "title": "Error"
+    },
+    "payload_ready_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Payload Ready At"
+    },
+    "payload_state": {
+      "anyOf": [
+        {
+          "enum": [
+            "reserved",
+            "ready",
+            "deleted"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Payload State"
     },
     "progress": {
       "anyOf": [
