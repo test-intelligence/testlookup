@@ -5,67 +5,52 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
-import os
 import re
 import time
 import uuid
-from urllib.parse import urlsplit
-
-import requests
 from opentelemetry._logs import SeverityNumber
 from opentelemetry.exporter.otlp.proto.http._log_exporter import OTLPLogExporter
 from opentelemetry.sdk._logs import LoggerProvider
 from opentelemetry.sdk._logs.export import BatchLogRecordProcessor
-from opentelemetry.sdk.resources import Resource
 from opentelemetry.util.types import AttributeValue
 from starlette.datastructures import Headers, MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
+
+from telemetry_resources import exporter_session, resource, shutdown_bounded, validated_endpoint
 
 logger = logging.getLogger(__name__)
 _CORRELATION_ID = re.compile(r"[A-Za-z0-9._:-]{1,128}")
 _QUIET_PATHS = frozenset({"/health/live", "/health/ready"})
 
 
-def add_operational_logs(app: ASGIApp, endpoint: str, environment: str) -> ASGIApp:
+def create_operational_logger(endpoint: str, environment: str):
+    exporter = OTLPLogExporter(endpoint=validated_endpoint(endpoint, "logs"), timeout=2,
+        max_request_size=65_536, headers={}, session=exporter_session())
+    provider = LoggerProvider(resource=resource(environment), shutdown_on_exit=False)
+    provider.add_log_record_processor(BatchLogRecordProcessor(
+        exporter, max_queue_size=512, max_export_batch_size=64, schedule_delay_millis=1000,
+        export_timeout_millis=2000,
+    ))
+    return provider, provider.get_logger("testlookup.operational")
+
+
+def add_operational_logs(app: ASGIApp, endpoint: str, environment: str, *, own_provider=None) -> ASGIApp:
     try:
-        url = urlsplit(endpoint)
-        private_http = url.scheme == "http" and url.hostname in {
-            "otel-collector", "localhost", "127.0.0.1", "::1",
-        }
-        if (
-            not url.hostname or (url.scheme != "https" and not private_http)
-            or url.path != "/v1/logs" or url.username is not None
-            or url.query or url.fragment
-        ):
-            raise ValueError("expected an HTTPS OTLP/HTTP logs URL")
-        revision = os.environ.get("BUILD_REVISION", "")
-        installation = os.environ.get("TESTLOOKUP_TELEMETRY_INSTALLATION", "")
-        resource = Resource({
-            "service.name": "testlookup",
-            "service.namespace": "testlookup",
-            "service.version": os.environ.get("APP_VERSION", "0.1.0"),
-            "deployment.environment.name": environment
-            if environment in {"development", "staging", "production"} else "unknown",
-            "testlookup.service.role": "mcp",
-            "testlookup.build.revision": revision if re.fullmatch(r"[0-9a-f]{40}", revision) else "",
-            "testlookup.installation": installation if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,62}", installation) else "",
-        })
-        session = requests.Session()
-        session.trust_env = False
-        session.max_redirects = 0
-        exporter = OTLPLogExporter(
-            endpoint=endpoint, timeout=2, max_request_size=65_536, session=session,
-        )
-        provider = LoggerProvider(resource=resource)
-        provider.add_log_record_processor(BatchLogRecordProcessor(
-            exporter, max_queue_size=512, max_export_batch_size=64, schedule_delay_millis=1000,
-        ))
-        sink = provider.get_logger("testlookup.operational")
+        _provider, sink = create_operational_logger(endpoint, environment)
+        if own_provider is not None:
+            own_provider(_provider)
     except Exception:  # noqa: BLE001 - the service runs if telemetry configuration is invalid
         logger.warning("Operational log exporter could not initialize")
         return app
 
     async def observed(scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] == "lifespan" and own_provider is None:
+            async def send_lifecycle(message: Message) -> None:
+                if message["type"] == "lifespan.shutdown.complete":
+                    shutdown_bounded((_provider,))
+                await send(message)
+            await app(scope, receive, send_lifecycle)
+            return
         if scope["type"] != "http" or scope["path"] in _QUIET_PATHS:
             await app(scope, receive, send)
             return

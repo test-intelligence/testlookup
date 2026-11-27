@@ -77,6 +77,7 @@ import client as api
 from config import settings
 from token_verifier import TestLookupTokenVerifier, build_auth_settings
 from untrusted import SERVER_INSTRUCTIONS as UNTRUSTED_CONTENT_INSTRUCTIONS
+from tool_telemetry import ToolTelemetry
 
 from tools import auth, projects, runs, metrics, analytics, analysis, release
 from tools import intelligence, deep, search, reports
@@ -237,6 +238,11 @@ registry.register(mcp)
 # ── Register Prompts ──────────────────────────────────────────────────────────
 templates.register(mcp)
 
+# The pinned SDK exposes one public middleware chain for stdio and SSE.
+# Keep request-state/auth semantics and replace its raw diagnostic projection.
+tool_observability = ToolTelemetry(settings)
+tool_observability.install(mcp)
+
 
 def sse_app():
     """The SSE ASGI app WITH this server's transport security (the tests and any embedding use this)."""
@@ -244,18 +250,38 @@ def sse_app():
     if settings.otlp_logs_endpoint:
         from operational_logs import add_operational_logs
 
-        app = add_operational_logs(app, settings.otlp_logs_endpoint, settings.telemetry_environment)
-    return app
+        app = add_operational_logs(app, settings.otlp_logs_endpoint, settings.telemetry_environment,
+                                   own_provider=tool_observability.own_provider)
+    return tool_observability.wrap_lifecycle(app)
 
 
 def run_sse(port: int) -> None:
     """Serve SSE on ``SSE_HOST:port`` WITH this server's transport security (the image's CMD)."""
-    if settings.otlp_logs_endpoint:
+    from diagnostics import configure_diagnostic_logging
+
+    configure_diagnostic_logging()
+    if settings.otlp_logs_endpoint or settings.otlp_traces_endpoint or settings.otlp_metrics_endpoint:
         import uvicorn
 
-        uvicorn.run(sse_app(), host=SSE_HOST, port=port, access_log=False)
+        try:
+            uvicorn.run(sse_app(), host=SSE_HOST, port=port, access_log=False, log_config=None)
+        finally:
+            tool_observability.shutdown()
     else:
-        mcp.run(transport="sse", host=SSE_HOST, port=port, transport_security=TRANSPORT_SECURITY)
+        try:
+            mcp.run(transport="sse", host=SSE_HOST, port=port, transport_security=TRANSPORT_SECURITY)
+        finally:
+            tool_observability.shutdown()
+
+
+def run_stdio() -> None:
+    from diagnostics import configure_diagnostic_logging
+
+    configure_diagnostic_logging()
+    try:
+        mcp.run(transport="stdio")
+    finally:
+        tool_observability.shutdown()
 
 
 if __name__ == "__main__":
@@ -279,4 +305,4 @@ if __name__ == "__main__":
     if args.transport == "sse":
         run_sse(args.port)
     else:
-        mcp.run(transport="stdio")
+        run_stdio()

@@ -43,8 +43,9 @@ processors:
       log_record:
         - 'resource.attributes["service.namespace"] != "testlookup"'
         - 'resource.attributes["service.name"] != "testlookup"'
-        - 'not (log.event_name == "http_request" or log.event_name == "http_unhandled_error" or log.event_name == "analytics_unhandled_error" or log.event_name == "celery_task_execution" or log.event_name == "mcp_request")'
+        - 'not (log.event_name == "http_request" or log.event_name == "http_unhandled_error" or log.event_name == "analytics_unhandled_error" or log.event_name == "celery_task_execution" or log.event_name == "mcp_request" or log.event_name == "mcp_tool_execution")'
         - 'not (resource.attributes["testlookup.service.role"] == "api" or resource.attributes["testlookup.service.role"] == "worker" or resource.attributes["testlookup.service.role"] == "worker-children" or resource.attributes["testlookup.service.role"] == "beat" or resource.attributes["testlookup.service.role"] == "mcp")'
+        - 'log.event_name == "mcp_tool_execution" and resource.attributes["testlookup.service.role"] != "mcp"'
 
   transform/privacy:
     error_mode: propagate
@@ -63,7 +64,10 @@ processors:
         statements:
           # The application export boundary sanitizes names. No payload, URL,
           # query, SQL statement, prompt, user or project field passes here.
-          - 'keep_keys(attributes, ["http.request.method", "http.method", "http.response.status_code", "http.status_code", "http.route", "rpc.system", "rpc.service", "rpc.method", "db.system", "db.operation.name", "messaging.system", "messaging.operation.type", "messaging.destination.name", "server.port", "error.type", "celery.task_name", "task.name", "status", "stage", "duration_ms"])'
+          - 'keep_keys(attributes, ["http.request.method", "http.method", "http.response.status_code", "http.status_code", "http.route", "rpc.system", "rpc.service", "rpc.method", "db.system", "db.operation.name", "messaging.system", "messaging.operation.type", "messaging.destination.name", "server.port", "error.type", "celery.task_name", "task.name", "mcp.tool.name", "mcp.tool.outcome", "mcp.transport", "status", "stage", "duration_ms"])'
+          - 'delete_key(attributes, "mcp.tool.name") where resource.attributes["testlookup.service.role"] != "mcp" or not IsMatch(String(attributes["mcp.tool.name"]), "^[a-z][a-z0-9_]{0,63}$")'
+          - 'delete_key(attributes, "mcp.tool.outcome") where resource.attributes["testlookup.service.role"] != "mcp" or not IsMatch(String(attributes["mcp.tool.outcome"]), "^(success|tool_error|request_error|cancelled|internal_error)$")'
+          - 'delete_key(attributes, "mcp.transport") where resource.attributes["testlookup.service.role"] != "mcp" or not IsMatch(String(attributes["mcp.transport"]), "^(stdio|sse)$")'
           - 'truncate_all(attributes, 256)'
           - 'set(status.message, "")'
           - 'set(trace_state, "")'
@@ -99,12 +103,47 @@ processors:
           - 'set(cache["safe"]["status_code"], attributes["status_code"]) where IsInt(attributes["status_code"]) and attributes["status_code"] >= 100 and attributes["status_code"] <= 599'
           - 'set(cache["safe"]["duration_ms"], attributes["duration_ms"]) where (IsInt(attributes["duration_ms"]) or IsDouble(attributes["duration_ms"])) and attributes["duration_ms"] >= 0 and attributes["duration_ms"] <= 600000'
           - 'set(cache["safe"]["state"], attributes["state"]) where IsString(attributes["state"]) and IsMatch(attributes["state"], "^(success|failure|retry|other)$")'
+          - 'set(cache["safe"]["tool"], attributes["tool"]) where event_name == "mcp_tool_execution" and IsString(attributes["tool"]) and IsMatch(attributes["tool"], "^[a-z][a-z0-9_]{0,63}$")'
+          - 'set(cache["safe"]["outcome"], attributes["outcome"]) where event_name == "mcp_tool_execution" and IsString(attributes["outcome"]) and IsMatch(attributes["outcome"], "^(success|tool_error|request_error|cancelled|internal_error)$")'
+          - 'set(cache["safe"]["transport"], attributes["transport"]) where event_name == "mcp_tool_execution" and IsString(attributes["transport"]) and IsMatch(attributes["transport"], "^(stdio|sse)$")'
           - 'set(body, String(cache["safe"]))'
           - 'keep_keys(attributes, [])'
           - 'set(attributes["request_id"], cache["safe"]["request_id"]) where cache["safe"]["request_id"] != nil'
           - 'set(attributes["celery_task_id"], cache["safe"]["celery_task_id"]) where cache["safe"]["celery_task_id"] != nil'
 
+  filter/mcp_metrics:
+    error_mode: propagate
+    metric_conditions:
+      - 'resource.attributes["service.namespace"] != "testlookup" or resource.attributes["service.name"] != "testlookup" or resource.attributes["testlookup.service.role"] != "mcp"'
+      - 'not IsMatch(String(resource.attributes["service.instance.id"]), "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")'
+      - 'scope.name != "testlookup.mcp"'
+      - 'not (metric.name == "testlookup.mcp.tool.calls" and metric.unit == "1") and not (metric.name == "testlookup.mcp.tool.duration" and metric.unit == "s")'
+      - 'not IsMatch(String(datapoint.attributes["tool"]), "^[a-z][a-z0-9_]{0,63}$") or not IsMatch(String(datapoint.attributes["outcome"]), "^(success|tool_error|request_error|cancelled|internal_error)$") or not IsMatch(String(datapoint.attributes["transport"]), "^(stdio|sse)$")'
+
+  transform/mcp_metrics:
+    error_mode: propagate
+    metric_statements:
+      - context: resource
+        statements:
+          - 'keep_keys(attributes, ["service.name", "service.namespace", "service.instance.id", "deployment.environment.name", "testlookup.installation", "testlookup.build.revision"])'
+          - 'delete_key(attributes, "testlookup.build.revision") where not IsMatch(String(attributes["testlookup.build.revision"]), "^[0-9a-f]{40}$")'
+          - 'delete_key(attributes, "testlookup.installation") where not IsMatch(String(attributes["testlookup.installation"]), "^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$")'
+          - 'delete_key(attributes, "deployment.environment.name") where not IsMatch(String(attributes["deployment.environment.name"]), "^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$")'
+      - context: scope
+        statements:
+          - 'keep_keys(attributes, [])'
+      - context: datapoint
+        statements:
+          - 'keep_keys(attributes, ["tool", "outcome", "transport"])'
+
 exporters:
+  prometheus/mcp_tools:
+    endpoint: 0.0.0.0:9464
+    metric_expiration: 90s
+    without_scope_info: true
+    translation_strategy: UnderscoreEscapingWithSuffixes
+    resource_constant_labels:
+      included: [deployment.environment.name, testlookup.installation, testlookup.build.revision]
   otlp_http/traces:
     endpoint: http://jaeger:4318
     timeout: 5s
@@ -171,3 +210,7 @@ service:
       receivers: [otlp]
       processors: [memory_limiter, filter/identity, transform/privacy]
       exporters: [otlp_http/logs]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, filter/mcp_metrics, transform/mcp_metrics]
+      exporters: [prometheus/mcp_tools]

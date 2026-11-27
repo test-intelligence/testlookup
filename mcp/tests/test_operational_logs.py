@@ -21,7 +21,8 @@ def test_mcp_operational_log_contains_only_correlation_and_response_metadata(mon
     monkeypatch.setenv("TESTLOOKUP_TELEMETRY_INSTALLATION", "synthetic-site")
 
     class Provider:
-        def __init__(self, *, resource):
+        def __init__(self, *, resource, shutdown_on_exit):
+            assert shutdown_on_exit is False
             assert resource.attributes["testlookup.service.role"] == "mcp"
             assert resource.attributes["testlookup.build.revision"] == "b" * 40
             assert resource.attributes["testlookup.installation"] == "synthetic-site"
@@ -34,6 +35,12 @@ def test_mcp_operational_log_contains_only_correlation_and_response_metadata(mon
 
         def emit(self, **record):
             records.append(record)
+
+        def force_flush(self, **_kwargs):
+            return True
+
+        def shutdown(self):
+            pass
 
     monkeypatch.setattr(operational_logs, "LoggerProvider", Provider)
     monkeypatch.setattr(operational_logs, "BatchLogRecordProcessor", lambda *_args, **_kwargs: object())

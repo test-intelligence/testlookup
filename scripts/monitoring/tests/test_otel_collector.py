@@ -24,16 +24,17 @@ CONFIG = ROOT / "infra/monitoring/otel-collector/config.yml"
 BINARY = os.environ.get("OTELCOL_TEST_BINARY")
 
 
-def test_collector_has_only_scoped_otlp_input_and_two_bounded_persistent_exports():
+def test_collector_has_scoped_otlp_input_bounded_persistent_exports_and_private_tool_metrics():
     config = yaml.safe_load(CONFIG.read_text())
     assert set(config["receivers"]) == {"otlp"}
     assert set(config["receivers"]["otlp"]["protocols"]) == {"http"}
     assert config["receivers"]["otlp"]["protocols"]["http"]["max_request_body_size"] == 1048576
-    assert set(config["service"]["pipelines"]) == {"logs", "traces"}
+    pipelines = config["service"]["pipelines"]
+    assert set(pipelines) == {"logs", "traces", "metrics"}
     assert "debug" not in config["exporters"]
     storage = config["extensions"]["file_storage"]
     assert storage["fsync"] is True and storage["max_size"] == 64 * 1024 * 1024
-    for pipeline in config["service"]["pipelines"].values():
+    for pipeline in (pipelines["logs"], pipelines["traces"]):
         assert pipeline["processors"] == ["memory_limiter", "filter/identity", "transform/privacy"]
         exporter = config["exporters"][pipeline["exporters"][0]]
         queue = exporter["sending_queue"]
@@ -42,6 +43,12 @@ def test_collector_has_only_scoped_otlp_input_and_two_bounded_persistent_exports
         assert queue["block_on_overflow"] is False and queue["wait_for_result"] is False
         assert queue["batch"]["max_size"] == 65536
         assert exporter["retry_on_failure"]["max_elapsed_time"] == "10m"
+    assert pipelines["metrics"]["processors"] == ["memory_limiter", "filter/mcp_metrics", "transform/mcp_metrics"]
+    assert pipelines["metrics"]["exporters"] == ["prometheus/mcp_tools"]
+    assert config["exporters"]["prometheus/mcp_tools"]["endpoint"] == "0.0.0.0:9464"
+    scrape = yaml.safe_load((CONFIG.parent / "scrape.yml").read_text())
+    job = next(item for item in scrape["scrape_configs"] if item["job_name"] == "testlookup-mcp-tools")
+    assert job["static_configs"][0]["targets"] == ["otel-collector:9464"] and job["sample_limit"] == 20000
     image = json.loads((CONFIG.parent / "image-lock.json").read_text())
     assert "@sha256:" in image["image"] and image["user"] == "10001:10001"
 
@@ -99,7 +106,7 @@ def _collector(tmp_path, *, retry_lifetime="30s", destinations=None):
     thread = threading.Thread(target=sink.serve_forever, daemon=True)
     thread.start()
     config = yaml.safe_load(CONFIG.read_text())
-    otlp_port, health_port, metrics_port = _port(), _port(), _port()
+    otlp_port, health_port, metrics_port, mcp_metrics_port = _port(), _port(), _port(), _port()
     config["receivers"]["otlp"]["protocols"]["http"]["endpoint"] = f"127.0.0.1:{otlp_port}"
     config["extensions"]["health_check"]["endpoint"] = f"127.0.0.1:{health_port}"
     storage = config["extensions"]["file_storage"]
@@ -108,6 +115,9 @@ def _collector(tmp_path, *, retry_lifetime="30s", destinations=None):
     metrics = config["service"]["telemetry"]["metrics"]["readers"][0]["pull"]["exporter"]["prometheus"]
     metrics.update(host="127.0.0.1", port=metrics_port)
     for name, exporter in config["exporters"].items():
+        if name == "prometheus/mcp_tools":
+            exporter["endpoint"] = f"127.0.0.1:{mcp_metrics_port}"
+            continue
         exporter["endpoint"] = (destinations or {}).get(name, f"http://127.0.0.1:{sink.server_port}")
         exporter["timeout"] = "200ms"
         exporter["retry_on_failure"].update(initial_interval="200ms", max_interval="1s", max_elapsed_time=retry_lifetime)
@@ -157,7 +167,7 @@ def _collector(tmp_path, *, retry_lifetime="30s", destinations=None):
 
     try:
         start()
-        yield state, lock, post, lambda: get(metrics_port, "/metrics"), kill, start
+        yield state, lock, post, lambda surface="collector": get(mcp_metrics_port if surface == "mcp" else metrics_port, "/metrics"), kill, start
     finally:
         kill()
         sink.shutdown()
@@ -202,6 +212,41 @@ def _traces(identifier):
 
 def _metric_values(text, prefix):
     return [float(line.rsplit(" ", 1)[1]) for line in text.splitlines() if line.startswith(prefix) and not line.startswith("#")]
+
+
+def _mcp_metrics(instance, count, *, role="mcp", scope="testlookup.mcp", outcome="success"):
+    attributes = [_attribute("tool", "list_test_runs"), _attribute("transport", "sse"),
+                  _attribute("outcome", outcome), _attribute("request_id", "synthetic-private-canary")]
+    now = time.time_ns()
+    point = {"attributes": attributes, "startTimeUnixNano": str(now - 1_000_000_000), "timeUnixNano": str(now)}
+    resource = _resource()
+    for entry in resource["attributes"]:
+        if entry["key"] == "testlookup.service.role":
+            entry["value"]["stringValue"] = role
+    resource["attributes"].append(_attribute("service.instance.id", instance))
+    return {"resourceMetrics": [{"resource": resource, "scopeMetrics": [{"scope": {"name": scope}, "metrics": [
+        {"name": "testlookup.mcp.tool.calls", "unit": "1", "sum": {"aggregationTemporality": 2, "isMonotonic": True,
+                 "dataPoints": [{**point, "asInt": str(count)}]}},
+        {"name": "testlookup.mcp.tool.duration", "unit": "s", "histogram": {"aggregationTemporality": 2,
+                 "dataPoints": [{**point, "count": str(count), "sum": count * 0.15, "bucketCounts": ["0", str(count), "0"], "explicitBounds": [0.1, 1.0]}]}},
+        {"name": "testlookup.synthetic.unsupported", "unit": "1", "gauge": {"dataPoints": [{**point, "asInt": "1"}]}},
+    ]}]}]}
+
+
+@pytest.mark.skipif(not BINARY, reason="requires checksum-verified pinned Collector Contrib binary")
+def test_real_mcp_export_is_bounded_and_preserves_independent_process_streams(tmp_path):
+    processes = [f"00000000-0000-0000-0000-{suffix:012d}" for suffix in range(1, 6)]
+    with _collector(tmp_path) as (_state, _lock, post, metrics, _kill, _start):
+        for index, labels in enumerate(({}, {}, {"role": "api"}, {"scope": "synthetic.extra"}, {"outcome": "unexpected"})):
+            assert post("metrics", _mcp_metrics(processes[index], index + 2, **labels)) == 200
+        scrape = metrics("mcp")
+        assert sorted(_metric_values(scrape, "testlookup_mcp_tool_calls_total")) == [2, 3]
+        assert sorted(_metric_values(scrape, "testlookup_mcp_tool_duration_seconds_count")) == [2, 3]
+        assert "testlookup_mcp_tool_duration_seconds_bucket" in scrape
+        assert all(instance in scrape for instance in processes[:2])
+        assert all(instance not in scrape for instance in processes[2:])
+        assert 'tool="list_test_runs"' in scrape and 'testlookup_installation="synthetic-site"' in scrape
+        assert "synthetic-private-canary" not in scrape and "request_id" not in scrape and "unsupported" not in scrape
 
 
 @pytest.mark.skipif(not BINARY, reason="requires checksum-verified pinned Collector Contrib binary")

@@ -114,6 +114,15 @@ def test_direct_public_api_listener_exposes_its_shared_operational_paths():
     assert any(f["rule"] == "OPS001" and "/backend/" in f["resource"] for f in policy.check_compose(document))
 
 
+def test_private_tool_metrics_port_is_protected_independently_of_service_name():
+    document = compose()
+    document["services"]["renamed-collector"] = {
+        "image": "registry.invalid/collector:fixture",
+        "ports": [{"target": 9464, "published": "8080", "host_ip": "0.0.0.0"}],
+    }
+    assert any(f["rule"] == "OPS001" and "/renamed-collector/" in f["resource"] for f in policy.check_compose(document))
+
+
 @pytest.mark.parametrize("mutation,rule", [
     (lambda pod, c: pod.update(hostNetwork=True), "CTR001"),
     (lambda pod, c: pod.update(volumes=[{"name": "host", "hostPath": {"path": "/"}}]), "CTR001"),

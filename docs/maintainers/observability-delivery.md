@@ -16,7 +16,7 @@ Status meanings: **Open** is planned; **In progress** has partial implementation
 
 | Epic | Capability | Iteration sequence |
 |---|---|---|
-| OBS-E01 | Safe correlated application telemetry | 1: privacy, errors and worker log context. 7: Celery trace propagation and build-scoped MCP HTTP logs. |
+| OBS-E01 | Safe correlated application telemetry | 1: privacy, errors and worker log context. 7: Celery trace propagation and build-scoped MCP HTTP logs. 9: worker and Beat lifecycle, client correlation and MCP tool signals. |
 | OBS-E02 | Reliable metric collection | 1: bounded reads, queue coverage and SQL outcomes; 2: producers, exporters and access |
 | OBS-E03 | Alerting and scheduled detection | 1: low-volume webhook and new outcome rules; 3: schedules, discovery and routing |
 | OBS-E04 | Durable log and trace platform | 4: profile contract, collection, storage and offline package. |
@@ -28,11 +28,11 @@ Status meanings: **Open** is planned; **In progress** has partial implementation
 | Story | Outcome | Status |
 |---|---|---|
 | OBS-E01-S01 | Redact every exported span surface | Verification |
-| OBS-E01-S02 | Initialize tracing in every worker and scheduler role | Open |
-| OBS-E01-S03 | Propagate task traces and reset task log context | In progress |
+| OBS-E01-S02 | Initialize tracing in every worker and scheduler role | Verification |
+| OBS-E01-S03 | Propagate task traces and reset task log context | Verification |
 | OBS-E01-S04 | Transmit bounded browser telemetry using actual UTF-8 bytes | Verification |
-| OBS-E01-S05 | Preserve backend correlation IDs in MCP and CLI errors | Open |
-| OBS-E01-S06 | Instrument MCP operations without corrupting stdio | Open |
+| OBS-E01-S05 | Preserve backend correlation IDs in MCP and CLI errors | Verification |
+| OBS-E01-S06 | Instrument MCP operations without corrupting stdio | Verification |
 | OBS-E01-S07 | Preserve correlation and sanitized logs for every unexpected API error | Verification |
 | OBS-E02-S01 | Bound dependency collection and expose freshness | Verification |
 | OBS-E02-S02 | Monitor every routed queue including agent children | In progress |
@@ -229,3 +229,20 @@ The publisher retains its slot until the underlying synchronous call returns. Th
 The disposable PostgreSQL 16.15 database ran the full migration chain, then downgraded and reapplied 0265. Downgrade refused pending receipts and terminal receipts with outstanding cleanup. A real scoped API key submitted JSON and JUnit through the API, a pinned Valkey broker and a Celery worker. Controlled loss of publish confirmation and a failure before send both recovered under the original receipts. Independent reads found two runs, three persisted test cases and no remaining queued payloads. The worker used the shipped two-connection budget. With the shipped API pool and a held storage write, three parallel uploads received a retryable refusal before reservation and the liveness route responded.
 
 On Linux, the prefork consumer initially failed to connect to the unavailable broker and remained live and unready. It became ready after isolated Valkey started, processed work, and cleared readiness while draining. The retained-volume fixture also verified that a forced process exit could leave an old marker while its replacement rejected it and preserved its own metric files. The 27 reference Compose and Kubernetes profiles rendered with their queues, processes and security policies intact.
+
+## Iteration 9 — correlated worker and MCP operations
+
+This iteration builds on `69f4d4f6`. It completes the remaining local implementation of OBS-E01 on the shared delivery branch.
+
+| Story | Change | Remaining acceptance |
+|---|---|---|
+| OBS-E01-S02 | Both worker roles initialize tracing in prefork children. Standalone Beat initializes before its first publication. Tracing drains within a process-local deadline on warm replacement. The opt-in Compose and Kubernetes profiles route these roles to the private collector. [Worker and Beat tracing](../operations/worker-tracing.md). | Verify admission, mTLS identity and collector delivery under candidate rollout. |
+| OBS-E01-S03 | Celery gives publication and task execution separate spans and carries the validated parent through Beat, dispatch and retries. Task context is restored after each outcome. Broker publishing suppresses Redis command instrumentation to keep the task body out of spans. | Run the candidate signal gate with the selected worker deployment and scheduled work. |
+| OBS-E01-S05 | The CLI and MCP preserve a bounded, validated backend request ID on HTTP errors. A normal MCP tool call retains it through the SDK's anticipated-error handling. Existing command exit codes and no-ID response shapes are preserved. | Correlate an error from each enabled client with the API log store in the selected installation. [CLI diagnostics](../../cli/README.md), [MCP diagnostics](../../mcp/README.md). |
+| OBS-E01-S06 | One MCP middleware projects duration and completion counts, fixed spans, and bounded tool events in stdio and SSE. Stdout remains JSON-RPC in stdio. The collector admits these two metric families and Prometheus scrapes them over its private network. [Collector contract](../operations/telemetry-collector.md#mcp-tool-metrics). | Verify workload volume, replica overlap, mounted permissions and store queries against the deployed candidate. |
+
+The existing authorization gate now accounts for the previously added instance-wide identity retention paths and project-bound replay route. The path exception checks the identity retention module, exact method and template, and the actual administrator role floor. Project holds retain their scoped authorization checks.
+
+A disposable Linux test joined standalone Beat publications and retries to seven consumers across three recycled prefork children. It verified payload exclusion, normal interpreter-exit flushing and bounded shutdown with a stalled telemetry sink. The fixture ran current source modules on the pinned runtime with an isolated Valkey broker. The native MCP 2.3.0 stdio process sent a success and an upstream 503 through the pinned Collector and Prometheus. It preserved the upstream error ID in JSON-RPC and the parent trace across both log and span pairs. The scrape recorded separate success and request-error outcomes with no raw payload or request ID. Loopback SSE clients retained their individual backend principals.
+
+The locked MCP suite passed 1,223 tests. Focused backend tracing and wire-contract tests passed 184 cases. Promtool validated the complete mounted inventory of 108 rules, and Collector, Loki and Jaeger readback passed in disposable processes. The CLI suite outside the existing Windows Rich color tests passed 655 cases with two skips. The four baseline color assertions still failed on Windows.

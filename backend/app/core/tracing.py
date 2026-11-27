@@ -11,8 +11,12 @@ Initialises a global TracerProvider with:
 
 Exports get_tracer() and get_current_trace_id() helpers for use across the codebase.
 """
+import atexit
 import logging
+import os
 import re
+import threading
+import time
 from collections.abc import Mapping
 from typing import Any, Optional
 from urllib.parse import urlsplit
@@ -25,6 +29,52 @@ logger = logging.getLogger(__name__)
 
 # Module-level guard so setup_tracing() is truly idempotent
 _initialised = False
+_provider: Any = None
+_provider_pid: int | None = None
+_shutdown_thread: threading.Thread | None = None
+_shutdown_requested: threading.Event | None = None
+_shutdown_deadline = 0.0
+_exit_registered = False
+
+
+def shutdown_tracing(timeout_millis: int = 1500) -> bool:
+    """Drain the owned provider within a finite process-exit budget.
+
+    SDK 1.45's force_flush can block in exporter IO despite its timeout
+    argument. Shutdown runs once on a daemon thread so an unavailable sink
+    cannot hold a recycling child or Beat process open indefinitely.
+    """
+    global _shutdown_deadline
+    if _provider is None or _provider_pid != os.getpid():
+        return True
+    if _shutdown_thread is None or _shutdown_requested is None:
+        return False
+    if not _shutdown_requested.is_set():
+        _shutdown_deadline = time.monotonic() + max(0, min(timeout_millis, 5000)) / 1000
+        _shutdown_requested.set()
+    _shutdown_thread.join(max(0, _shutdown_deadline - time.monotonic()))
+    drained = not _shutdown_thread.is_alive()
+    if not drained:
+        logger.warning("trace_shutdown_budget_exceeded")
+    return drained
+
+
+def _prepare_provider_shutdown(provider: Any) -> None:
+    """Start the waiter during setup, before Python enters its exit phase."""
+    global _provider, _provider_pid, _shutdown_thread, _shutdown_requested, _shutdown_deadline
+    requested = threading.Event()
+
+    def drain() -> None:
+        requested.wait()
+        try:
+            provider.shutdown()
+        except Exception as exc:  # noqa: BLE001 - preserve process shutdown
+            logger.warning("trace_shutdown_failed", extra={"error_type": type(exc).__name__})
+
+    thread = threading.Thread(target=drain, name="testlookup-trace-drain", daemon=True)
+    thread.start()
+    _provider, _provider_pid = provider, os.getpid()
+    _shutdown_thread, _shutdown_requested, _shutdown_deadline = thread, requested, 0.0
 
 
 def _otlp_trace_endpoint(endpoint: str) -> str:
@@ -416,7 +466,7 @@ def setup_tracing(
     otlp_endpoint: Optional[str] = None,
     *,
     service_role: str = "api",
-) -> None:
+) -> bool:
     """
     Configure and register the global OpenTelemetry TracerProvider.
 
@@ -430,9 +480,9 @@ def setup_tracing(
                          logged (re-audit N22 — the stdout fallback printed
                          ~90k log lines per 10 minutes on a real deployment).
     """
-    global _initialised
+    global _initialised, _exit_registered
     if _initialised:
-        return
+        return _provider_pid == os.getpid()
 
     try:
         from opentelemetry import trace
@@ -441,7 +491,7 @@ def setup_tracing(
         from opentelemetry.sdk.trace.export import ConsoleSpanExporter
     except ImportError:
         logger.warning("opentelemetry-sdk not installed — tracing disabled")
-        return
+        return False
 
     try:
         from app.core.config import settings
@@ -457,7 +507,9 @@ def setup_tracing(
             }
         )
 
-        provider = TracerProvider(resource=resource)
+        # Own exit handling: the SDK's default atexit drain can exceed the
+        # worker's grace period when a collector stops accepting traffic.
+        provider = TracerProvider(resource=resource, shutdown_on_exit=False)
 
         if otlp_endpoint:
             try:
@@ -506,13 +558,18 @@ def setup_tracing(
             )
 
         trace.set_tracer_provider(provider)
+        _prepare_provider_shutdown(provider)
     except Exception as exc:  # noqa: BLE001 — tracing must not block app startup
         logger.warning("OTEL tracing initialization failed; tracing disabled: %s", exc)
-        return
+        return False
 
     _initialised = True
+    if not _exit_registered:
+        atexit.register(shutdown_tracing)
+        _exit_registered = True
 
     _apply_auto_instrumentors()
+    return True
 
 
 def _apply_auto_instrumentors() -> None:

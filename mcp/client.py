@@ -20,6 +20,7 @@ from urllib.parse import quote
 import httpx
 
 from config import settings  # type: ignore[import]
+from telemetry_context import mark_backend_failure, note_backend_error, outgoing_operation_headers
 
 logger = logging.getLogger("testlookup.mcp.client")
 
@@ -39,6 +40,13 @@ _plain_http_warned = False
 
 _STATIC_SEGMENT = re.compile(r"^[A-Za-z0-9_\-.]+$")
 _PLACEHOLDER = re.compile(r"^\{([A-Za-z_][A-Za-z0-9_]*)\}$")
+_REQUEST_ID = re.compile(r"[A-Za-z0-9._:-]{1,128}", re.ASCII)
+
+
+def backend_request_id(response: httpx.Response) -> str | None:
+    """Read only bounded response correlation; it never supplies authorization."""
+    raw = response.headers.get("X-Request-ID")
+    return raw if isinstance(raw, str) and _REQUEST_ID.fullmatch(raw) else None
 
 
 try:  # The SDK shows a ToolError / ResourceError message to the caller and hides any other exception's text.
@@ -59,6 +67,27 @@ class PathArgumentError(_ToolError, _ResourceError, ValueError):
     The message is written for the caller: it says which argument was refused
     and what to pass instead.
     """
+
+
+class BackendHTTPError(httpx.HTTPStatusError, _ToolError, _ResourceError):
+    """An anticipated SDK error with safe text and the original HTTP response.
+
+    Existing adapters can still catch HTTPStatusError and inspect the response.
+    Uncaught read-tool/resource errors retain correlation through the SDK's
+    deliberate-error boundary, which otherwise masks unexpected exceptions.
+    """
+
+
+def _raise_for_status(response: httpx.Response) -> None:
+    try:
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        note_backend_error()
+        request_id = backend_request_id(response)
+        message = f"TestLookup API returned HTTP {response.status_code}"
+        if request_id:
+            message += f" [request_id={request_id}]"
+        raise BackendHTTPError(message, request=exc.request, response=response) from None
 
 
 class ApiPath(str):
@@ -251,8 +280,9 @@ async def authenticate() -> Optional[str]:
     resp = await client.post(
         "/api/v1/auth/login",
         data={"username": settings.username, "password": settings.password},
+        headers=outgoing_operation_headers(),
     )
-    resp.raise_for_status()
+    _raise_for_status(resp)
     _stdio_access_token = access_token_from_login(resp.json())
     return _stdio_access_token
 
@@ -332,9 +362,9 @@ async def public_health() -> dict[str, Any]:
     client = _get_client()
     merged: dict[str, Any] = {}
     for probe in (path("/health/version"), path("/health/ready")):
-        resp = await client.get(_checked_path(client, probe))
+        resp = await client.get(_checked_path(client, probe), headers=outgoing_operation_headers())
         if resp.status_code not in (200, 503):
-            resp.raise_for_status()
+            _raise_for_status(resp)
         body = resp.json()
         if isinstance(body, dict):
             merged.update(body)
@@ -345,7 +375,7 @@ async def _auth_context() -> tuple[dict[str, str], bool]:
     """Return headers plus whether they belong to an authenticated MCP caller."""
     request_token = _request_access_token()
     if request_token is not None:
-        return {"Authorization": f"Bearer {request_token}"}, True
+        return {**outgoing_operation_headers(), "Authorization": f"Bearer {request_token}"}, True
 
     global _stdio_access_token
     if _stdio_access_token is None and settings.username:
@@ -355,7 +385,7 @@ async def _auth_context() -> tuple[dict[str, str], bool]:
         if _stdio_access_token
         else {}
     )
-    return headers, False
+    return {**outgoing_operation_headers(), **headers}, False
 
 
 async def _auth_headers() -> dict[str, str]:
@@ -370,6 +400,13 @@ def _clean_params(params: Optional[dict]) -> Optional[dict]:
     return {k: v for k, v in params.items() if v is not None}
 
 
+def _with_extra_headers(headers: dict[str, str], extra_headers: Optional[dict]) -> dict:
+    """HTTP header names are case-insensitive; credentials remain auth-owned."""
+    protected = {"authorization", "x-api-key", *(name.lower() for name in headers)}
+    extras = {name: value for name, value in (extra_headers or {}).items() if name.lower() not in protected}
+    return {**extras, **headers}
+
+
 async def get(path: ApiPath, params: Optional[dict] = None) -> Any:
     client = _get_client()
     path = _checked_path(client, path)
@@ -382,7 +419,7 @@ async def get(path: ApiPath, params: Optional[dict] = None) -> Any:
         headers, _ = await _auth_context()
         resp = await client.get(path, params=_clean_params(params), headers=headers)
 
-    resp.raise_for_status()
+    _raise_for_status(resp)
     _last_total.set(_header_total(resp))
     return resp.json()
 
@@ -420,7 +457,7 @@ async def post(
     path = _checked_path(client, path)
     headers, caller_scoped = await _auth_context()
     resp = await client.post(
-        path, json=json_body, params=_clean_params(params), headers={**(extra_headers or {}), **headers},
+        path, json=json_body, params=_clean_params(params), headers=_with_extra_headers(headers, extra_headers),
     )
 
     if resp.status_code == 401 and not caller_scoped and settings.username:
@@ -428,10 +465,10 @@ async def post(
         _stdio_access_token = None
         headers, _ = await _auth_context()
         resp = await client.post(
-            path, json=json_body, params=_clean_params(params), headers={**(extra_headers or {}), **headers},
+            path, json=json_body, params=_clean_params(params), headers=_with_extra_headers(headers, extra_headers),
         )
 
-    resp.raise_for_status()
+    _raise_for_status(resp)
     # Handle 204 No Content responses (empty body) gracefully.
     if resp.status_code == 204 or not resp.content:
         return None
@@ -451,7 +488,7 @@ async def patch(path: ApiPath, json_body: Optional[dict] = None) -> Any:
         headers, _ = await _auth_context()
         resp = await client.patch(path, json=json_body, headers=headers)
 
-    resp.raise_for_status()
+    _raise_for_status(resp)
     if resp.status_code == 204 or not resp.content:
         return None
     return resp.json()
@@ -470,7 +507,7 @@ async def put(path: ApiPath, json_body: Optional[dict] = None) -> Any:
         headers, _ = await _auth_context()
         resp = await client.put(path, json=json_body, headers=headers)
 
-    resp.raise_for_status()
+    _raise_for_status(resp)
     if resp.status_code == 204 or not resp.content:
         return None
     return resp.json()
@@ -489,7 +526,8 @@ def error_text(exc: Exception) -> str:
     if isinstance(detail, (dict, list)):
         detail = str(detail)[:500]
     if status:
-        return f"HTTP {status}" + (f": {detail}" if detail else "")
+        text = f"HTTP {status}" + (f": {detail}" if detail else "")
+        return text + (f" [request_id={payload['request_id']}]" if payload.get("request_id") else "")
     said = " ".join(str(part) for part in (payload.get("error"), detail) if part)
     return said or type(exc).__name__
 
@@ -503,6 +541,8 @@ def error_payload(exc: Exception) -> dict[str, Any]:
     validation errors (422) — instead of a stack trace.
     """
     payload: dict[str, Any] = {"ok": False, "error": str(exc)}
+    if isinstance(exc, httpx.HTTPError):
+        mark_backend_failure()
     if isinstance(exc, httpx.TimeoutException):
         # TL-QA-22: httpx timeouts have an empty message, so this read
         # ``error: ""``. A timed-out write may still have been applied.
@@ -519,6 +559,9 @@ def error_payload(exc: Exception) -> dict[str, Any]:
         )
     if isinstance(exc, httpx.HTTPStatusError):
         payload["status_code"] = exc.response.status_code
+        request_id = backend_request_id(exc.response)
+        if request_id:
+            payload["request_id"] = request_id
         try:
             detail = exc.response.json().get("detail")
         except Exception:
@@ -541,5 +584,5 @@ async def delete(path: ApiPath) -> None:
         headers, _ = await _auth_context()
         resp = await client.delete(path, headers=headers)
 
-    resp.raise_for_status()
+    _raise_for_status(resp)
     return None

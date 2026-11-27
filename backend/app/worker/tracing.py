@@ -6,12 +6,18 @@ span. The consumer span measures execution, while SQL owns business completion.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from contextlib import contextmanager
 import logging
 import os
 import re
 
+from celery import Celery
+from celery.apps.beat import Beat
+from celery.beat import Service
+from kombu.utils.objects import cached_property
 from opentelemetry import context, trace
 from opentelemetry.context import Context, Token
+from opentelemetry.instrumentation.utils import suppress_instrumentation
 from opentelemetry.trace import Span, SpanKind, Status, StatusCode
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 
@@ -39,9 +45,104 @@ def initialize_worker_tracing(**_kwargs) -> None:
     from app.core.tracing import setup_tracing
 
     role = "worker-children" if settings.OTEL_LOGS_ROLE == "worker-children" else "worker"
-    setup_tracing(settings.OTEL_SERVICE_NAME, settings.APP_VERSION, settings.APP_ENV,
-                  settings.OTEL_EXPORTER_OTLP_ENDPOINT, service_role=role)
-    _READY_PID = os.getpid()
+    if setup_tracing(settings.OTEL_SERVICE_NAME, settings.APP_VERSION, settings.APP_ENV,
+                     settings.OTEL_EXPORTER_OTLP_ENDPOINT, service_role=role):
+        _READY_PID = os.getpid()
+
+
+def initialize_beat_tracing() -> None:
+    """Initialize standalone Beat before its first scheduled publication."""
+    if settings.OTEL_ENABLED and settings.OTEL_EXPORTER_OTLP_ENDPOINT:
+        from app.core.tracing import setup_tracing
+
+        try:
+            setup_tracing(settings.OTEL_SERVICE_NAME, settings.APP_VERSION, settings.APP_ENV,
+                          settings.OTEL_EXPORTER_OTLP_ENDPOINT, service_role="beat")
+        except Exception as exc:  # noqa: BLE001 - scheduling remains available
+            logger.warning("beat_trace_start_failed", extra={"error_type": type(exc).__name__})
+
+
+def shutdown_worker_tracing(**_kwargs) -> None:
+    from app.core.tracing import shutdown_tracing
+
+    try:
+        shutdown_tracing()
+    except Exception as exc:  # noqa: BLE001 - preserve Celery shutdown
+        logger.warning("worker_trace_shutdown_failed", extra={"error_type": type(exc).__name__})
+
+
+class TracingBeatService(Service):
+    """Keep standard scheduler and broker cleanup, then drain telemetry."""
+
+    def start(self, *args, **kwargs):
+        initialize_beat_tracing()
+        try:
+            return super().start(*args, **kwargs)
+        finally:
+            shutdown_worker_tracing()
+
+
+class _TracingBeat(Beat):
+    Service = TracingBeatService
+
+
+@contextmanager
+def _publication(options):
+    """A finite producer span owns success and publication-error exits."""
+    if not settings.OTEL_ENABLED or not settings.OTEL_EXPORTER_OTLP_ENDPOINT:
+        yield
+        return
+    span = None
+    token = None
+    try:
+        parent = context.get_current()
+        if not trace.get_current_span().get_span_context().is_valid:
+            headers = options.get("headers")
+            supplied = valid_traceparent(headers.get("traceparent")) if isinstance(headers, dict) else None
+            if supplied:
+                parent = TraceContextTextMapPropagator().extract({"traceparent": supplied}, context=Context())
+        queue = options.get("queue")
+        span = _tracer().start_span("celery.publish", context=parent, kind=SpanKind.PRODUCER,
+                                   attributes={"messaging.system": "celery", "messaging.operation.type": "send",
+                                               "messaging.destination.name": task_queue_family(queue)})
+        token = context.attach(trace.set_span_in_context(span))
+    except Exception as exc:  # noqa: BLE001 - preserve publication behavior
+        logger.warning("worker_trace_publish_start_failed", extra={"error_type": type(exc).__name__})
+    try:
+        yield
+    except BaseException:
+        if span is not None:
+            try:
+                span.set_status(Status(StatusCode.ERROR))
+            except Exception:  # noqa: BLE001 - preserve the broker exception
+                pass
+        raise
+    finally:
+        try:
+            if span is not None:
+                span.end()
+        except Exception as exc:  # noqa: BLE001 - preserve publication result
+            logger.warning("worker_trace_publish_finish_failed", extra={"error_type": type(exc).__name__})
+        finally:
+            if token is not None:
+                context.detach(token)
+
+
+class TracingCelery(Celery):
+    """Trace broker publication once for API, task retries and standalone Beat."""
+
+    def send_task(self, *args, **kwargs):
+        if not settings.OTEL_ENABLED or not settings.OTEL_EXPORTER_OTLP_ENDPOINT:
+            return super().send_task(*args, **kwargs)
+        with _publication(kwargs):
+            # Redis command instrumentation can otherwise include the encoded
+            # Celery task body in LPUSH. Preserve only the manual producer span.
+            with suppress_instrumentation():
+                return super().send_task(*args, **kwargs)
+
+    @cached_property
+    def Beat(self):
+        return self.subclass_with_self(_TracingBeat, reverse="Beat")
 
 
 def propagate_traceparent(*, headers=None, **_kwargs) -> None:

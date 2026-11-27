@@ -11,6 +11,15 @@ spec:
           env:
             - name: TESTLOOKUP_OTLP_LOGS_ENDPOINT
               value: https://testlookup-otel.testlookup-telemetry.svc:4318/v1/logs
+            - name: TESTLOOKUP_OTLP_TRACES_ENDPOINT
+              value: https://testlookup-otel.testlookup-telemetry.svc:4318/v1/traces
+            - name: TESTLOOKUP_OTLP_METRICS_ENDPOINT
+              value: https://testlookup-otel.testlookup-telemetry.svc:4318/v1/metrics
+            - name: TESTLOOKUP_TELEMETRY_ENVIRONMENT
+              valueFrom:
+                configMapKeyRef:
+                  name: testlookup-config
+                  key: APP_ENV
             - name: TESTLOOKUP_TELEMETRY_INSTALLATION
               valueFrom:
                 configMapKeyRef:

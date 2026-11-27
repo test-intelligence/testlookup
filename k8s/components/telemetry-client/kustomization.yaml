@@ -8,4 +8,12 @@ patches:
     target:
       kind: Deployment
       name: testlookup-worker-.+
+  - path: worker-children.yaml
+    target:
+      kind: Deployment
+      name: testlookup-worker-children
+  - path: beat.yaml
+    target:
+      kind: Deployment
+      name: testlookup-beat
   - path: mcp.yaml

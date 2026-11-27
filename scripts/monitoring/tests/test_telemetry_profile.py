@@ -54,7 +54,7 @@ def test_compose_durable_and_authentication_overlays_are_compatible(base):
         assert service["user"] == "10001:10001"
         assert service["read_only"]
     for name in ("otel-collector", "jaeger", "loki", "telemetry-volume-init"):
-        for app in ("backend", "worker", "worker-children", "mcp"):
+        for app in ("backend", "worker", "worker-children", "beat", "mcp"):
             assert name not in services[app].get("depends_on", {})
     assert set(services["jaeger"]["networks"]) == {"telemetry_storage"}
     assert set(services["loki"]["networks"]) == {"telemetry_storage"}
@@ -63,6 +63,13 @@ def test_compose_durable_and_authentication_overlays_are_compatible(base):
     }
     assert all(project["networks"][name]["internal"] for name in services["otel-collector"]["networks"])
     assert services["backend"]["environment"]["OTEL_EXPORTER_OTLP_ENDPOINT"] == "http://otel-collector:4318"
+    for role in ("worker", "worker-children", "beat"):
+        assert services[role]["environment"]["OTEL_ENABLED"] == "true"
+        assert services[role]["environment"]["OTEL_EXPORTER_OTLP_ENDPOINT"] == "http://otel-collector:4318"
+        assert "telemetry_ingress" in services[role]["networks"]
+    for signal in ("logs", "traces", "metrics"):
+        assert services["mcp"]["environment"][f"TESTLOOKUP_OTLP_{signal.upper()}_ENDPOINT"] == f"http://otel-collector:4318/v1/{signal}"
+    assert "telemetry_metrics" in services["prometheus"]["networks"]
     assert services["backend"]["environment"]["METRICS_TOKEN_FILE"] == "/run/secrets/testlookup-metrics-token"
     assert services["grafana"]["environment"]["GF_FEATURE_TOGGLES_ENABLE"] == "jaegerEnableGrpcEndpoint"
     assert services["telemetry-volume-init"]["network_mode"] == "none"

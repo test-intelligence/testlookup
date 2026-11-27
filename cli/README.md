@@ -603,6 +603,28 @@ off with `--no-run-context` or `TESTLOOKUP_RUN_CONTEXT=0`.
 `--environment prod` show `environment staging → prod` as drift), and `--no-ai`
 uploads without the AI analysis — a CI job that wants no AI cost.
 
+## Backend error request IDs
+
+HTTP failures include `[request_id=<id>]` in stderr when the response carries a
+valid `X-Request-ID`. The ID accepts 1–128 ASCII letters, digits or `._:-`.
+Malformed, duplicate and missing headers add no metadata. After authentication
+or shedding retries, the final response supplies the failure's ID. A connection
+failure without a response has no backend ID.
+
+Successful response bodies and exit codes stay compatible. `doctor --output
+json` adds an optional `request_id` to a failed check. Failed or uncertain upload
+output can also carry this optional field beside its original task/run receipt.
+An upload poll timeout identifies its most recent HTTP poll response when that
+response provided a valid ID. This ID identifies the status request, and the
+task/run IDs identify the asynchronous processing.
+
+Give support the request ID, approximate time and operation. The reference OTLP
+log exporter stores its SHA-256 ASCII digest as `request_id` metadata. Compute
+that digest locally and filter it within the selected service, environment and
+time range in [Loki](../docs/operations/log-storage.md); retain the existing site
+and installation boundaries. Request IDs are diagnostic metadata and confer no
+permissions.
+
 ## Further reading
 
 - [CLI, SDKs and MCP server](../user-guide/cli-sdk-mcp.md): choosing between the CLI, the reporter SDKs and the MCP server

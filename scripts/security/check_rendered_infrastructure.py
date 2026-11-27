@@ -17,7 +17,7 @@ from typing import Any
 
 import yaml
 
-POLICY_VERSION = "2026-11-27.1"
+POLICY_VERSION = "2026-11-27.2"
 MAX_BYTES = 20 * 1024 * 1024
 RULES = {
     "OPS001": "Operational endpoints require private access.",
@@ -26,7 +26,7 @@ RULES = {
     "APP001": "Application containers require the existing restricted controls.",
     "NET001": "Workload namespaces require default-deny ingress and egress.",
 }
-OPERATIONAL_PORTS = {3100, 4317, 4318, 5432, 5555, 6379, 8888, 9090, 9093, 9100,
+OPERATIONAL_PORTS = {3100, 4317, 4318, 5432, 5555, 6379, 8888, 9090, 9093, 9100, 9464,
                      11434, 13133, 14268, 14269, 16685, 16686, 27017}
 OPERATIONAL_NAMES = {"prometheus", "alertmanager", "jaeger", "jaeger-query", "loki",
                      "grafana", "otel-collector", "opentelemetry-collector-contrib",

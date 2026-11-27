@@ -104,7 +104,7 @@ async def _gather_checks(profile_name: str | None) -> list[dict]:
             }
         )
     except CLIError as exc:
-        results.append({"name": "server", "status": _STATUS_FAIL, "detail": str(exc)})
+        results.append({"name": "server", "status": _STATUS_FAIL, "detail": str(exc), **({"request_id": exc.request_id} if exc.request_id else {})})
 
     # 3. Authentication — only meaningful if the server answered.
     if not reachable:
@@ -145,7 +145,7 @@ async def _gather_checks(profile_name: str | None) -> list[dict]:
         # permission quirk) is surfaced as a warning rather than blocking the
         # exit code, since the credentials themselves were not rejected.
         status = _STATUS_FAIL if exc.exit_code == EXIT_AUTH else _STATUS_WARN
-        results.append({"name": "auth", "status": status, "detail": str(exc)})
+        results.append({"name": "auth", "status": status, "detail": str(exc), **({"request_id": exc.request_id} if exc.request_id else {})})
 
     return results
 

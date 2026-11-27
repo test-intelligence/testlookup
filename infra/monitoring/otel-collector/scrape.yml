@@ -5,3 +5,15 @@ scrape_configs:
         labels:
           telemetry_profile: compose
           telemetry_role: otel-collector
+  - job_name: testlookup-mcp-tools
+    follow_redirects: false
+    sample_limit: 20000
+    body_size_limit: 4MB
+    label_limit: 16
+    label_name_length_limit: 64
+    label_value_length_limit: 128
+    static_configs:
+      - targets: [otel-collector:9464]
+        labels:
+          telemetry_profile: compose
+          telemetry_role: mcp-tools

@@ -5,7 +5,7 @@ from pathlib import Path
 import re
 from collections.abc import Mapping
 
-from celery import Celery, Task
+from celery import Task
 from celery.signals import (
     before_task_publish,
     celeryd_init,
@@ -22,6 +22,7 @@ from celery.schedules import crontab
 from kombu import Exchange, Queue
 
 from app.core.config import settings
+from app.worker.tracing import TracingCelery
 from app.worker.nightly_schedule import (
     PERF_BASELINE_REFRESH, QUARANTINE_MAINTENANCE, SCHEDULE_HEADER, stamp_nightly_slot,
 )
@@ -51,7 +52,7 @@ class TimeLimitedTask(Task):
         return bound
 
 
-celery_app = Celery(
+celery_app = TracingCelery(
     "testlookup",
     broker=settings.CELERY_BROKER_URL,
     backend=settings.CELERY_RESULT_BACKEND,
@@ -1165,10 +1166,11 @@ def _close_worker_loop(**_kwargs: object) -> None:
 # consumer span before its context is restored. No Celery instrumentation
 # package or task wrapper is required.
 from app.worker.tracing import (  # noqa: E402
-    finish_task_trace, initialize_worker_tracing, propagate_traceparent, start_task_trace,
+    finish_task_trace, initialize_worker_tracing, propagate_traceparent, shutdown_worker_tracing, start_task_trace,
 )
 
 worker_process_init.connect(initialize_worker_tracing, weak=False)
+worker_process_shutdown.connect(shutdown_worker_tracing, weak=False)
 before_task_publish.connect(propagate_traceparent, weak=False)
 task_prerun.connect(start_task_trace, weak=False)
 task_postrun.connect(finish_task_trace, weak=False)

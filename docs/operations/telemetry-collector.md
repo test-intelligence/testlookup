@@ -1,10 +1,10 @@
 # Private telemetry collector
 
 The optional reference collector accepts the installation's approved
-application logs and sanitized traces over private OTLP/HTTP. It forwards
-logs to `http://loki:3100/otlp/v1/logs` and traces to
-`http://jaeger:4318/v1/traces`. Prometheus continues to pull application and
-collector metrics directly; the collector has no metrics ingestion pipeline.
+application logs, sanitized traces and MCP tool metrics over private
+OTLP/HTTP. It forwards logs to `http://loki:3100/otlp/v1/logs` and traces to
+`http://jaeger:4318/v1/traces`. Prometheus pulls existing application and
+collector metrics as well as the separate MCP metric projection.
 
 [`config.yml`](../../infra/monitoring/otel-collector/config.yml) is validated
 against the official Collector Contrib 0.166.0 distribution. The separate
@@ -23,8 +23,8 @@ The writable directories are `/var/lib/otelcol/storage` and
 `/var/lib/otelcol/compaction`, owned by that identity. Keep both on the same
 persistent volume and permit no second collector process to open its files.
 
-Port 4318 accepts OTLP/HTTP only. Ports 13133 (process health) and 8888
-(Prometheus self-metrics) are operational APIs. None should have a host port,
+Port 4318 accepts OTLP/HTTP only. Ports 13133 (process health), 8888
+(Prometheus self-metrics) and 9464 (MCP metrics) are operational APIs. None should have a host port,
 public ingress or CORS origin. The Compose trust boundary is dedicated
 internal networks: approved application services to the collector, then the
 collector to its stores, with separately selected monitoring access. Service
@@ -49,13 +49,14 @@ Both pipelines require `service.namespace=testlookup` and
 Custom service names need an explicit reviewed site filter change.
 
 Logs require the SDK's native event name to be one of `http_request`,
-`http_unhandled_error`, `analytics_unhandled_error`, `celery_task_execution`
-or `mcp_request`. The collector discards the incoming body and rebuilds JSON
+`http_unhandled_error`, `analytics_unhandled_error`, `celery_task_execution`,
+`mcp_request` or `mcp_tool_execution`. The collector discards the incoming body and rebuilds JSON
 from that approved event name, severity, service, native trace/span IDs,
 64-character lower-case SHA-256 request/task identifiers, HTTP status
 100–599, duration 0–600000 milliseconds and a closed task-state vocabulary.
-Unknown attributes and free text never enter its export queue. Hashes are
-correlation pseudonyms, not anonymized data: restrict access and retention.
+MCP tool records also retain the bounded tool name, transport and outcome.
+Unknown attributes and free text never enter its export queue. Treat hashes
+as correlation pseudonyms and restrict access and retention.
 
 The application remains the complete trace privacy boundary, including span
 names, links, scopes, resources and credentials in custom text. The pinned
@@ -70,8 +71,31 @@ spans; do not bypass the application's exporter wrapper.
 Only the approved event projection is ingested. Ordinary stdout logs remain
 available through the platform's existing logging facilities. There is no
 filelog receiver, host-log discovery, audit-history ingestion or duplicate
-stdout collection in this reference configuration. The SDK event projection
-does not imply full API/worker/beat/MCP trace coverage.
+stdout collection in this reference configuration.
+
+## MCP tool metrics
+
+The collector accepts only the `testlookup.mcp` completion counter and duration
+histogram from the MCP role. The application projects registered tool names
+and uses `other` for unknown names. Each sample has a bounded `tool`, `outcome`
+and `transport`. The process identity keeps cumulative counters from multiple
+MCP processes independent. Application arguments, result bodies, user and
+project IDs, and request and trace IDs stay out of the metric series.
+
+The `testlookup-mcp-tools` scrape job pulls `testlookup_mcp_tool_calls_total`
+and `testlookup_mcp_tool_duration_seconds_bucket`, `_sum` and `_count` from
+the private exporter. In Compose, `up{job="testlookup-mcp-tools"}` reports
+scrape health. The telemetry inventory alerts if the target disappears or
+stays down. Tool samples appear after a completed operation and the MCP
+export interval. The exporter caches the latest samples in memory for 90
+seconds. Prometheus stores samples after a successful scrape. Plan for
+processes shorter than a scrape interval to be visible through their durable
+tool logs when the log exporter is configured. Aggregate rates across
+`exported_instance` when the scrape job uses its default target labels.
+The reference scrape accepts at most 20,000 samples and 4 MB per response.
+Measure concurrent process series, including replacement overlap, before
+increasing MCP replicas or connecting additional stdio processes to the
+same collector. An over-budget scrape reports `up=0`.
 
 ## Bounds, durability and loss
 
@@ -80,7 +104,7 @@ work at a 320 MiB soft threshold with a 384 MiB hard limit and a one-second
 check interval; begin with a 512 MiB container limit and measure the selected
 workload before sizing production. It cannot prevent every allocation spike.
 
-Each exporter persists at most 32 MiB of serialized queued telemetry and has
+Each durable exporter persists at most 32 MiB of serialized queued telemetry and has
 two consumers. Batching happens inside the persistent exporter queue, rather
 than in an acknowledged in-memory batch processor: 8 KiB minimum, 64 KiB
 maximum and one-second flush interval. A single indivisible record can exceed
@@ -136,7 +160,9 @@ and persistence, force a 4 KiB test queue to overflow against a disposable
 503 sink, check byte-cap/error metrics and pre-queue canary removal, kill the
 process without shutdown, then verify replay of every accepted synthetic
 trace/log to the recovered sink. A separate short retry sequence verifies
-terminal-loss metrics. The tests use loopback, temporary data and fake
+terminal-loss metrics. The tests also verify that two MCP process streams
+remain distinct and that disallowed metric data stays out of the scrape.
+The tests use loopback, temporary data and fake
 payloads only. They require PyYAML, pytest and the application's OTLP protobuf
 package. Without the binary the runtime tests are skipped; that is not
 production verification.
@@ -161,3 +187,4 @@ Configuration and limits follow the official
 [exporter queue/retry helper](https://github.com/open-telemetry/opentelemetry-collector/tree/v0.166.0/exporter/exporterhelper),
 [file storage extension](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/v0.166.0/extension/storage/filestorage)
 and [Collector resiliency guidance](https://opentelemetry.io/docs/collector/resiliency/).
+The scrape uses the pinned [Prometheus exporter](https://github.com/open-telemetry/opentelemetry-collector-contrib/tree/v0.166.0/exporter/prometheusexporter).

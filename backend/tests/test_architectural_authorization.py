@@ -31,11 +31,15 @@ scoped param in the path.
 """
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from fastapi import Depends
 from fastapi.dependencies.utils import get_flat_dependant
 from fastapi.routing import APIRoute
 
 from app.bootstrap import PROTECTED_ROUTERS, PUBLIC_ROUTERS
+from app.core.deps import _route_role_floor
+from app.models.postgres import UserRole
 
 # Path params that have an approved guard today.
 GUARDED_PARAMS: dict[str, str] = {
@@ -217,6 +221,13 @@ def _route_is_protected(route: APIRoute) -> bool:
         return True  # no scoped param at all — nothing to guard
 
     dep_names = _walk_deps(route.dependant)
+
+    # This hold belongs to the installation's identity-retention policy. The
+    # same parameter name on project-retention routes still needs project scope.
+    if (path == "/api/v1/identity/retention/holds/{hold_id}/release"
+            and route.endpoint.__module__ == "app.routers.identity_events"
+            and route.methods == {"POST"}):
+        return _route_role_floor(SimpleNamespace(scope={"route": route})) is UserRole.ADMIN
 
     # Outermost project scope covers everything nested under it.
     if "{project_id}" in path and any("require_project_access" in n for n in dep_names):

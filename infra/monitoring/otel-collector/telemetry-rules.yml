@@ -9,6 +9,13 @@ groups:
           telemetry_profile: compose
           telemetry_role: otel-collector
 
+      - record: testlookup:telemetry_expected_role
+        expr: vector(1)
+        labels:
+          job: testlookup-mcp-tools
+          telemetry_profile: compose
+          telemetry_role: mcp-tools
+
       - alert: TestLookupTelemetryExporterQueueHigh
         expr: |
           (

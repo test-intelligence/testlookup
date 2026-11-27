@@ -8,7 +8,7 @@ spec:
     matchExpressions:
       - key: app.kubernetes.io/component
         operator: In
-        values: [api, worker, mcp-server]
+        values: [api, worker, scheduler, mcp-server]
   policyTypes: [Egress]
   egress:
     - to:
