@@ -353,14 +353,20 @@ async def test_an_export_with_under_a_second_left_is_refused_as_expired(
 
 
 async def test_the_ticket_lives_no_longer_than_the_export(factory: Any, world: Any, redis: FakeRedis) -> None:
+    expires_at = datetime.now(timezone.utc) + timedelta(seconds=30)
     job = await _job(factory, kind="export", status="succeeded", project_id=world.project.id,
                      requested_by_id=world.lead.id, storage_key="project-exports/x/a.zip",
-                     expires_at=datetime.now(timezone.utc) + timedelta(seconds=30))
+                     expires_at=expires_at)
     async with _client(factory, world.lead) as client:
         minted = await client.post(_ticket_path(job.id))
+    after = datetime.now(timezone.utc)
     assert minted.status_code == 200
     (_, (_, _, ex)), = redis.store.items()
-    assert minted.json()["expires_in"] == ex and 28 <= ex <= 30
+    # The ticket lives the whole seconds left on the export, under the 60 s cap.
+    # The lower bound is read from the clock after minting, not assumed: a fixed
+    # 28 s failed on a loaded CI runner that took over 3 s to mint (main bc71694c).
+    assert minted.json()["expires_in"] == ex
+    assert int((expires_at - after).total_seconds()) <= ex <= 30
 
 
 async def test_without_redis_the_ticket_is_503_with_its_sentence(
