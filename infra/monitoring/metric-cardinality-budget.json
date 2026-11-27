@@ -1,0 +1,172 @@
+{
+  "schema_version": 1,
+  "scope": "Selected bounded governance, stage and task families; not the whole registry or a live capacity measurement",
+  "vocabulary_module": "backend/app/core/metric_dimensions.py",
+  "scope_labels": [
+    "installation",
+    "environment",
+    "cluster",
+    "namespace"
+  ],
+  "task_registry_limit": 128,
+  "families": [
+    {
+      "instrument": "test_case_transitions_total",
+      "exported_name": "testlookup_test_case_transitions_total",
+      "dimensions": {
+        "from": "LIFECYCLE_STATES",
+        "to": "LIFECYCLE_STATES",
+        "actor_role": "ACTOR_ROLES"
+      },
+      "max_children": 600,
+      "max_samples_per_child": 2,
+      "max_series_per_process": 1200
+    },
+    {
+      "instrument": "test_case_promotions_total",
+      "exported_name": "testlookup_test_case_promotions_total",
+      "dimensions": {},
+      "max_children": 1,
+      "max_samples_per_child": 2,
+      "max_series_per_process": 2
+    },
+    {
+      "instrument": "test_case_deprecations_without_reason_total",
+      "exported_name": "testlookup_test_case_deprecations_without_reason_total",
+      "dimensions": {},
+      "max_children": 1,
+      "max_samples_per_child": 2,
+      "max_series_per_process": 2
+    },
+    {
+      "instrument": "pipeline_stage_duration_seconds",
+      "exported_name": "testlookup_pipeline_stage_duration_seconds",
+      "dimensions": {
+        "stage_name": "STAGE_NAMES",
+        "status": [
+          "completed",
+          "failed"
+        ]
+      },
+      "max_children": 54,
+      "max_samples_per_child": 12,
+      "max_series_per_process": 648
+    },
+    {
+      "instrument": "pipeline_stage_runs_total",
+      "exported_name": "testlookup_pipeline_stage_runs_total",
+      "dimensions": {
+        "stage_name": "STAGE_NAMES",
+        "status": [
+          "completed",
+          "failed"
+        ]
+      },
+      "max_children": 54,
+      "max_samples_per_child": 2,
+      "max_series_per_process": 108
+    },
+    {
+      "instrument": "pipeline_stage_tokens_total",
+      "exported_name": "testlookup_pipeline_stage_tokens_total",
+      "dimensions": {
+        "stage_name": "STAGE_NAMES",
+        "direction": [
+          "input",
+          "output"
+        ]
+      },
+      "max_children": 54,
+      "max_samples_per_child": 2,
+      "max_series_per_process": 108
+    },
+    {
+      "instrument": "pipeline_stage_cost_usd",
+      "exported_name": "testlookup_pipeline_stage_cost_usd_total",
+      "dimensions": {
+        "stage_name": "STAGE_NAMES"
+      },
+      "max_children": 27,
+      "max_samples_per_child": 2,
+      "max_series_per_process": 54
+    },
+    {
+      "instrument": "pipeline_stage_llm_calls_total",
+      "exported_name": "testlookup_pipeline_stage_llm_calls_total",
+      "dimensions": {
+        "stage_name": "STAGE_NAMES"
+      },
+      "max_children": 27,
+      "max_samples_per_child": 2,
+      "max_series_per_process": 54
+    },
+    {
+      "instrument": "pipeline_fallback_total",
+      "exported_name": "testlookup_pipeline_fallback_total",
+      "dimensions": {
+        "stage_name": "STAGE_NAMES",
+        "reason": "FALLBACK_REASONS"
+      },
+      "max_children": 189,
+      "max_samples_per_child": 2,
+      "max_series_per_process": 378
+    },
+    {
+      "instrument": "pipeline_stage_errors_by_category",
+      "exported_name": "testlookup_pipeline_stage_errors_by_category_total",
+      "dimensions": {
+        "stage_name": "STAGE_NAMES",
+        "error_category": "ERROR_CATEGORIES"
+      },
+      "max_children": 243,
+      "max_samples_per_child": 2,
+      "max_series_per_process": 486
+    },
+    {
+      "instrument": "celery_tasks_total",
+      "exported_name": "testlookup_celery_tasks_total",
+      "dimensions": {
+        "task_name": "MAX_METRIC_TASK_NAMES+other",
+        "status": "TASK_STATES"
+      },
+      "max_children": 1419,
+      "max_samples_per_child": 2,
+      "max_series_per_process": 2838
+    },
+    {
+      "instrument": "celery_task_runtime_seconds",
+      "exported_name": "celery_task_runtime_seconds",
+      "dimensions": {
+        "task_name": "MAX_METRIC_TASK_NAMES+other",
+        "queue_name": "TASK_QUEUE_FAMILIES"
+      },
+      "max_children": 1032,
+      "max_samples_per_child": 15,
+      "max_series_per_process": 15480
+    }
+  ],
+  "conservative_series_per_process": 21358,
+  "retired_families": [
+    "testlookup_test_cases_by_state",
+    "testlookup_automation_cases_orphaned",
+    "testlookup_workflow_eval_coverage"
+  ],
+  "deployment_formula": "Sum of active exporter targets times their applicable process bound; allow overlapping build vocabularies and TSDB retention churn. One multiprocess exporter per producer directory, never duplicate-scrape it.",
+  "unclosed_dimensions": [
+    {
+      "family": "testlookup_feature_flag_evaluations_total",
+      "dimension": "flag_key",
+      "boundary": "administrator-managed feature registry; review before admitting arbitrary flags"
+    },
+    {
+      "family": "testlookup_llm_unpriced_calls_total",
+      "dimension": "model",
+      "boundary": "configured model identities; capacity inventory required on configuration changes"
+    },
+    {
+      "family": "testlookup_llm_circuit_breaker_state",
+      "dimension": "endpoint",
+      "boundary": "configured endpoint digests; configuration churn persists in TSDB retention"
+    }
+  ]
+}

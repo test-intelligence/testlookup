@@ -1,0 +1,161 @@
+rule_files: []
+evaluation_interval: 1m
+fuzzy_compare: true
+tests:
+- name: default dedicated single-installation profile remains usable
+  interval: 1m
+  input_series:
+  - series: testlookup_celery_tasks_total{job="testlookup-worker",task_name="celery.group",status="success",instance="default-worker"}
+    values: 0+3x12
+  promql_expr_test:
+  - expr: sum(increase(testlookup_celery_tasks_total[5m])) by (installation, environment, cluster, namespace, task_name, status)
+    eval_time: 5m
+    exp_samples:
+    - labels: '{task_name="celery.group",status="success"}'
+      value: 15
+- name: counter scope preserves installation environment namespace and replica change
+  interval: 1m
+  input_series:
+  - series: testlookup_celery_tasks_total{job="testlookup-worker",task_name="celery.group",status="success",installation="site-a",environment="production",cluster="cluster-a",namespace="ns-a",instance="worker-1"}
+    values: 0+1x5 stale _x6
+  - series: testlookup_celery_tasks_total{job="testlookup-worker",task_name="celery.group",status="success",installation="site-a",environment="production",cluster="cluster-a",namespace="ns-a",instance="worker-2"}
+    values: 0+2x12
+  - series: testlookup_celery_tasks_total{job="testlookup-worker",task_name="celery.group",status="success",installation="site-a",environment="production",cluster="cluster-a",namespace="ns-a",instance="worker-3"}
+    values: _x5 0+3x6
+  - series: testlookup_celery_tasks_total{job="testlookup-worker",task_name="celery.group",status="success",installation="site-b",environment="production",cluster="cluster-a",namespace="ns-a",instance="worker-1"}
+    values: 0+7x12
+  - series: testlookup_celery_tasks_total{job="testlookup-worker",task_name="celery.group",status="success",installation="site-a",environment="production",cluster="cluster-a",namespace="ns-b",instance="worker-1"}
+    values: 0+11x12
+  - series: testlookup_celery_tasks_total{job="testlookup-worker",task_name="celery.group",status="success",installation="site-a",environment="staging",cluster="cluster-a",namespace="ns-a",instance="worker-1"}
+    values: 0+13x12
+  - series: testlookup_celery_tasks_total{job="testlookup-worker",task_name="celery.group",status="success",instance="default-worker"}
+    values: 0+3x12
+  - series: testlookup_celery_tasks_total{job="testlookup-worker",task_name="celery.group",status="success",installation="site-a",environment="production",cluster="cluster-b",namespace="ns-a",instance="worker-1"}
+    values: 0+17x12
+  promql_expr_test:
+  - expr: sum(increase(testlookup_celery_tasks_total[5m])) by (installation, environment, cluster, namespace, task_name, status)
+    eval_time: 5m
+    exp_samples:
+    - labels: '{installation="site-a",environment="production",cluster="cluster-a",namespace="ns-a",task_name="celery.group",status="success"}'
+      value: 15
+    - labels: '{installation="site-b",environment="production",cluster="cluster-a",namespace="ns-a",task_name="celery.group",status="success"}'
+      value: 35
+    - labels: '{installation="site-a",environment="production",cluster="cluster-a",namespace="ns-b",task_name="celery.group",status="success"}'
+      value: 55
+    - labels: '{installation="site-a",environment="staging",cluster="cluster-a",namespace="ns-a",task_name="celery.group",status="success"}'
+      value: 65
+    - labels: '{task_name="celery.group",status="success"}'
+      value: 15
+    - labels: '{installation="site-a",environment="production",cluster="cluster-b",namespace="ns-a",task_name="celery.group",status="success"}'
+      value: 85
+  - expr: sum(increase(testlookup_celery_tasks_total[5m])) by (installation, environment, cluster, namespace, task_name, status)
+    eval_time: 11m
+    exp_samples:
+    - labels: '{installation="site-a",environment="production",cluster="cluster-a",namespace="ns-a",task_name="celery.group",status="success"}'
+      value: 25
+    - labels: '{installation="site-b",environment="production",cluster="cluster-a",namespace="ns-a",task_name="celery.group",status="success"}'
+      value: 35
+    - labels: '{installation="site-a",environment="production",cluster="cluster-a",namespace="ns-b",task_name="celery.group",status="success"}'
+      value: 55
+    - labels: '{installation="site-a",environment="staging",cluster="cluster-a",namespace="ns-a",task_name="celery.group",status="success"}'
+      value: 65
+    - labels: '{task_name="celery.group",status="success"}'
+      value: 15
+    - labels: '{installation="site-a",environment="production",cluster="cluster-b",namespace="ns-a",task_name="celery.group",status="success"}'
+      value: 85
+- name: histogram buckets merge replicas only inside one scope
+  interval: 1m
+  input_series:
+  - series: testlookup_pipeline_stage_duration_seconds_bucket{job="testlookup-backend",instance="api-1",stage_name="summary",installation="site-a",environment="production",cluster="cluster-a",namespace="ns-a",le="1"}
+    values: 0+2x12
+  - series: testlookup_pipeline_stage_duration_seconds_bucket{job="testlookup-backend",instance="api-1",stage_name="summary",installation="site-a",environment="production",cluster="cluster-a",namespace="ns-a",le="2"}
+    values: 0+2x12
+  - series: testlookup_pipeline_stage_duration_seconds_bucket{job="testlookup-backend",instance="api-1",stage_name="summary",installation="site-a",environment="production",cluster="cluster-a",namespace="ns-a",le="+Inf"}
+    values: 0+2x12
+  - series: testlookup_pipeline_stage_duration_seconds_bucket{job="testlookup-backend",instance="api-2",stage_name="summary",installation="site-a",environment="production",cluster="cluster-a",namespace="ns-a",le="1"}
+    values: 0+2x12
+  - series: testlookup_pipeline_stage_duration_seconds_bucket{job="testlookup-backend",instance="api-2",stage_name="summary",installation="site-a",environment="production",cluster="cluster-a",namespace="ns-a",le="2"}
+    values: 0+2x12
+  - series: testlookup_pipeline_stage_duration_seconds_bucket{job="testlookup-backend",instance="api-2",stage_name="summary",installation="site-a",environment="production",cluster="cluster-a",namespace="ns-a",le="+Inf"}
+    values: 0+2x12
+  - series: testlookup_pipeline_stage_duration_seconds_bucket{job="testlookup-backend",instance="api-1",stage_name="summary",installation="site-b",environment="production",cluster="cluster-a",namespace="ns-a",le="1"}
+    values: 0+0x12
+  - series: testlookup_pipeline_stage_duration_seconds_bucket{job="testlookup-backend",instance="api-1",stage_name="summary",installation="site-b",environment="production",cluster="cluster-a",namespace="ns-a",le="2"}
+    values: 0+4x12
+  - series: testlookup_pipeline_stage_duration_seconds_bucket{job="testlookup-backend",instance="api-1",stage_name="summary",installation="site-b",environment="production",cluster="cluster-a",namespace="ns-a",le="+Inf"}
+    values: 0+4x12
+  - series: testlookup_pipeline_stage_duration_seconds_bucket{job="testlookup-backend",instance="api-1",stage_name="summary",installation="site-a",environment="production",cluster="cluster-a",namespace="ns-b",le="1"}
+    values: 0+0x12
+  - series: testlookup_pipeline_stage_duration_seconds_bucket{job="testlookup-backend",instance="api-1",stage_name="summary",installation="site-a",environment="production",cluster="cluster-a",namespace="ns-b",le="2"}
+    values: 0+4x12
+  - series: testlookup_pipeline_stage_duration_seconds_bucket{job="testlookup-backend",instance="api-1",stage_name="summary",installation="site-a",environment="production",cluster="cluster-a",namespace="ns-b",le="+Inf"}
+    values: 0+4x12
+  - series: testlookup_pipeline_stage_duration_seconds_bucket{job="testlookup-backend",instance="default-api",stage_name="summary",le="1"}
+    values: 0+2x12
+  - series: testlookup_pipeline_stage_duration_seconds_bucket{job="testlookup-backend",instance="default-api",stage_name="summary",le="2"}
+    values: 0+2x12
+  - series: testlookup_pipeline_stage_duration_seconds_bucket{job="testlookup-backend",instance="default-api",stage_name="summary",le="+Inf"}
+    values: 0+2x12
+  promql_expr_test:
+  - expr: histogram_quantile(0.50, sum(rate(testlookup_pipeline_stage_duration_seconds_bucket[5m])) by (installation, environment,
+      cluster, namespace, stage_name, le))
+    eval_time: 5m
+    exp_samples:
+    - labels: '{installation="site-a",environment="production",cluster="cluster-a",namespace="ns-a",stage_name="summary"}'
+      value: 0.5
+    - labels: '{installation="site-b",environment="production",cluster="cluster-a",namespace="ns-a",stage_name="summary"}'
+      value: 1.5
+    - labels: '{installation="site-a",environment="production",cluster="cluster-a",namespace="ns-b",stage_name="summary"}'
+      value: 1.5
+    - labels: '{stage_name="summary"}'
+      value: 0.5
+  - expr: histogram_quantile(0.95, sum(rate(testlookup_pipeline_stage_duration_seconds_bucket[5m])) by (installation, environment,
+      cluster, namespace, stage_name, le))
+    eval_time: 5m
+    exp_samples:
+    - labels: '{installation="site-a",environment="production",cluster="cluster-a",namespace="ns-a",stage_name="summary"}'
+      value: 0.95
+    - labels: '{installation="site-b",environment="production",cluster="cluster-a",namespace="ns-a",stage_name="summary"}'
+      value: 1.95
+    - labels: '{installation="site-a",environment="production",cluster="cluster-a",namespace="ns-b",stage_name="summary"}'
+      value: 1.95
+    - labels: '{stage_name="summary"}'
+      value: 0.95
+- name: tier task failures retain default and separate site scopes
+  interval: 1h
+  input_series:
+  - series: testlookup_celery_tasks_total{job="testlookup-worker",instance="worker",task_name="app.worker.tasks.run_flaky_quarantine_maintenance",status="failure",installation="site-a",environment="production",cluster="cluster-a",namespace="ns-a"}
+    values: 0+1x30
+  - series: testlookup_celery_tasks_total{job="testlookup-worker",instance="worker",task_name="app.worker.tasks.run_flaky_quarantine_maintenance",status="failure",installation="site-b",environment="production",cluster="cluster-a",namespace="ns-a"}
+    values: 0+2x30
+  - series: testlookup_celery_tasks_total{job="testlookup-worker",instance="worker",task_name="app.worker.tasks.run_flaky_quarantine_maintenance",status="failure",installation="site-a",environment="production",cluster="cluster-a",namespace="ns-b"}
+    values: 0+3x30
+  - series: testlookup_celery_tasks_total{job="testlookup-worker",instance="worker",task_name="app.worker.tasks.run_flaky_quarantine_maintenance",status="failure"}
+    values: 0+4x30
+  promql_expr_test:
+  - expr: sum by (installation, environment, cluster, namespace, task_name) (increase(testlookup_celery_tasks_total{task_name=~"app.worker.tasks.(run_flaky_quarantine_maintenance|refresh_perf_baselines|dispatch_scheduled_digests|deliver_webhook|flag_orphan_test_suites|run_suite_membership_parity)",
+      status="failure"}[24h]))
+    eval_time: 24h
+    exp_samples:
+    - labels: '{installation="site-a",environment="production",cluster="cluster-a",namespace="ns-a",task_name="app.worker.tasks.run_flaky_quarantine_maintenance"}'
+      value: 24
+    - labels: '{installation="site-b",environment="production",cluster="cluster-a",namespace="ns-a",task_name="app.worker.tasks.run_flaky_quarantine_maintenance"}'
+      value: 48
+    - labels: '{installation="site-a",environment="production",cluster="cluster-a",namespace="ns-b",task_name="app.worker.tasks.run_flaky_quarantine_maintenance"}'
+      value: 72
+    - labels: '{task_name="app.worker.tasks.run_flaky_quarantine_maintenance"}'
+      value: 96
+- name: zero activity remains zero and a genuinely absent producer is no data
+  interval: 1m
+  input_series:
+  - series: testlookup_celery_tasks_total{job="testlookup-worker",task_name="celery.group",status="success",instance="worker"}
+    values: '0x12'
+  promql_expr_test:
+  - expr: sum(increase(testlookup_celery_tasks_total[5m])) by (installation, environment, cluster, namespace, task_name, status)
+    eval_time: 5m
+    exp_samples:
+    - labels: '{task_name="celery.group",status="success"}'
+      value: 0
+  - expr: sum(increase(testlookup_celery_tasks_total[5m])) by (installation, environment, cluster, namespace, task_name, status)
+    eval_time: 20m
+    exp_samples: []

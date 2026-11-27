@@ -35,6 +35,7 @@ import pytest
 pytest.importorskip("prometheus_client")
 
 from prometheus_client.metrics import MetricWrapperBase  # noqa: E402
+from prometheus_client.core import Metric  # noqa: E402
 
 from app.core import metrics  # noqa: E402
 
@@ -95,6 +96,12 @@ def exported_series(module: Any = metrics) -> dict[str, str]:
     """Every series name the declared metrics export -> the declared name."""
     out: dict[str, str] = {}
     for value in vars(module).values():
+        if isinstance(value, Metric):
+            # Unregistered custom-collector templates are emitted as one
+            # coherent per-scrape bundle, never native multiprocess Gauges.
+            for suffix in _EXPORTED_SUFFIXES.get(value.type, ("",)):
+                out[value.name + suffix] = value.name
+            continue
         if not isinstance(value, MetricWrapperBase):
             continue
         stored, kind = value._name, value._type

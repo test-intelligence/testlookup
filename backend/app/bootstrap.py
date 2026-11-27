@@ -415,6 +415,11 @@ def configure_metrics(app: FastAPI) -> None:
 
     from prometheus_fastapi_instrumentator import Instrumentator
 
+    from app.middleware.journey_sli import JourneySLIMiddleware
+
+    if settings.OBSERVABILITY_INSTALLATION:
+        app.add_middleware(JourneySLIMiddleware)
+
     Instrumentator(
         should_group_status_codes=True,
         should_ignore_untemplated=True,
@@ -534,23 +539,33 @@ def _install_celery_queue_depth_collector(app) -> None:
             from app.services.downstream_operational_metrics import (
                 refresh_downstream_operational_metrics,
             )
+            from app.services.journey_sli_metrics import refresh_journey_cohort_metrics, render_journey_cohort_metrics
             from app.services.metric_collection import collect_bounded
             from app.services.nightly_job_observation import refresh_nightly_job_metrics
             from app.services.pipeline_event_operational_metrics import refresh_pipeline_event_operational_metrics
             from app.services.redis_resource_metrics import refresh_redis_resource_metrics
 
-            await asyncio.gather(
-                collect_bounded("queues", _refresh_celery_queue_depths),
-                collect_bounded("agents", refresh_agent_operational_metrics),
-                collect_bounded("downstream", refresh_downstream_operational_metrics),
-                collect_bounded("redis", refresh_redis_resource_metrics),
-                collect_bounded("nightly", refresh_nightly_job_metrics),
-                collect_bounded("digests", refresh_digest_operational_metrics),
-                collect_bounded("pipeline_events", refresh_pipeline_event_operational_metrics),
-            )
+            collectors = {
+                "queues": _refresh_celery_queue_depths,
+                "agents": refresh_agent_operational_metrics,
+                "downstream": refresh_downstream_operational_metrics,
+                "redis": refresh_redis_resource_metrics,
+                "nightly": refresh_nightly_job_metrics,
+                "digests": refresh_digest_operational_metrics,
+                "pipeline_events": refresh_pipeline_event_operational_metrics,
+            }
+            if settings.OBSERVABILITY_INSTALLATION:
+                collectors["journeys"] = refresh_journey_cohort_metrics
+            collected = await asyncio.gather(*(collect_bounded(name, refresh) for name, refresh in collectors.items()))
             result = __orig(*args, **kwargs)
             if inspect.isawaitable(result):
                 result = await result
+            if dict(zip(collectors, collected)).get("journeys"):
+                # Append one immutable snapshot from the process serving this
+                # scrape. Multiprocess gauges could merge outcomes from two
+                # readers of the same changing rows into a false denominator.
+                result.body += render_journey_cohort_metrics()
+                result.headers["Content-Length"] = str(len(result.body))
             return result
 
         route.endpoint = _endpoint

@@ -538,6 +538,7 @@ jobs:
           tool="$scratch/$prometheus_dir/promtool"
           monitoring="infra/monitoring"
           "$tool" check rules "$monitoring/prometheus-rules/testlookup-alerts.yml"
+          "$tool" check rules "$monitoring/objectives/api-slos.yml" "$monitoring/objectives/adoption.example.yml"
           "$tool" test rules "$monitoring"/tests/*.yml
           # Mirror the Compose mounts and validate included scrape jobs and rules.
           mkdir "$scratch/config"
@@ -548,6 +549,9 @@ jobs:
             printf '%s\n' 'synthetic-test-token' > "$scratch/config/metrics-token"
             "$tool" check config "$scratch/config/prometheus.yml"
           done
+          cp "$monitoring/objectives/api-slos.yml" "$scratch/config/rules/"
+          cp "$monitoring/objectives/adoption.example.yml" "$scratch/config/rules/slo-adoption.yml"
+          "$tool" check config "$scratch/config/prometheus.yml"
           cp "$monitoring/alertmanager/telemetry-contract.yml" "$scratch/config/alertmanager-contract.yml"
           for input in incident-url watchdog-url; do
             printf '%s\n' "https://receiver.invalid/$input" > "$scratch/$input"
@@ -1149,6 +1153,7 @@ jobs:
           tests/integration/test_nightly_job_observation_postgres.py
           tests/integration/test_pipeline_event_outbox_postgres.py
           tests/integration/test_identity_retention_postgres.py
+          tests/integration/test_journey_sli_postgres.py
           tests/integration/test_engine_hides_parameters_postgres.py
           tests/integration/test_decision_report_supersession_postgres_mongo.py
           tests/integration/test_http_exchanges_postgres_mongo.py

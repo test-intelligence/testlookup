@@ -649,6 +649,8 @@ class RunDownstreamOutbox(Base):
 
     __tablename__ = "run_downstream_outbox"
     __table_args__ = (
+        # 0264: retained SLI acceptance cohorts filter the timestamp first.
+        Index("ix_run_downstream_outbox_created_at", "created_at"),
         UniqueConstraint(
             "run_id",
             "operation",
@@ -2594,6 +2596,7 @@ class AgentPipelineRun(Base):
     """Tracks a single execution of the multi-agent pipeline for a test run."""
     __tablename__ = "agent_pipeline_runs"
     __table_args__ = (
+        Index("ix_agent_pipeline_runs_created_at", "created_at"),  # 0264 cohort horizon
         Index("ix_pipeline_runs_test_run", "test_run_id"),
         Index("ix_pipeline_runs_status", "status"),
         CheckConstraint(

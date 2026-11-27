@@ -1,0 +1,26 @@
+rule_files: []
+evaluation_interval: 1m
+tests:
+- name: thirty days require the baseline sample and cannot be proven by fifteen days of retention
+  interval: 5m
+  input_series:
+  - series: testlookup:api_sli_five_minute_checkpoint{installation="site-a",environment="production",cluster="lab",namespace="prod",objective="api_availability"}
+    values: _ 1x8639
+  promql_expr_test:
+  - expr: (clamp_max(count_over_time(testlookup:api_sli_five_minute_checkpoint[30d]) / 8640, 1)) >= 1
+    eval_time: 43199m
+    exp_samples: []
+  - expr: (clamp_max(count_over_time(testlookup:api_sli_five_minute_checkpoint[30d]) / 8640, 1)) >= 1
+    eval_time: 43200m
+    exp_samples:
+    - labels: '{installation="site-a",environment="production",cluster="lab",namespace="prod",objective="api_availability"}'
+      value: 1
+- name: fifteen retained days never become a healthy thirty-day budget
+  interval: 5m
+  input_series:
+  - series: testlookup:api_sli_five_minute_checkpoint{installation="site-a",environment="production",cluster="lab",namespace="prod",objective="api_availability"}
+    values: _x4320 1x4319
+  promql_expr_test:
+  - expr: (clamp_max(count_over_time(testlookup:api_sli_five_minute_checkpoint[30d]) / 8640, 1)) >= 1
+    eval_time: 43200m
+    exp_samples: []

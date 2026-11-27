@@ -16,6 +16,9 @@ from app.core.metrics import (
     pipeline_stage_tokens_total,
 )
 from app.core.config import settings
+from app.core.metric_dimensions import (
+    ERROR_CATEGORIES, FALLBACK_REASONS, STAGE_NAMES, bounded_dimension,
+)
 from app.core.tracing import get_tracer
 from app.db.postgres import AsyncSessionLocal
 from app.models.postgres import AgentPipelineRun, AgentStageResult
@@ -354,34 +357,37 @@ class BaseAgent(ABC):
         }
 
         # Record Prometheus metrics
+        # A workflow may rename every step. Use its static agent capability
+        # for metrics; retain the runtime step ID in SQL, events and traces.
+        metric_stage_name = bounded_dimension(type(self).stage_name, STAGE_NAMES)
         duration = time.perf_counter() - self._stage_start.pop(pipeline_run_id, time.perf_counter())
         pipeline_stage_duration_seconds.labels(
-            stage_name=runtime_stage_name(type(self).stage_name), status=status
+            stage_name=metric_stage_name, status=status
         ).observe(duration)
         pipeline_stage_runs_total.labels(
-            stage_name=runtime_stage_name(type(self).stage_name), status=status
+            stage_name=metric_stage_name, status=status
         ).inc()
 
         # Phase 6: Token, cost, LLM call, fallback, and error metrics
         if input_tokens > 0:
             pipeline_stage_tokens_total.labels(
-                stage_name=runtime_stage_name(type(self).stage_name), direction="input"
+                stage_name=metric_stage_name, direction="input"
             ).inc(input_tokens)
         if output_tokens > 0:
             pipeline_stage_tokens_total.labels(
-                stage_name=runtime_stage_name(type(self).stage_name), direction="output"
+                stage_name=metric_stage_name, direction="output"
             ).inc(output_tokens)
         if cost_usd > 0:
-            pipeline_stage_cost_usd.labels(stage_name=runtime_stage_name(type(self).stage_name)).inc(cost_usd)
+            pipeline_stage_cost_usd.labels(stage_name=metric_stage_name).inc(cost_usd)
         if llm_calls_count > 0:
-            pipeline_stage_llm_calls_total.labels(stage_name=runtime_stage_name(type(self).stage_name)).inc(llm_calls_count)
+            pipeline_stage_llm_calls_total.labels(stage_name=metric_stage_name).inc(llm_calls_count)
         if fallback_reason:
             pipeline_fallback_total.labels(
-                stage_name=runtime_stage_name(type(self).stage_name), reason=fallback_reason[:50]
+                stage_name=metric_stage_name, reason=bounded_dimension(fallback_reason, FALLBACK_REASONS)
             ).inc()
         if error_category:
             pipeline_stage_errors_by_category.labels(
-                stage_name=runtime_stage_name(type(self).stage_name), error_category=error_category
+                stage_name=metric_stage_name, error_category=bounded_dimension(error_category, ERROR_CATEGORIES)
             ).inc()
 
         # Tier 1 item 2 — feed the LLM cost meter. Runs only when the caller

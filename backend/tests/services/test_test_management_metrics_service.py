@@ -10,11 +10,9 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import metrics as core_metrics
 from app.db import postgres
-from app.models.postgres import TestCaseLifecycleState as LifecycleState
 from app.services import test_management_metrics_service as metrics
 
 
@@ -72,85 +70,42 @@ async def test_post_commit_metric_failure_is_best_effort_and_queue_is_drained(mo
 
 
 @pytest.mark.asyncio
-async def test_state_gauge_sets_every_bounded_state_including_zero(monkeypatch):
-    project_id = __import__("uuid").uuid4()
-    db = SimpleNamespace(
-        execute=AsyncMock(
-            return_value=SimpleNamespace(all=lambda: [("active", 2), ("draft", 1)])
-        )
-    )
-    values = {}
-    gauge = Mock()
+async def test_many_project_lifecycles_share_bounded_counters_without_sql_refresh(monkeypatch):
+    from prometheus_client import CollectorRegistry, Counter, generate_latest
 
-    def _labels(project, state):
-        child = Mock()
-        child.set.side_effect = lambda value: values.__setitem__((project, state), value)
-        return child
+    registry = CollectorRegistry()
+    transitions = Counter("testlookup_test_case_transitions_total", "test", ["from", "to", "actor_role"], registry=registry)
+    promotions = Counter("testlookup_test_case_promotions_total", "test", registry=registry)
+    deprecations = Counter("testlookup_test_case_deprecations_without_reason_total", "test", registry=registry)
+    monkeypatch.setattr(core_metrics, "test_case_transitions_total", transitions)
+    monkeypatch.setattr(core_metrics, "test_case_promotions_total", promotions)
+    monkeypatch.setattr(core_metrics, "test_case_deprecations_without_reason_total", deprecations)
+    db = SimpleNamespace(info={}, execute=AsyncMock(side_effect=AssertionError("metrics must not read SQL")))
+    # Project create/delete/recreate cycles must change volume, never series.
+    for generation in range(2):
+        for project in range(1000):
+            project_id = f"project-{generation}-{project}"
+            metrics.stage_test_management_counter(db, "transition", (project_id, "draft", "active", "QA_ENGINEER"))
+            metrics.stage_test_management_counter(db, "promotion", (project_id,))
+            metrics.stage_test_management_counter(db, "deprecation_without_reason", (project_id,))
+        await metrics.emit_staged_test_management_metrics(db)
 
-    gauge.labels.side_effect = _labels
-    monkeypatch.setattr(core_metrics, "test_cases_by_state", gauge)
-
-    await metrics._refresh_state_gauge(db, project_id)
-
-    assert len(values) == len(LifecycleState)
-    assert values[(str(project_id), "active")] == 2
-    assert values[(str(project_id), "draft")] == 1
-    assert values[(str(project_id), "archived")] == 0
-
-
-@pytest.mark.asyncio
-async def test_post_commit_refreshes_state_and_orphan_gauges_once(monkeypatch):
-    project_id = __import__("uuid").uuid4()
-    db = _session()
-    state_refresh = AsyncMock()
-    orphan_refresh = AsyncMock()
-    monkeypatch.setattr(metrics, "_refresh_state_gauge", state_refresh)
-    monkeypatch.setattr(metrics, "_refresh_orphan_gauge", orphan_refresh)
-
-    metrics.stage_test_case_state_refresh(db, project_id)
-    metrics.stage_test_case_state_refresh(db, project_id)
-    metrics.stage_orphan_gauge_refresh(db, project_id)
-    await metrics.emit_staged_test_management_metrics(db)
-
-    state_refresh.assert_awaited_once_with(db, project_id)
-    orphan_refresh.assert_awaited_once_with(db, project_id)
+    assert transitions.labels("draft", "active", "QA_ENGINEER")._value.get() == 2000
+    assert promotions._value.get() == deprecations._value.get() == 2000
+    samples = [sample for family in registry.collect() for sample in family.samples]
+    assert len(samples) == 6  # total + created for three counter children
+    assert b"project-" not in generate_latest(registry)
     assert db.info == {}
+    db.execute.assert_not_awaited()
 
 
-@pytest.mark.asyncio
-async def test_rollback_discards_staged_gauge_refreshes(monkeypatch):
-    project_id = __import__("uuid").uuid4()
-    db = _session()
-    state_refresh = AsyncMock()
-    orphan_refresh = AsyncMock()
-    monkeypatch.setattr(metrics, "_refresh_state_gauge", state_refresh)
-    monkeypatch.setattr(metrics, "_refresh_orphan_gauge", orphan_refresh)
-    metrics.stage_test_case_state_refresh(db, project_id)
-    metrics.stage_orphan_gauge_refresh(db, project_id)
-
-    metrics.discard_staged_test_management_metrics(db)
-    await metrics.emit_staged_test_management_metrics(db)
-
-    state_refresh.assert_not_awaited()
-    orphan_refresh.assert_not_awaited()
-    assert db.info == {}
-
-
-@pytest.mark.asyncio
-async def test_orphan_gauge_refresh_explicitly_resets_zero(monkeypatch):
-    project_id = __import__("uuid").uuid4()
-    db = SimpleNamespace(
-        execute=AsyncMock(
-            return_value=SimpleNamespace(scalar=lambda: 0)
-        )
-    )
-    gauge = Mock()
-    monkeypatch.setattr(core_metrics, "automation_cases_orphaned", gauge)
-
-    await metrics._refresh_orphan_gauge(db, project_id)
-
-    gauge.labels.assert_called_once_with(str(project_id))
-    gauge.labels.return_value.set.assert_called_once_with(0)
+def test_unexpected_transition_dimensions_collapse_without_losing_event_count(monkeypatch):
+    counter = Mock()
+    monkeypatch.setattr(core_metrics, "test_case_transitions_total", counter)
+    for index in range(1000):
+        metrics._emit_counter("transition", (f"project-{index}", f"old-{index}", f"new-{index}", f"role-{index}"))
+    assert counter.labels.call_count == 1000
+    assert {call.args for call in counter.labels.call_args_list} == {("other", "other", "other")}
 
 
 def test_test_double_without_session_info_uses_documented_immediate_fallback(
@@ -178,34 +133,6 @@ class _SessionContext:
 
     async def __aexit__(self, *_args):
         return False
-
-
-@pytest.mark.asyncio
-async def test_failed_gauge_read_is_isolated_from_committed_request_session(
-    monkeypatch,
-):
-    project_id = __import__("uuid").uuid4()
-    request_db = AsyncSession()
-    isolated_db = SimpleNamespace()
-    state_refresh = AsyncMock(side_effect=RuntimeError("read transaction failed"))
-    monkeypatch.setattr(metrics, "_refresh_state_gauge", state_refresh)
-    monkeypatch.setattr(
-        postgres,
-        "get_session_factory",
-        lambda: lambda: _SessionContext(isolated_db),
-    )
-    metrics.stage_test_case_state_refresh(request_db, project_id)
-
-    try:
-        # A telemetry failure after commit must be swallowed and must never
-        # open or abort a transaction on the response-producing session.
-        await metrics.emit_staged_test_management_metrics(request_db)
-
-        state_refresh.assert_awaited_once_with(isolated_db, project_id)
-        assert request_db.info == {}
-        assert request_db.in_transaction() is False
-    finally:
-        await request_db.close()
 
 
 @pytest.mark.asyncio

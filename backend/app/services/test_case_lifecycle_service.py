@@ -36,7 +36,6 @@ from app.models.postgres import (
 )
 from app.services.test_management_audit_service import audit_event
 from app.services.test_management_metrics_service import (
-    stage_test_case_state_refresh,
     stage_test_management_counter,
 )
 
@@ -406,7 +405,6 @@ def stage_test_case_snapshot(
         assignee_id=getattr(test_case, "assignee_id", None),
     )
     db.add(version)
-    stage_test_case_state_refresh(db, test_case.project_id)
     return version
 
 

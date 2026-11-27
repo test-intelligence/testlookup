@@ -186,6 +186,8 @@ docker compose -f docker-compose.yml -f docker-compose.monitoring.yml up -d
 
 All of these listen on `127.0.0.1` only (`MONITORING_PUBLISH_ADDR`): Jaeger, the OTLP receivers and Prometheus have no authentication. Prometheus runs without `--web.enable-lifecycle`, so restart its container to reload the configuration.
 
+The optional objectives overlay records core API availability and latency for a named installation, with separate adoption and routing for burn alerts. [API objectives](api-objectives.md).
+
 The override sets `OTEL_ENABLED=true`, `OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318` and `METRICS_ENABLED=true` on the backend. The same alert rules are rendered for Kubernetes in [`k8s/monitoring`](deploy-kubernetes.md#monitoring-podmonitor-and-prometheusrule). Metric and alert reference: [observability](../../architecture/OBSERVABILITY.md).
 
 Use the [alert routing overlay](alert-routing.md) to deliver incident notifications and an independent watchdog over authenticated HTTPS. The [telemetry contract](telemetry-contract.md) lists the required roles and series.

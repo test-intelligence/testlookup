@@ -8,6 +8,7 @@ All metric objects are module-level singletons — import directly:
     from app.core.metrics import ingestion_runs_total, pipeline_stage_duration_seconds
 """
 from prometheus_client import Counter, Gauge, Histogram
+from prometheus_client.core import GaugeMetricFamily
 
 # ── Ingestion ─────────────────────────────────────────────────────────────────
 
@@ -302,13 +303,13 @@ pipeline_stage_llm_calls_total = Counter(
 pipeline_fallback_total = Counter(
     "testlookup_pipeline_fallback_total",
     "Number of fallback invocations per agent stage",
-    ["stage_name", "reason"],  # reason: llm_timeout | llm_error | token_limit | provider_unavailable
+    ["stage_name", "reason"],  # closed capability/reason inventories: metric_dimensions.py
 )
 
 pipeline_stage_errors_by_category = Counter(
     "testlookup_pipeline_stage_errors_by_category",
     "Error counts by category per agent stage",
-    ["stage_name", "error_category"],  # error_category: transient | permanent | provider_error | token_limit | timeout
+    ["stage_name", "error_category"],  # closed inventories: metric_dimensions.py
 )
 
 # ── Release Gate ──────────────────────────────────────────────────────────────
@@ -560,33 +561,17 @@ report_exports_total = Counter(
 test_case_transitions_total = Counter(
     "testlookup_test_case_transitions_total",
     "Validated authored test-case lifecycle transitions",
-    ["project", "from", "to", "actor_role"],
-)
-
-test_cases_by_state = Gauge(
-    "testlookup_test_cases_by_state",
-    "Current authored test cases in each governed lifecycle state",
-    ["project", "state"],
-    multiprocess_mode="mostrecent",
+    ["from", "to", "actor_role"],
 )
 
 test_case_promotions_total = Counter(
     "testlookup_test_case_promotions_total",
     "Automation canonical cases promoted into authored test management",
-    ["project"],
 )
 
 test_case_deprecations_without_reason_total = Counter(
     "testlookup_test_case_deprecations_without_reason_total",
     "Legacy DELETE deprecations that used the first-release compatibility reason",
-    ["project"],
-)
-
-automation_cases_orphaned = Gauge(
-    "testlookup_automation_cases_orphaned",
-    "Deleted automation canonical cases awaiting retirement confirmation",
-    ["project"],
-    multiprocess_mode="mostrecent",
 )
 
 # ── Tier 0-2 operations (Phase E-3, 2026-04-15) ─────────────────────────────
@@ -834,15 +819,8 @@ ws_connections_total = Counter(
     ["outcome"],
 )
 
-# E9.5: fraction of candidate workflow steps backed by an exact replay-cache
-# key during the latest dry-run. Project/workflow labels are bounded by stored
-# definitions and let operators distinguish a safe regression result from an
-# insufficient one.
-workflow_eval_coverage = Gauge(
-    "testlookup_workflow_eval_coverage",
-    "Fraction of candidate workflow steps measured by the replay corpus",
-    ["project_id", "workflow_id"],
-)
+# Tenant/workflow current-state analytics stay in SQL and the authorized APIs.
+# Process gauges retained deleted IDs and could not represent a fleet snapshot.
 
 # Operational collection is bounded; a previous gauge value is not proof that
 # its dependency was observed during the current scrape. Shared-state gauges
@@ -1042,3 +1020,28 @@ pipeline_event_admission_failures = Counter(
 )
 for _reason in ("scope", "capacity", "storage", "contention", "payload", "conflict", "other"):
     pipeline_event_admission_failures.labels(reason=_reason)
+
+# Journey SLIs are opt-in and explicitly installation scoped. API counters
+# sum real attempts across processes; durable SQL cohorts are replicated
+# absolute snapshots: select one freshest valid API target for the entire
+# cohort bundle. Independent max per outcome can invent a denominator.
+api_journey_events = Counter(
+    "testlookup_api_journey_events_total", "Eligible completed core API attempts by proposed objective outcome",
+    ["installation", "environment", "objective", "outcome"],
+)
+api_sli_configured = Gauge(
+    "testlookup_api_sli_configured", "API target has initialized both outcomes for this scoped measurement; not objective adoption",
+    ["installation", "environment", "objective"], multiprocess_mode="mostrecent",
+)
+journey_cohort_events = GaugeMetricFamily(
+    "testlookup_journey_cohort_events", "Retained SQL intents in a matured acceptance cohort; not a cumulative counter",
+    labels=["installation", "environment", "journey", "window", "outcome"],
+)
+journey_cohort_observed_at = GaugeMetricFamily(
+    "testlookup_journey_cohort_observed_at_seconds", "UTC observation of the last complete shared SQL cohort snapshot",
+    labels=["installation", "environment"],
+)
+journey_source_supported = GaugeMetricFamily(
+    "testlookup_journey_source_supported", "Whether this journey has the documented retained SQL acceptance/completion source; not historical SLO coverage",
+    labels=["installation", "environment", "journey"],
+)

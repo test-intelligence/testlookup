@@ -9,6 +9,7 @@ contain breaking changes; [UPGRADING.md](UPGRADING.md) lists them).
 
 ### Added
 
+- Optional API objectives report scoped availability, latency, error budgets and measurement coverage. Retained SQL cohorts expose downstream and AI completion, including missed deadlines, and a disposable benchmark measures telemetry capacity.
 - Pipeline events use a PostgreSQL outbox with stable IDs for MongoDB replay, shared delivery health, and project-scoped recovery. Audit archives support independent integrity verification, and an opt-in identity retention policy preserves SCIM authority events.
 - The durable telemetry profile adds queued OpenTelemetry export, persistent Loki logs and Jaeger traces, Grafana correlation, and queue loss alerts. Kubernetes client overlays support a site-operated mTLS gateway, and the offline Compose bundle can include the durable stack.
 - The optional Compose alerting overlay adds a private Alertmanager with authenticated HTTPS incident and watchdog receivers. Compose and Kubernetes monitoring inventories detect missing scrape roles and required metric series.
@@ -19,6 +20,7 @@ contain breaking changes; [UPGRADING.md](UPGRADING.md) lists them).
 
 ### Changed
 
+- Operational metrics bound workflow stage, task and queue labels and remove per-project dimensions from case governance events. Detailed case and workflow state remains in the application. The durable Compose profile accepts an explicit API trace sampling ratio.
 - Weekly digest and nightly maintenance alerts follow durable delivery and execution state. They detect overdue work even when a worker never started the task or was replaced.
 - Celery queue depth reads all configured broker priority lists, including child work, and reports unknown counts when a list cannot be read.
 - Upload publication uses bounded background threads; uncertain queue confirmation retains the payload and returns polling identifiers so callers can check before resubmitting.

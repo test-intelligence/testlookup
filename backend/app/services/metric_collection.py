@@ -18,6 +18,7 @@ from app.core.metrics import (
 logger = structlog.get_logger(__name__)
 COLLECTION_TIMEOUT_SECONDS = 1.0
 COLLECTORS = ("queues", "agents", "downstream", "redis", "nightly", "digests", "pipeline_events")
+OPTIONAL_COLLECTORS = ("journeys",)
 
 
 @dataclass
@@ -40,7 +41,7 @@ async def collect_bounded(
     collector: str, refresh: Callable[[], Coroutine[Any, Any, bool]],
 ) -> bool:
     """Keep exposition available; failed reads never advance freshness."""
-    if collector not in COLLECTORS:
+    if collector not in COLLECTORS and collector not in OPTIONAL_COLLECTORS:
         raise ValueError("unknown metric collector")
     # wait_for waits for cancellation cleanup, which can itself block on a
     # failed database connection. Bound the foreground wait instead. Share

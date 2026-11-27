@@ -10,6 +10,7 @@ Source declarations only; no `.env` or running secrets are read. Compose/Helm/Ku
 |---|---|---|
 | `APP_NAME` | `str` | `'TestLookup'` |
 | `APP_ENV` | `Literal['development', 'staging', 'production']` | `'development'` |
+| `OBSERVABILITY_INSTALLATION` | `str` | `''` |
 | `APP_SECRET_KEY` | `str` | `'change-me-in-production'` |
 | `APP_SECRET_KEY_PREVIOUS` | `Optional[str]` | `None` |
 | `APP_DEBUG` | `bool` | `False` |

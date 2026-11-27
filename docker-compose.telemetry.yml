@@ -106,6 +106,8 @@ services:
     environment:
       <<: *worker-telemetry
       OTEL_EXPORTER_OTLP_ENDPOINT: http://otel-collector:4318
+      OTEL_TRACES_SAMPLER: ${OTEL_TRACES_SAMPLER:-parentbased_always_on}
+      OTEL_TRACES_SAMPLER_ARG: ${OTEL_TRACES_SAMPLER_ARG:-1.0}
       OTEL_LOGS_ROLE: api
     networks: [telemetry_ingress]
     logging: *log-rotation

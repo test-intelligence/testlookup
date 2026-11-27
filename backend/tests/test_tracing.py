@@ -143,6 +143,29 @@ def test_an_endpoint_gets_the_otlp_exporter_and_no_console(monkeypatch):
     assert len(_exporters(providers[0])) == 1
 
 
+def test_trace_sampling_respects_site_ratio_and_sampled_parent(monkeypatch):
+    from opentelemetry import trace
+
+    _, providers = _spy(monkeypatch)
+    monkeypatch.setenv("OTEL_TRACES_SAMPLER", "parentbased_traceidratio")
+    monkeypatch.setenv("OTEL_TRACES_SAMPLER_ARG", "0")
+    tracing.setup_tracing("testlookup", "test", "production", otlp_endpoint=None)
+    provider = providers[0]
+    tracer = provider.get_tracer("synthetic.sampling")
+    parent = trace.SpanContext(
+        trace_id=1, span_id=1, is_remote=True,
+        trace_flags=trace.TraceFlags(trace.TraceFlags.SAMPLED),
+    )
+    context = trace.set_span_in_context(trace.NonRecordingSpan(parent))
+    try:
+        with tracer.start_as_current_span("synthetic.root") as span:
+            assert span.get_span_context().is_valid and not span.is_recording()
+        with tracer.start_as_current_span("synthetic.child", context=context) as span:
+            assert span.is_recording() and span.get_span_context().trace_id == parent.trace_id
+    finally:
+        provider.shutdown()
+
+
 class _NullProcessor:
     def on_start(self, span, parent_context=None):
         pass

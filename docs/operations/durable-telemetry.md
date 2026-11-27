@@ -57,7 +57,7 @@ The added egress policy names the gateway and port. Existing application policie
 
 Add `--with-telemetry` to the standard [offline bundle](../../user-guide/air-gapped-install.md) build. It records upstream digests alongside local image aliases. The OSS Grafana and Loki images are external prerequisites under TestLookup's redistribution policy. The bundle's `compose/telemetry-prerequisites.list` records each pinned source image and required local alias as tab-separated fields. Stage those two images on a connected host, tag each verified image under its listed alias, and transfer and load them using your approved offline image process. [Grafana Labs licensing](https://grafana.com/licensing/).
 
-After verified import and normal registry setup, layer `docker-compose.monitoring.yml` and `docker-compose.telemetry.yml` after the release and air-gap Compose files. Run `docker compose ... up --pull never`. Provide environment files, credentials and optional alert receiver trust from local sources. Perform the first run with outbound network access denied and verify no external image, plugin, catalog or notification dependency is needed.
+After verified import and normal registry setup, layer `docker-compose.monitoring.yml` and `docker-compose.telemetry.yml` after the release and air-gap Compose files. The bundle also includes the optional objectives overlay and its inert adoption example. Run `docker compose ... up --pull never`. Provide environment files, credentials and optional alert receiver trust from local sources. Perform the first run with outbound network access denied and verify no external image, plugin, catalog or notification dependency is needed. [API objectives](api-objectives.md).
 
 ## Acceptance and response
 
@@ -68,4 +68,4 @@ After verified import and normal registry setup, layer `docker-compose.monitorin
 
 The reference configuration follows the [OpenTelemetry Collector resiliency guide](https://opentelemetry.io/docs/collector/resiliency/), [Loki native OTLP mapping](https://grafana.com/docs/loki/latest/send-data/otel/), and [Jaeger storage documentation](https://www.jaegertracing.io/docs/2.23/storage/).
 
-Component details and verification commands are in [collector operations](telemetry-collector.md), [log storage](log-storage.md), and [persistent Jaeger](persistent-jaeger.md).
+Component details and verification commands are in [collector operations](telemetry-collector.md), [log storage](log-storage.md), [persistent Jaeger](persistent-jaeger.md), and [telemetry capacity and sampling](telemetry-capacity.md).

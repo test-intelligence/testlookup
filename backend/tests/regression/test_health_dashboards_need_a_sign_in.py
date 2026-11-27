@@ -19,7 +19,7 @@ import ast
 import json
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from fastapi import FastAPI
@@ -222,6 +222,46 @@ async def test_metrics_stays_open_when_no_token_is_set(monkeypatch):
         response = await client.get("/metrics")
     assert response.status_code == 200
     assert "# HELP" in response.text
+
+
+@pytest.mark.parametrize(("installation", "refresh_succeeds"), [
+    ("scope-fixture", True), ("failing-scope-fixture", False), ("", False),
+])
+async def test_api_objective_and_cohort_collection_follow_explicit_configuration(monkeypatch, installation, refresh_succeeds):
+    from prometheus_client.parser import text_string_to_metric_families
+
+    from app.services import metric_collection
+
+    monkeypatch.setattr(settings, "METRICS_ENABLED", True)
+    monkeypatch.setattr(settings, "METRICS_TOKEN", SCRAPE_TOKEN)
+    monkeypatch.setattr(settings, "METRICS_TOKEN_FILE", "")
+    monkeypatch.setattr(settings, "OBSERVABILITY_INSTALLATION", installation)
+    app = _metrics_app(monkeypatch)
+    metric_collection.collect_bounded.return_value = refresh_succeeds
+    render = Mock(return_value=b"testlookup_journey_cohort_fixture 7\n")
+    monkeypatch.setattr("app.services.journey_sli_metrics.render_journey_cohort_metrics", render)
+
+    @app.get("/api/v1/projects")
+    async def projects():
+        return []
+
+    async with _client(app) as client:
+        assert (await client.get("/api/v1/projects")).status_code == 200
+        assert (await client.get("/metrics")).status_code == 401
+        metric_collection.collect_bounded.assert_not_awaited()
+        response = await client.get("/metrics", headers={"Authorization": "Bearer " + SCRAPE_TOKEN})
+
+    assert response.status_code == 200
+    assert int(response.headers["content-length"]) == len(response.content)
+    assert (b"testlookup_journey_cohort_fixture 7\n" in response.content) == refresh_succeeds
+    assert render.call_count == int(refresh_succeeds)
+    collected = {call.args[0] for call in metric_collection.collect_bounded.await_args_list}
+    assert ("journeys" in collected) == bool(installation)
+    matched = [sample for family in text_string_to_metric_families(response.text)
+               for sample in family.samples if sample.name == "testlookup_api_journey_events_total"
+               and sample.labels == {"installation": installation, "environment": settings.APP_ENV,
+                                     "objective": "api_availability", "outcome": "good"}]
+    assert [sample.value for sample in matched] == ([1] if installation else [])
 
 
 async def test_a_refused_scrape_does_not_refresh_the_queue_depths(monkeypatch):

@@ -1,5 +1,6 @@
 """Celery application configuration."""
 from datetime import timedelta
+from functools import lru_cache
 from pathlib import Path
 import re
 from collections.abc import Mapping
@@ -880,17 +881,31 @@ def _record_task_runtime(task_id=None, task=None, **_kwargs: object) -> None:
         return
     try:
         from app.core.metrics import celery_task_runtime_seconds
+        from app.core.metric_dimensions import task_queue_family
 
         queue = ""
         request = getattr(task, "request", None)
         if request is not None:
             queue = getattr(request, "delivery_info", {}).get("routing_key", "") or ""
         celery_task_runtime_seconds.labels(
-            task_name=getattr(task, "name", "unknown"),
-            queue_name=queue or "unknown",
+            task_name=_metric_task_name(task),
+            queue_name=task_queue_family(queue),
         ).observe(time.perf_counter() - started)
     except Exception:  # noqa: BLE001 — metrics must never break the task
         pass
+
+
+@lru_cache(maxsize=1)
+def _metric_task_names() -> frozenset[str]:
+    """Freeze deployed task identities, never growing with received headers."""
+    from app.core.metric_dimensions import MAX_METRIC_TASK_NAMES
+
+    return frozenset(sorted(celery_app.tasks)[:MAX_METRIC_TASK_NAMES])
+
+
+def _metric_task_name(task: object) -> str:
+    name = getattr(task, "name", None)
+    return name if isinstance(name, str) and name in _metric_task_names() else "other"
 
 
 @task_postrun.connect
@@ -908,17 +923,16 @@ def _record_task_outcome(task_id=None, task=None, state=None, **_kwargs: object)
     that has failed terminally — queue depth cannot, because a task waiting
     on a retry countdown is not on the queue at all.
 
-    ``state`` is Celery's terminal state for this execution: SUCCESS, FAILURE
-    or RETRY. Lower-cased verbatim rather than mapped through a table, so an
-    unexpected state (REVOKED, REJECTED) reports itself instead of being
-    folded into an "other" bucket that means nothing to the reader.
+    Known Celery states retain their names; custom states share ``other``.
+    Task names must belong to the frozen, capped deployed code registry.
     """
     try:
         from app.core.metrics import celery_tasks_total
+        from app.core.metric_dimensions import TASK_STATES, bounded_dimension
 
         celery_tasks_total.labels(
-            task_name=getattr(task, "name", "unknown"),
-            status=str(state or "unknown").lower(),
+            task_name=_metric_task_name(task),
+            status=bounded_dimension(str(state or "unknown").lower(), TASK_STATES),
         ).inc()
     except Exception:  # noqa: BLE001 — metrics must never break the task
         pass

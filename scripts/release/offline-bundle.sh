@@ -284,7 +284,7 @@ if [ "$WITH_TELEMETRY" = true ]; then
   # Only the committed configuration is eligible for an offline package.
   # Operator receiver credentials, local overrides and data directories may
   # live alongside it and must never be copied from the working tree.
-  git -C "$REPO_ROOT" archive "$GIT_SHA" infra/monitoring | tar -xf - -C "$STAGING/compose"
+  git -C "$REPO_ROOT" archive "$GIT_SHA" infra/monitoring docker-compose.objectives.yml | tar -xf - -C "$STAGING/compose"
   cp "$REPO_ROOT/scripts/monitoring/configure_alerting.py" "$STAGING/compose/scripts/monitoring/"
   cp "$REPO_ROOT/docker-compose.monitoring-auth.yml" "$STAGING/compose/"
   for overlay in monitoring telemetry alerting; do
