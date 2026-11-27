@@ -1,8 +1,9 @@
 """
 Refresh token issuance, rotation, and replay detection.
 
-Every refresh token carries a random ``jti`` claim. Only the SHA-256 hex
-digest of the jti is persisted (``RefreshTokenRecord.jti_hash``). On refresh:
+Every refresh token carries a random ``jti`` and signed authentication assurance.
+Only the SHA-256 hex digest of the jti is persisted
+(``RefreshTokenRecord.jti_hash``). On refresh:
 
   1. Look up the presented jti's hash.
   2. If the record is missing, expired, or revoked → 401.
@@ -30,7 +31,7 @@ from typing import Optional
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.security import create_refresh_token, hash_token
+from app.core.security import AuthenticationAssurance, create_refresh_token, hash_token
 from app.models.postgres import RefreshTokenRecord
 
 logger = logging.getLogger(__name__)
@@ -49,9 +50,16 @@ class RefreshTokenReplayError(RefreshTokenError):
     """
 
 
-async def issue_refresh_token(db: AsyncSession, user_id: uuid.UUID) -> str:
+async def issue_refresh_token(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    *,
+    authentication_assurance: AuthenticationAssurance = AuthenticationAssurance.PASSWORD,
+) -> str:
     """Create a new refresh token and persist its server-side record."""
-    encoded, jti, expires_at = create_refresh_token(str(user_id))
+    encoded, jti, expires_at = create_refresh_token(
+        str(user_id), authentication_assurance=authentication_assurance
+    )
     record = RefreshTokenRecord(
         user_id=user_id,
         jti_hash=hash_token(jti),
@@ -66,6 +74,8 @@ async def rotate_refresh_token(
     db: AsyncSession,
     user_id: uuid.UUID,
     presented_jti: str,
+    *,
+    authentication_assurance: AuthenticationAssurance,
 ) -> str:
     """Validate the presented jti, rotate it, and issue a replacement.
 
@@ -109,7 +119,9 @@ async def rotate_refresh_token(
         raise RefreshTokenError("Refresh token has been revoked")
 
     # Happy path: issue a new record and link the old one.
-    new_encoded, new_jti, new_expires_at = create_refresh_token(str(user_id))
+    new_encoded, new_jti, new_expires_at = create_refresh_token(
+        str(user_id), authentication_assurance=authentication_assurance
+    )
     new_record = RefreshTokenRecord(
         user_id=user_id,
         jti_hash=hash_token(new_jti),
