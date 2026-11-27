@@ -937,6 +937,7 @@ jobs:
         env:
           DATABASE_URL: postgresql+asyncpg://testlookup_user:test_password@localhost:5432/testlookup_test
           TESTLOOKUP_POSTGRES_TEST_DSN: postgresql+asyncpg://testlookup_user:test_password@localhost:5432/testlookup_test
+          TESTLOOKUP_VALKEY_OPERATIONAL_TEST_URL: redis://localhost:6379/15
           MONGO_URI: mongodb://localhost:27017
           TESTLOOKUP_MONGO_EVENT_TEST_URI: mongodb://localhost:27017
           REDIS_URL: redis://localhost:6379/0
@@ -982,6 +983,7 @@ jobs:
           tests/integration/test_report_eval_cycle_postgres.py
           tests/integration/test_run_downstream_outbox_postgres.py
           tests/integration/test_downstream_dispatch_postgres.py
+          tests/integration/test_downstream_operational_metrics_postgres.py
           tests/integration/test_webhook_delivery_backfill_postgres.py
           tests/integration/test_outbox_requeue_postgres.py
           tests/integration/test_durable_agent_pipeline_postgres.py

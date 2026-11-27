@@ -3,7 +3,7 @@
 `infra/monitoring/prometheus-rules/testlookup-alerts.yml` defines::
 
     - alert: TestLookupCeleryQueueBacklog
-      expr: max by (queue_name) (celery_queue_length) > 100
+      expr: testlookup:celery_queue_pending > 100
       description: "Queue {{ $labels.queue_name }} has more than 100 pending
                     tasks. Workers may need scaling."
 
@@ -30,6 +30,7 @@ import re
 from pathlib import Path
 
 import pytest
+import yaml
 from tests.celery_queue_fakes import PipelineRedis
 
 pytest.importorskip("app.core.metrics")
@@ -50,8 +51,7 @@ class TestTheMetricExists:
         assert metrics.celery_queue_length._name == "celery_queue_length"
 
     def test_it_is_labelled_by_queue_name(self):
-        """The alert does `max by (queue_name)`; without that label the
-        expression returns nothing."""
+        """Alert input preserves the queue identity after merging API replicas."""
         assert "queue_name" in metrics.celery_queue_length._labelnames
 
     def test_it_uses_one_current_snapshot_across_api_workers(self):
@@ -61,10 +61,13 @@ class TestTheMetricExists:
         """If someone renames the metric, this points at the alert to update."""
         if not ALERTS.exists():
             pytest.skip("alert rules not present")
-        assert "celery_queue_length" in ALERTS.read_text(encoding="utf-8")
-        assert "max by (queue_name) (celery_queue_length)" in ALERTS.read_text(
-            encoding="utf-8"
-        )
+        document = yaml.safe_load(ALERTS.read_text(encoding="utf-8"))
+        rules = [rule for group in document["groups"] for rule in group["rules"]]
+        recording = next(rule for rule in rules if rule.get("record") == "testlookup:celery_queue_pending")
+        alert = next(rule for rule in rules if rule.get("alert") == "TestLookupCeleryQueueBacklog")
+        assert "celery_queue_length" in recording["expr"]
+        assert "testlookup_celery_queue_depth_observed_timestamp_seconds" in recording["expr"]
+        assert recording["record"] in alert["expr"]
 
 
 class TestItIsCollectedAtScrapeTime:

@@ -1174,3 +1174,11 @@ worker_process_shutdown.connect(shutdown_worker_tracing, weak=False)
 before_task_publish.connect(propagate_traceparent, weak=False)
 task_prerun.connect(start_task_trace, weak=False)
 task_postrun.connect(finish_task_trace, weak=False)
+
+# Queue delay sampling is independent of tracing and uses a single reserved
+# scalar header. Runtime histogram_count remains the completion-attempt signal.
+from app.worker.queue_wait import finish_queue_wait, observe_queue_wait, stamp_publish_time  # noqa: E402
+
+before_task_publish.connect(stamp_publish_time, weak=False, dispatch_uid="testlookup.queue_wait.publish")
+task_prerun.connect(observe_queue_wait, weak=False, dispatch_uid="testlookup.queue_wait.start")
+task_postrun.connect(finish_queue_wait, weak=False, dispatch_uid="testlookup.queue_wait.finish")

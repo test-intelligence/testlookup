@@ -37,6 +37,7 @@ TASK_QUEUE_FAMILIES = frozenset({
     "critical", "ingestion", "ai_analysis", "agent_children", "default",
     "ingestion_shard", "unknown", "other",
 })
+TASK_QUEUE_WAIT_UNAVAILABLE_REASONS = frozenset({"missing_stamp", "invalid_stamp", "clock_skew", "invalid_eta"})
 
 
 def bounded_dimension(value: object, allowed: frozenset[str]) -> str:

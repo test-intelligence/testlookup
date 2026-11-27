@@ -262,16 +262,34 @@ spec:
       annotations:
         summary: Redis has no configured dataset memory limit
         description: Configured {{ $labels.store_role }} Redis/Valkey reports maxmemory=0. Percentage saturation is undefined; define a supported capacity policy with headroom for process/container overhead or an explicit managed-service exception.
+    - record: testlookup:celery_queue_pending
+      expr: "max by (cluster, namespace, telemetry_profile, queue_name) (\n  celery_queue_length{job=\"testlookup-backend\"}\n  and on (cluster, namespace, telemetry_profile, job, instance, queue_name)\n    (testlookup_celery_queue_depth_observed_timestamp_seconds{job=\"testlookup-backend\"} > 0)\n  and on (cluster, namespace, telemetry_profile, job, instance, queue_name)\n    ((time() - testlookup_celery_queue_depth_observed_timestamp_seconds{job=\"testlookup-backend\"}) <= 60)\n  and on (cluster, namespace, telemetry_profile, job, instance, queue_name)\n    ((time() - testlookup_celery_queue_depth_observed_timestamp_seconds{job=\"testlookup-backend\"}) >= 0)\n  and on (cluster, namespace, telemetry_profile, job, instance)\n    (up{job=\"testlookup-backend\"} == 1)\n)\n"
     - alert: TestLookupCeleryQueueBacklog
-      expr: 'max by (queue_name) (celery_queue_length) > 100
-
-        '
+      expr: testlookup:celery_queue_pending > 100
       for: 5m
       labels:
         severity: warning
       annotations:
         summary: Celery queue backlog > 100 tasks
-        description: Queue {{ $labels.queue_name }} has more than 100 pending tasks. Workers may need scaling.
+        description: Queue {{ $labels.queue_name }} has more than 100 broker-pending tasks. Check consumer health, progress and capacity. Runbook at docs/operations/celery-queue-monitoring.md.
+    - alert: TestLookupChildQueueNoHealthyTarget
+      expr: "(\n  (testlookup:celery_queue_pending{queue_name=\"agent_children\"} > 0)\n  and on (cluster, namespace, telemetry_profile)\n    (testlookup:telemetry_expected_role{job=\"testlookup-worker\",telemetry_role=\"worker-children\"} == 1)\n)\nunless on (cluster, namespace, telemetry_profile)\n  (up{job=\"testlookup-worker\",telemetry_role=\"worker-children\"} == 1)\n"
+      for: 2m
+      labels:
+        severity: warning
+      annotations:
+        summary: Child tasks are pending and their worker targets are unavailable
+        description: The broker has child tasks pending and the declared worker-children role has no healthy scrape target. Check the worker deployment and its monitoring path. Runbook at docs/operations/celery-queue-monitoring.md.
+    - record: testlookup:celery_child_worker_progress_3m
+      expr: "(\n  sum by (cluster, namespace, telemetry_profile) (\n    increase(celery_task_queue_wait_seconds_count{job=\"testlookup-worker\",telemetry_role=\"worker-children\",queue_name=\"agent_children\"}[3m])\n  ) > 0\n)\nor\n(\n  sum by (cluster, namespace, telemetry_profile) (\n    increase(celery_task_queue_wait_unavailable_total{job=\"testlookup-worker\",telemetry_role=\"worker-children\",queue_name=\"agent_children\"}[3m])\n  ) > 0\n)\nor\n(\n  sum by (cluster, namespace, telemetry_profile) (\n    increase(celery_task_runtime_seconds_count{job=\"testlookup-worker\",telemetry_role=\"worker-children\",queue_name=\"agent_children\"}[3m])\n  ) > 0\n)\n"
+    - alert: TestLookupChildQueueNoProgress
+      expr: "(\n  (testlookup:celery_queue_pending{queue_name=\"agent_children\"} > 0)\n  and on (cluster, namespace, telemetry_profile)\n    (testlookup:telemetry_expected_role{job=\"testlookup-worker\",telemetry_role=\"worker-children\"} == 1)\n  and on (cluster, namespace, telemetry_profile)\n    (up{job=\"testlookup-worker\",telemetry_role=\"worker-children\"} == 1)\n)\nunless on (cluster, namespace, telemetry_profile)\n  (testlookup:celery_child_worker_progress_3m > 0)\n"
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: Pending child tasks have no recent worker progress
+        description: The child queue kept a broker backlog while a worker-children target was scrapeable. Recent starts and completed attempts were absent. Check routing, broker connectivity and worker capacity. Runbook at docs/operations/celery-queue-monitoring.md.
     - alert: TestLookupTaskLatencyHigh
       expr: "histogram_quantile(0.99,\n  sum(rate(celery_task_runtime_seconds_bucket[10m]))\n  by (le, task_name)\n) > 120\n"
       for: 5m

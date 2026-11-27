@@ -17,7 +17,7 @@ Status meanings: **Open** is planned; **In progress** has partial implementation
 | Epic | Capability | Iteration sequence |
 |---|---|---|
 | OBS-E01 | Safe correlated application telemetry | 1: privacy, errors and worker log context. 7: Celery trace propagation and build-scoped MCP HTTP logs. 9: worker and Beat lifecycle, client correlation and MCP tool signals. |
-| OBS-E02 | Reliable metric collection | 1: bounded reads, queue coverage and SQL outcomes; 2: producers, exporters and access |
+| OBS-E02 | Reliable metric collection | 1: bounded reads, queue coverage and SQL outcomes. 2: producers, exporters and access. 10: queue freshness, worker progress and durable outcome evidence. |
 | OBS-E03 | Alerting and scheduled detection | 1: low-volume webhook and new outcome rules; 3: schedules, discovery and routing |
 | OBS-E04 | Durable log and trace platform | 4: profile contract, collection, storage and offline package. |
 | OBS-E05 | Durable operational and audit evidence | 5: event outbox, replay, audit archive and retention. |
@@ -35,11 +35,11 @@ Status meanings: **Open** is planned; **In progress** has partial implementation
 | OBS-E01-S06 | Instrument MCP operations without corrupting stdio | Verification |
 | OBS-E01-S07 | Preserve correlation and sanitized logs for every unexpected API error | Verification |
 | OBS-E02-S01 | Bound dependency collection and expose freshness | Verification |
-| OBS-E02-S02 | Monitor every routed queue including agent children | In progress |
+| OBS-E02-S02 | Monitor every routed queue including agent children | Verification |
 | OBS-E02-S03 | Emit real SQLAlchemy pool saturation measurements | Verification |
 | OBS-E02-S04 | Wire dependency and host exporters by deployment profile | In progress |
 | OBS-E02-S05 | Make authenticated scrapes work in reference profiles | Verification |
-| OBS-E02-S06 | Detect durable downstream failure independently of Celery success | In progress |
+| OBS-E02-S06 | Detect durable downstream failure independently of Celery success | Verification |
 | OBS-E03-S01 | Make weekly digest alerts reflect actual due work and delivery | Verification |
 | OBS-E03-S02 | Detect low-volume terminal webhook failures correctly | Verification |
 | OBS-E03-S03 | Deliver routed firing and resolved notifications | Verification |
@@ -246,3 +246,16 @@ The existing authorization gate now accounts for the previously added instance-w
 A disposable Linux test joined standalone Beat publications and retries to seven consumers across three recycled prefork children. It verified payload exclusion, normal interpreter-exit flushing and bounded shutdown with a stalled telemetry sink. The fixture ran current source modules on the pinned runtime with an isolated Valkey broker. The native MCP 2.3.0 stdio process sent a success and an upstream 503 through the pinned Collector and Prometheus. It preserved the upstream error ID in JSON-RPC and the parent trace across both log and span pairs. The scrape recorded separate success and request-error outcomes with no raw payload or request ID. Loopback SSE clients retained their individual backend principals.
 
 The locked MCP suite passed 1,223 tests. Focused backend tracing and wire-contract tests passed 184 cases. Promtool validated the complete mounted inventory of 108 rules, and Collector, Loki and Jaeger readback passed in disposable processes. The CLI suite outside the existing Windows Rich color tests passed 655 cases with two skips. The four baseline color assertions still failed on Windows.
+
+## Iteration 10 — broker backlog and child-worker progress
+
+This iteration builds on `2fe65c27`. It adds freshness to queue depth and worker-observed wait and verifies the distinction between task success and durable outcomes.
+
+| Story | Change | Remaining acceptance |
+|---|---|---|
+| OBS-E02-S02 | The API records a separate successful-observation time for each logical queue. Prometheus excludes stale and failed queue reads, keeps installation scope and detects a positive child backlog with missing targets or no worker progress. The overview dashboard shows fresh pending deliveries, task wait and completed attempts. [Celery queue monitoring](../operations/celery-queue-monitoring.md). | Verify scraper selection, representative queue delays and alert thresholds on the selected deployment. Exact oldest broker age needs a per-delivery timestamp source. The size-only broker reader reports sustained pending work and worker-observed wait. |
+| OBS-E02-S06 | A native PostgreSQL test verifies that Celery `SUCCESS` can coexist with two terminal SQL failures and an empty native Valkey broker. The authorized service replay changes one row to completed and repeated deliveries have one durable effect. An expired never-started slot reports overdue while a future attempt stays within its configured delay. | Measure collection cost and replay safeguards against the selected PostgreSQL deployment. Verify site runbooks and alert routing through authorized receivers. |
+
+Queue metrics keep application payloads out of observation. The worker records a fresh publication stamp for each attempt, excludes intentional scheduled delay and reports starts without usable timing separately. Completion rates come from the existing runtime histogram. The deployed Prometheus alerts use both target reachability and actual worker observations, including old messages during a rolling upgrade.
+
+A disposable worker stayed scrapeable with its child subscription cancelled. Three deliveries across priority lists remained pending. A denied read invalidated only that queue's observation. Restoring the subscription completed the same three deliveries, recorded two usable wait observations and one legacy start without a stamp, and drained the queue. Prometheus tests use the production rules and cover scope, stale samples, scrape loss and recovery. The native PostgreSQL suite now runs in the existing integration job with a dedicated empty broker database. This adds no workflow job.

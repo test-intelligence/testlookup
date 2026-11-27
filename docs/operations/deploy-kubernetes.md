@@ -182,7 +182,7 @@ kubectl apply -k k8s/monitoring
 
 The backup alerts read kube-state-metrics, and the disk and OOM alerts read node-exporter. If your Prometheus selects rules and monitors by label (kube-prometheus-stack uses `release: <name>`), add that label in your site monitoring overlay. Confirm that the Prometheus resource selects rules and PodMonitors in the application namespace.
 
-Include the telemetry inventory Rule along with the shared alert Rule. The [telemetry contract](telemetry-contract.md) explains the role labels and namespace scope. Use the cluster's Alertmanager and check [alert delivery and watchdog routing](alert-routing.md) against your site configuration.
+Include the telemetry inventory Rule along with the shared alert Rule. The monitoring guides cover role labels, namespace scope and queue progress. Use the cluster's Alertmanager and check delivery against your site configuration. [Telemetry contract](telemetry-contract.md), [Celery queue monitoring](celery-queue-monitoring.md), [alert delivery and watchdog routing](alert-routing.md).
 
 The optional `k8s/monitoring-objectives` overlay records availability, latency and coverage for a named installation. [API objectives](api-objectives.md).
 

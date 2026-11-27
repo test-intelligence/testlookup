@@ -692,6 +692,13 @@ celery_queue_length = Gauge(
     multiprocess_mode="mostrecent",
 )
 
+celery_queue_depth_observed_timestamp_seconds = Gauge(
+    "testlookup_celery_queue_depth_observed_timestamp_seconds",
+    "UTC epoch of a complete successful logical queue depth read; zero means an explicit failed read",
+    ["queue_name"],
+    multiprocess_mode="mostrecent",
+)
+
 
 # ── Celery task runtime ───────────────────────────────────────────────────────
 #
@@ -714,6 +721,18 @@ celery_task_runtime_seconds = Histogram(
     "Celery task execution time in seconds",
     ["task_name", "queue_name"],
     buckets=(0.1, 0.5, 1, 2, 5, 10, 30, 60, 120, 300, 600, float("inf")),
+)
+
+# Queue-only attempt measurements complement the existing runtime histogram's
+# completion count. Unknown legacy/invalid stamps never become zero waits.
+celery_task_queue_wait_seconds = Histogram(
+    "celery_task_queue_wait_seconds", "Publish-to-start delay after scheduled ETA, including worker reservation",
+    ["queue_name"],
+    buckets=(0.01, 0.05, 0.1, 0.5, 1, 2, 5, 10, 30, 60, 120, 300, 600, 1800, 3600, float("inf")),
+)
+celery_task_queue_wait_unavailable_total = Counter(
+    "celery_task_queue_wait_unavailable_total", "Broker execution starts without a trustworthy dispatch-ready delay",
+    ["queue_name", "reason"],
 )
 
 

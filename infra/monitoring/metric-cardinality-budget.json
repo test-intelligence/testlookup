@@ -143,9 +143,30 @@
       "max_children": 1032,
       "max_samples_per_child": 15,
       "max_series_per_process": 15480
+    },
+    {
+      "instrument": "celery_task_queue_wait_seconds",
+      "exported_name": "celery_task_queue_wait_seconds",
+      "dimensions": {
+        "queue_name": "TASK_QUEUE_FAMILIES"
+      },
+      "max_children": 8,
+      "max_samples_per_child": 19,
+      "max_series_per_process": 152
+    },
+    {
+      "instrument": "celery_task_queue_wait_unavailable_total",
+      "exported_name": "celery_task_queue_wait_unavailable_total",
+      "dimensions": {
+        "queue_name": "TASK_QUEUE_FAMILIES",
+        "reason": "TASK_QUEUE_WAIT_UNAVAILABLE_REASONS"
+      },
+      "max_children": 32,
+      "max_samples_per_child": 2,
+      "max_series_per_process": 64
     }
   ],
-  "conservative_series_per_process": 21358,
+  "conservative_series_per_process": 21574,
   "retired_families": [
     "testlookup_test_cases_by_state",
     "testlookup_automation_cases_orphaned",

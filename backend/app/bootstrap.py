@@ -465,23 +465,30 @@ async def _refresh_celery_queue_depths() -> bool:
     """Read pending task counts straight off the Redis broker.
 
     Logical Redis queues may span several priority lists; sum every bin.
-    Best-effort: metrics collection must never break the scrape or the app —
-    a failed read leaves the previous sample rather than raising.
+    Metrics collection must preserve the scrape and application availability.
+    A failed read preserves the last depth and clears only that queue's
+    observation timestamp. Unreturned reads leave timestamps to age out.
     """
     try:
-        from app.core.metrics import celery_queue_length
+        import time
+
+        from app.core.metrics import celery_queue_depth_observed_timestamp_seconds, celery_queue_length
         from app.services.celery_queue_metrics import read_celery_queue_depths
 
         depths = await read_celery_queue_depths()
+        observed_at = time.time()
         for name, depth in depths.items():
             if depth is not None:
                 celery_queue_length.labels(queue_name=name).set(float(depth))
+                celery_queue_depth_observed_timestamp_seconds.labels(queue_name=name).set(observed_at)
+            else:
+                celery_queue_depth_observed_timestamp_seconds.labels(queue_name=name).set(0)
         return all(depth is not None for depth in depths.values())
     except Exception as exc:  # noqa: BLE001
         import structlog
 
         structlog.get_logger(__name__).debug(
-            "celery_queue_depth_collection_failed", error=str(exc)
+            "celery_queue_depth_collection_failed", error_type=type(exc).__name__
         )
         return False
 

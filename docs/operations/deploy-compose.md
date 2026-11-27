@@ -190,7 +190,7 @@ The optional objectives overlay records core API availability and latency for a 
 
 The override sets `OTEL_ENABLED=true`, `OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318` and `METRICS_ENABLED=true` on the backend. The same alert rules are rendered for Kubernetes in [`k8s/monitoring`](deploy-kubernetes.md#monitoring-podmonitor-and-prometheusrule). Metric and alert reference: [observability](../../architecture/OBSERVABILITY.md).
 
-Use the [alert routing overlay](alert-routing.md) to deliver incident notifications and an independent watchdog over authenticated HTTPS. The [telemetry contract](telemetry-contract.md) lists the required roles and series.
+The alert routing overlay delivers incident notifications and an independent watchdog over authenticated HTTPS. The monitoring guides cover required roles, broker backlog and worker progress. [Alert routing overlay](alert-routing.md), [telemetry contract](telemetry-contract.md), [Celery queue monitoring](celery-queue-monitoring.md).
 
 ### Authenticate the API scrape
 

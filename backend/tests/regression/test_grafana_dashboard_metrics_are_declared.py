@@ -9,13 +9,9 @@ from the other side (a declared metric nobody increments).
 
 Three ratchets:
 
-1. every owned application series (``testlookup_*``, ``sqlalchemy_pool_*`` and
-   native ``redis_memory_*``) a panel expression -- or a dashboard
-   annotation's expression (W25b: the "Deploys" annotation) -- names is one a
-   metric declared in ``app.core.metrics`` actually exports -- with
-   prometheus_client's suffixes: a Counter is declared WITHOUT ``_total`` and
-   exported with it, a Histogram exports ``_bucket``/``_count``/``_sum`` and
-   never its bare name;
+1. every owned series in a panel or annotation comes from ``app.core.metrics``
+   or the shared recording rules. Counter exports include ``_total`` and
+   histogram exports include ``_bucket``, ``_count`` and ``_sum``;
 2. panel ids are unique (Grafana links, alerts and provisioning key on them);
 3. no two ``gridPos`` rectangles overlap (Grafana silently re-flows them, so
    the layout in the file is not the layout on screen).
@@ -31,6 +27,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 import pytest
+import yaml
 
 pytest.importorskip("prometheus_client")
 
@@ -42,11 +39,12 @@ from app.core import metrics  # noqa: E402
 pytestmark = pytest.mark.regression
 
 _REL = Path("infra") / "monitoring" / "grafana" / "dashboards" / "testlookup-overview.json"
+_RULES = Path(__file__).resolve().parents[3] / "infra/monitoring/prometheus-rules/testlookup-alerts.yml"
 
 #: A series name in PromQL. The trailing lookahead keeps a longer identifier
 #: from matching as its prefix; label VALUES like ``job="testlookup-backend"``
 #: never match (a hyphen is not part of a name).
-_SERIES_RE = re.compile(r"\b((?:testlookup_|sqlalchemy_pool_|redis_memory_)[a-z0-9_]+)\b")
+_SERIES_RE = re.compile(r"\b((?:testlookup[:_]|sqlalchemy_pool_|redis_memory_|celery_)[a-z0-9_]+)\b")
 
 #: What prometheus_client exports for each metric type, from the name it
 #: stores (a Counter's stored name has ``_total`` stripped already).
@@ -119,13 +117,18 @@ def undeclared(exprs: list[tuple[Any, str]], exported: dict[str, str]) -> list[s
     ]
 
 
-def test_every_panel_metric_is_declared_in_app_core_metrics():
+def test_every_panel_metric_is_declared_in_application_or_recording_rules():
     exprs = list(_exprs(_dashboard()))
     assert exprs, "no panel expressions found -- the walker is broken"
-    missing = undeclared(exprs, exported_series())
+    declared = exported_series()
+    rules = yaml.safe_load(_RULES.read_text(encoding="utf-8"))
+    for group in rules["groups"]:
+        for rule in group["rules"]:
+            if recorded := rule.get("record"):
+                declared[recorded] = recorded
+    missing = undeclared(exprs, declared)
     assert not missing, (
-        "Dashboard panels read series no metric in app/core/metrics.py exports "
-        "(they would render 'No data' forever):\n  " + "\n  ".join(missing)
+        "Dashboard panels reference undeclared application or recorded series:\n  " + "\n  ".join(missing)
     )
 
 

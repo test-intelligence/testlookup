@@ -23,6 +23,10 @@ This is minimum role coverage, not exact replica-count or consumer-capacity
 verification. `TestLookupTelemetryContractMissing` fires after five minutes
 when the entire inventory is absent.
 
+Pair role coverage with fresh broker-pending depth and worker progress to
+detect a child backlog even when the metrics listener still answers.
+[Celery queue monitoring](celery-queue-monitoring.md).
+
 `TestLookupRequiredTelemetryMissing` checks each healthy API target for both
 success and last-success series from the unconditional `queues`, `agents`,
 `downstream` and `redis` collectors. API and worker targets must also expose
