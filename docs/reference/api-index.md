@@ -30,6 +30,7 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | GET | `/api/v1/agents/catalog/{agent_id}` | Get Agent Catalog Entry | [Agents](api/agent-operations.md) |
 | POST | `/api/v1/agents/defect-command` | Defect Command | [Agents](api/agent-operations.md) |
 | GET | `/api/v1/agents/event-log/health` | Get Pipeline Event Log Health | [Agents](api/agent-operations.md) |
+| POST | `/api/v1/agents/event-log/{event_id}/replay` | Replay Pipeline Event Delivery | [Agents](api/agent-operations.md) |
 | GET | `/api/v1/agents/invocations/{invocation_id}` | Get Invocation | [Agent Invocations](api/agent-invocations.md) |
 | POST | `/api/v1/agents/invocations/{invocation_id}/cancel` | Cancel Invocation | [Agent Invocations](api/agent-invocations.md) |
 | GET | `/api/v1/agents/invocations/{invocation_id}/events` | Stream Invocation Events | [Agent Invocations](api/agent-invocations.md) |
@@ -204,6 +205,13 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | GET | `/api/v1/github/app/install-url` | Github App Install Url | [GitHub App](api/github-app.md) |
 | POST | `/api/v1/github/app/setup-callback` | Github App Setup Callback | [GitHub App](api/github-app.md) |
 | GET | `/api/v1/identity/events` | List Identity Events | [Identity & Audit](api/identity-audit.md) |
+| POST | `/api/v1/identity/retention/disable` | Disable Identity Retention Policy | [Identity & Audit](api/identity-audit.md) |
+| POST | `/api/v1/identity/retention/holds` | Place Identity Retention Hold | [Identity & Audit](api/identity-audit.md) |
+| POST | `/api/v1/identity/retention/holds/{hold_id}/release` | Release Identity Retention Hold | [Identity & Audit](api/identity-audit.md) |
+| GET | `/api/v1/identity/retention/policy` | Read Identity Retention Policy | [Identity & Audit](api/identity-audit.md) |
+| POST | `/api/v1/identity/retention/policy` | Approve Identity Retention Policy | [Identity & Audit](api/identity-audit.md) |
+| GET | `/api/v1/identity/retention/preview` | Preview Identity Retention | [Identity & Audit](api/identity-audit.md) |
+| POST | `/api/v1/identity/retention/purge` | Purge Identity Retention Batch | [Identity & Audit](api/identity-audit.md) |
 | GET | `/api/v1/identity/sync-status` | Get Identity Sync Status | [Identity & Audit](api/identity-audit.md) |
 | POST | `/api/v1/ingest` | Ingest test results (JSON batch) | [Ingest](api/ingest.md) |
 | POST | `/api/v1/ingest/file` | Upload test result file (JUnit/TestNG XML, Allure/Cypress/Playwright JSON) | [Ingest](api/ingest.md) |
@@ -753,4 +761,4 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/webhooks/minio` | Minio Webhook | [Webhooks](api/webhooks.md) |
 | POST | `/ws/events/{run_id}` | Ingest Live Event | [Live Reporting](api/live-reporting.md) |
 
-Total: **744 HTTP operations**, **630 paths**, **92 domain pages**.
+Total: **752 HTTP operations**, **637 paths**, **92 domain pages**.

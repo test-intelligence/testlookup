@@ -297,6 +297,9 @@ def _mongo_phase_db(*, project, run_ids, journal):
     ])
 
     async def execute(stmt):
+        if getattr(stmt, "is_delete", False) and stmt.table.name == "pipeline_event_outbox":
+            journal.append(("outbox", ""))
+            return MagicMock()
         journal.append(("delete", "") if getattr(stmt, "is_delete", False) else ("select", ""))
         return next(results)
 
@@ -309,6 +312,7 @@ def _mongo_phase_db(*, project, run_ids, journal):
 
     return SimpleNamespace(
         execute=execute,
+        get_bind=lambda: SimpleNamespace(dialect=SimpleNamespace(name="sqlite")),
         stream_scalars=stream_scalars,
         add=MagicMock(),
         commit=AsyncMock(side_effect=lambda: journal.append(("commit", ""))),
@@ -331,11 +335,11 @@ async def test_a_store_deletes_the_documents_first_and_records_them():
 
     documents = result["documents"]
     assert set(documents) == {c for c, _f, _a in _MONGO_PLANS}
-    assert documents["ai_analysis_payloads"] == 1 and documents["pipeline_event_log"] == 0
+    assert documents["ai_analysis_payloads"] == 1 and documents["pipeline_event_log"] == 3
     assert documents["run_summaries"] == 3 and documents["decision_reports"] == 3
     assert db.add.call_args.args[0].changed_fields["documents"] == documents
     kinds = [k for k, _ in journal]
-    assert kinds.index("mongo") < kinds.index("delete") < kinds.index("commit"), (
+    assert kinds.index("outbox") < kinds.index("mongo") < kinds.index("delete") < kinds.index("commit"), (
         "the Mongo phase must run while the run → document mapping still exists"
     )
 

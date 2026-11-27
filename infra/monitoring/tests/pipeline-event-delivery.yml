@@ -1,0 +1,135 @@
+rule_files:
+- ../prometheus-rules/testlookup-alerts.yml
+evaluation_interval: 30s
+tests:
+- name: shared failures fire and a stale replica cannot hide recovery
+  interval: 30s
+  input_series:
+  - series: testlookup_metric_collection_success{cluster="lab",namespace="prod",job="testlookup-backend",instance="a",collector="pipeline_events"}
+    values: 1x50
+  - series: testlookup_metric_collection_last_success_timestamp_seconds{cluster="lab",namespace="prod",job="testlookup-backend",instance="a",collector="pipeline_events"}
+    values: 0+30x50
+  - series: testlookup_pipeline_event_outbox_entries{cluster="lab",namespace="prod",job="testlookup-backend",instance="a",status="failed"}
+    values: 1x20 0x30
+  - series: testlookup_pipeline_event_outbox_entries{cluster="lab",namespace="prod",job="testlookup-backend",instance="stale",status="failed"}
+    values: 99x50
+  - series: testlookup_metric_collection_success{cluster="lab",namespace="prod",job="testlookup-backend",instance="stale",collector="pipeline_events"}
+    values: 1x50
+  - series: testlookup_metric_collection_last_success_timestamp_seconds{cluster="lab",namespace="prod",job="testlookup-backend",instance="stale",collector="pipeline_events"}
+    values: '0x50'
+  alert_rule_test:
+  - eval_time: 4m
+    alertname: TestLookupPipelineEventDeliveryFailed
+    exp_alerts:
+    - exp_labels:
+        cluster: lab
+        namespace: prod
+        severity: critical
+      exp_annotations:
+        summary: Pipeline event delivery requires recovery
+        description: Automatic event materialization exhausted retries or found an
+          immutable identity conflict. SQL retains the unresolved evidence; inspect
+          scoped event-log health before explicit delivery requeue. This does not
+          re-execute a pipeline or prove Mongo evidence was lost.
+        runbook_url: https://github.com/test-intelligence/testlookup/blob/main/docs/operations/pipeline-event-delivery.md
+  - eval_time: 16m
+    alertname: TestLookupPipelineEventDeliveryFailed
+    exp_alerts: []
+- name: replicated shared counts below capacity must not be summed
+  interval: 30s
+  input_series:
+  - series: testlookup_metric_collection_success{cluster="lab",namespace="prod",job="testlookup-backend",instance="a",collector="pipeline_events"}
+    values: 1x50
+  - series: testlookup_metric_collection_last_success_timestamp_seconds{cluster="lab",namespace="prod",job="testlookup-backend",instance="a",collector="pipeline_events"}
+    values: 0+30x50
+  - series: testlookup_metric_collection_success{cluster="lab",namespace="prod",job="testlookup-backend",instance="b",collector="pipeline_events"}
+    values: 1x50
+  - series: testlookup_metric_collection_last_success_timestamp_seconds{cluster="lab",namespace="prod",job="testlookup-backend",instance="b",collector="pipeline_events"}
+    values: 0+30x50
+  - series: testlookup_pipeline_event_outbox_entries{cluster="lab",namespace="prod",job="testlookup-backend",instance="a",status="pending"}
+    values: 6000x50
+  - series: testlookup_pipeline_event_outbox_entries{cluster="lab",namespace="prod",job="testlookup-backend",instance="b",status="pending"}
+    values: 6000x50
+  - series: testlookup_pipeline_event_outbox_capacity{cluster="lab",namespace="prod",job="testlookup-backend",instance="a"}
+    values: 10000x50
+  - series: testlookup_pipeline_event_outbox_capacity{cluster="lab",namespace="prod",job="testlookup-backend",instance="b"}
+    values: 10000x50
+  alert_rule_test:
+  - eval_time: 10m
+    alertname: TestLookupPipelineEventCapacityHigh
+    exp_alerts: []
+- name: backlog and capacity threshold cross then recover
+  interval: 30s
+  input_series:
+  - series: testlookup_metric_collection_success{cluster="lab",namespace="prod",job="testlookup-backend",instance="a",collector="pipeline_events"}
+    values: 1x50
+  - series: testlookup_metric_collection_last_success_timestamp_seconds{cluster="lab",namespace="prod",job="testlookup-backend",instance="a",collector="pipeline_events"}
+    values: 0+30x50
+  - series: testlookup_pipeline_event_outbox_entries{cluster="lab",namespace="prod",job="testlookup-backend",instance="a",status="pending"}
+    values: 9000x20 10x30
+  - series: testlookup_pipeline_event_outbox_capacity{cluster="lab",namespace="prod",job="testlookup-backend",instance="a"}
+    values: 10000x50
+  - series: testlookup_pipeline_event_outbox_oldest_age_seconds{cluster="lab",namespace="prod",job="testlookup-backend",instance="a",status="pending"}
+    values: 600x20 0x30
+  alert_rule_test:
+  - eval_time: 8m
+    alertname: TestLookupPipelineEventCapacityHigh
+    exp_alerts:
+    - exp_labels:
+        cluster: lab
+        namespace: prod
+        severity: warning
+      exp_annotations:
+        summary: Shared pipeline event admission is near its row limit
+        description: Retained intents and acknowledged receipts exceed 85% of the
+          installation row limit. Restore relay delivery; only acknowledged receipts
+          may be pressure-pruned. Never delete pending or failed evidence to make
+          room.
+        runbook_url: https://github.com/test-intelligence/testlookup/blob/main/docs/operations/pipeline-event-delivery.md
+  - eval_time: 8m
+    alertname: TestLookupPipelineEventBacklogStale
+    exp_alerts:
+    - exp_labels:
+        cluster: lab
+        namespace: prod
+        severity: warning
+      exp_annotations:
+        summary: Pipeline event materialization is falling behind
+        description: A durable pending or leased event is older than five minutes.
+          Verify the relay schedule, default-queue consumer, Mongo connectivity and
+          expired leases. Retained intent age is not the age of a missing business
+          operation.
+        runbook_url: https://github.com/test-intelligence/testlookup/blob/main/docs/operations/pipeline-event-delivery.md
+  - eval_time: 16m
+    alertname: TestLookupPipelineEventCapacityHigh
+    exp_alerts: []
+  - eval_time: 16m
+    alertname: TestLookupPipelineEventBacklogStale
+    exp_alerts: []
+- name: source admission refusal is distinct from accepted delivery backlog
+  interval: 30s
+  input_series:
+  - series: testlookup_metric_collection_success{cluster="lab",namespace="prod",job="testlookup-backend",instance="a",collector="pipeline_events"}
+    values: 1x50
+  - series: testlookup_metric_collection_last_success_timestamp_seconds{cluster="lab",namespace="prod",job="testlookup-backend",instance="a",collector="pipeline_events"}
+    values: 0+30x50
+  - series: testlookup_pipeline_event_admission_failures_total{cluster="lab",namespace="prod",job="testlookup-backend",instance="a",reason="capacity"}
+    values: 0 0 1x48
+  alert_rule_test:
+  - eval_time: 2m
+    alertname: TestLookupPipelineEventAdmissionRefused
+    exp_alerts:
+    - exp_labels:
+        cluster: lab
+        namespace: prod
+        severity: critical
+        reason: capacity
+      exp_annotations:
+        summary: A pipeline event was not durably admitted
+        description: At least one source event could not enter the SQL delivery boundary.
+          Accepted backlog recovery cannot reconstruct an event that was never admitted;
+          inspect the bounded reason and source failure handling.
+        runbook_url: https://github.com/test-intelligence/testlookup/blob/main/docs/operations/pipeline-event-delivery.md
+  - eval_time: 12m
+    alertname: TestLookupPipelineEventAdmissionRefused
+    exp_alerts: []

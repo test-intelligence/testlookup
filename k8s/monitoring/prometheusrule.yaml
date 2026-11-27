@@ -469,3 +469,41 @@ spec:
       annotations:
         summary: No successful TestLookup backup in 26 hours
         description: 'The testlookup-backup CronJob has not completed successfully for more than 26h (failing, suspended, or never run). The newest restorable archive is older than a day. Runbook: k8s/components/backup/README.md.'
+  - name: testlookup.pipeline_event_delivery
+    interval: 30s
+    rules:
+    - alert: TestLookupPipelineEventDeliveryFailed
+      expr: "max by (cluster, namespace) (\n  testlookup_pipeline_event_outbox_entries{job=\"testlookup-backend\",status=\"failed\"}\n  and on (cluster, namespace, job, instance)\n    (testlookup_metric_collection_success{collector=\"pipeline_events\"} == 1)\n  and on (cluster, namespace, job, instance)\n    (time() - testlookup_metric_collection_last_success_timestamp_seconds{collector=\"pipeline_events\"} < 120)\n) > 0\n"
+      for: 1m
+      labels:
+        severity: critical
+      annotations:
+        summary: Pipeline event delivery requires recovery
+        description: Automatic event materialization exhausted retries or found an immutable identity conflict. SQL retains the unresolved evidence; inspect scoped event-log health before explicit delivery requeue. This does not re-execute a pipeline or prove Mongo evidence was lost.
+        runbook_url: https://github.com/test-intelligence/testlookup/blob/main/docs/operations/pipeline-event-delivery.md
+    - alert: TestLookupPipelineEventBacklogStale
+      expr: "max by (cluster, namespace) (\n  testlookup_pipeline_event_outbox_oldest_age_seconds{job=\"testlookup-backend\",status=~\"pending|sending\"}\n  and on (cluster, namespace, job, instance)\n    (testlookup_metric_collection_success{collector=\"pipeline_events\"} == 1)\n  and on (cluster, namespace, job, instance)\n    (time() - testlookup_metric_collection_last_success_timestamp_seconds{collector=\"pipeline_events\"} < 120)\n) > 300\n"
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: Pipeline event materialization is falling behind
+        description: A durable pending or leased event is older than five minutes. Verify the relay schedule, default-queue consumer, Mongo connectivity and expired leases. Retained intent age is not the age of a missing business operation.
+        runbook_url: https://github.com/test-intelligence/testlookup/blob/main/docs/operations/pipeline-event-delivery.md
+    - alert: TestLookupPipelineEventCapacityHigh
+      expr: "max by (cluster, namespace) (\n  (sum without (status) (testlookup_pipeline_event_outbox_entries{job=\"testlookup-backend\"})\n    / testlookup_pipeline_event_outbox_capacity{job=\"testlookup-backend\"})\n  and on (cluster, namespace, job, instance)\n    (testlookup_metric_collection_success{collector=\"pipeline_events\"} == 1)\n  and on (cluster, namespace, job, instance)\n    (time() - testlookup_metric_collection_last_success_timestamp_seconds{collector=\"pipeline_events\"} < 120)\n) > 0.85\n"
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: Shared pipeline event admission is near its row limit
+        description: Retained intents and acknowledged receipts exceed 85% of the installation row limit. Restore relay delivery; only acknowledged receipts may be pressure-pruned. Never delete pending or failed evidence to make room.
+        runbook_url: https://github.com/test-intelligence/testlookup/blob/main/docs/operations/pipeline-event-delivery.md
+    - alert: TestLookupPipelineEventAdmissionRefused
+      expr: sum by (cluster, namespace, reason) (increase(testlookup_pipeline_event_admission_failures_total[5m])) > 0
+      labels:
+        severity: critical
+      annotations:
+        summary: A pipeline event was not durably admitted
+        description: At least one source event could not enter the SQL delivery boundary. Accepted backlog recovery cannot reconstruct an event that was never admitted; inspect the bounded reason and source failure handling.
+        runbook_url: https://github.com/test-intelligence/testlookup/blob/main/docs/operations/pipeline-event-delivery.md

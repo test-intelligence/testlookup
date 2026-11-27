@@ -153,6 +153,8 @@ async def ensure_indexes() -> None:
         ),
         # Retention sweep / project-wide reads.
         (Collections.AI_RUN_VERSIONS, [("project_id", 1), ("generated_at", -1)], {}),
+        (Collections.PIPELINE_EVENT_LOG, [("pipeline_run_id", 1), ("timestamp", 1), ("_id", 1)], {}),
+        (Collections.PIPELINE_EVENT_LOG, [("test_run_id", 1)], {}),
     ]
     for coll, keys, kwargs in specs:
         try:
@@ -178,3 +180,4 @@ class Collections:
     DECISION_REPORT_ATTEMPTS = "decision_report_attempts"
     LIVE_EXECUTION_EVENTS = "live_execution_events"  # Sanitized events from live runner
     AI_RUN_VERSIONS = "ai_run_versions"       # AIH-01: immutable run_summary / analysis_digest versions
+    PIPELINE_EVENT_LOG = "pipeline_event_log"

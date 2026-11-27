@@ -386,6 +386,9 @@ _E_POSTGRES: tuple[Location, ...] = (
          label="Component owner maps", reason=_NOT_ACCOUNT),
     _row("service_ownership_rules", "team_contact", match="value", export_as="none", category=None,
          erase="out_of_scope", label="Team contacts on ownership rules", reason=_NOT_ACCOUNT),
+    _row("pipeline_event_outbox", "payload", match="none", export_as="none", category=None,
+         erase="keep_record", label="Pending pipeline timeline evidence",
+         reason="Pending redacted delivery data follows the source project and run retention."),
 )
 _E_OBJECTS: tuple[Location, ...] = (
     _store("objects:subject-exports/", "objects", match="id_key", erase="delete", label="Their data exports",
@@ -620,6 +623,7 @@ WRITERS: dict[tuple[str, str], str] = {
     ("app/services/retention_hold_service.py", "SettingsAuditLog.actor_name"): _SET,
     ("app/services/retention_hold_service.py", "attr:released_by_name"): "retention_holds.released_by_name",
     ("app/services/retention_instance_service.py", "SettingsAuditLog.actor_name"): _SET,
+    ("app/services/identity_retention_service.py", "SettingsAuditLog.actor_name"): _SET,
     ("app/services/settings_audit_service.py", "SettingsAuditLog.actor_name"): _SET,
     ("app/services/share_link_service.py", "ReportShareLink.created_by_name"): "report_share_links.created_by_name",
     ("app/services/test_management_audit_service.py", "TestCaseAuditLog.actor_name"): "test_case_audit_logs.actor_name",

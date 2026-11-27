@@ -3228,6 +3228,21 @@ def relay_run_downstream_outbox(self):
 
 
 @celery_app.task(
+    name="app.worker.tasks.relay_pipeline_event_outbox",
+    bind=True,
+    max_retries=0,
+    queue="default",
+    time_limit=40,
+)
+def relay_pipeline_event_outbox(self):
+    """Materialize accepted operational evidence in bounded retry batches."""
+    _bind_task_context(self)
+    from app.services.pipeline_event_delivery import relay_pipeline_events
+
+    return _run_async(relay_pipeline_events())
+
+
+@celery_app.task(
     name="app.worker.tasks.relay_queued_criteria_deletions",
     bind=True,
     max_retries=0,
@@ -7874,7 +7889,18 @@ def run_retention_purges(self, project_id: str | None = None) -> dict:
 
     async def _run():
         with _beat_span("run_retention_purges") as span:
+            identity = None
+            if project_id is None:
+                from app.services.identity_retention_service import run_scheduled_batch
+
+                try:
+                    identity = await run_scheduled_batch()
+                except Exception as exc:  # noqa: BLE001 - preserve the independent project sweep
+                    identity = {"status": "failed", "deleted": 0}
+                    _slog.warning("identity_retention_sweep_failed", error_type=type(exc).__name__)
             out = await _retention_purge_sweep(project_id, owner=owner)
+            if identity is not None:
+                out["identity_security_events"] = identity
             span.set_attribute("result.projects", int(out.get("projects", 0)))
             span.set_attribute("result.errors", int(out.get("errors", 0)))
             span.set_attribute("explicit_project", bool(project_id))

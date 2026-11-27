@@ -17,7 +17,7 @@ from app.core.metrics import (
 
 logger = structlog.get_logger(__name__)
 COLLECTION_TIMEOUT_SECONDS = 1.0
-COLLECTORS = ("queues", "agents", "downstream", "redis", "nightly", "digests")
+COLLECTORS = ("queues", "agents", "downstream", "redis", "nightly", "digests", "pipeline_events")
 
 
 @dataclass

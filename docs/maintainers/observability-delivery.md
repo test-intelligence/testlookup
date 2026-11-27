@@ -171,3 +171,16 @@ This iteration builds on `be88915c`. The app keeps its normal stdout logs and Pr
 | OBS-E04-S06 | The image manifest and third-party scan track every durable reference image. The optional offline bundle records exact pins and aliases for all components and lists Grafana and Loki as operator-supplied prerequisites. | Exercise image import and the full stack with outbound internet blocked. |
 
 Disposable native runs covered queue overflow, retry exhaustion and recovery after collector restart, plus forced Loki and Jaeger restarts. Grafana returned matching trace and log IDs using the pinned datasource versions. The Kubernetes adapters were rendered locally. The Compose stack's runtime networking, actual site gateways and disconnected operation still need deployment-level evidence.
+
+## Iteration 5: durable operational and audit evidence
+
+This iteration builds on `25fcc0c9`. Pipeline event health comes from shared SQL state, and the timeline includes accepted events while MongoDB delivery is pending.
+
+| Story | Change | Remaining acceptance |
+|---|---|---|
+| OBS-E05-S01 | Migration 0263 adds a bounded project-scoped outbox. Committed stage, review, action and agent ledger changes can stage their audit intent in the source transaction. Rollback removes uncommitted intent, and the schema downgrade protects unresolved events. | Measure admission contention, throughput and full-queue behavior with the site's normal traffic and retention policy. |
+| OBS-E05-S02 | A leased Celery relay materializes each stable ID once in MongoDB. Shared health exposes safe failed references and QA leads can request a project-scoped retry. Alerts cover backlog, capacity, failed delivery and admission refusal. History exports require delivered events in the selected pipelines. | Verify receipt recovery and notification delivery in a deployed fleet under controlled failure. See [pipeline event delivery](../operations/pipeline-event-delivery.md). |
+| OBS-E05-S03 | An operator custody command seals and verifies archives with an independent key. The optional S3 publisher uses a conditional create and checks Object Lock, hold, encryption and checksum receipts. | Provision independent IAM and storage, test denied mutation and hold or deletion actions, and agree which source exports meet site evidence requirements. See [audit archive custody](../operations/audit-archive-custody.md). |
+| OBS-E05-S04 | An admin-approved identity policy expires selected routine, successful events in bounded batches. Instance holds pause cleanup and SCIM authority rows remain available for supported authorization paths. | Confirm site defaults, approvals, window and retention behavior with the identity owner. See [identity event retention](../operations/identity-event-retention.md). |
+
+Disposable PostgreSQL and MongoDB tests exercised competing producers and claims, the purge fence, and a retry following a lost receipt. The same event remained a single MongoDB document. Migration 0263 was applied and rolled back in a disposable schema. A downgrade with pending evidence was refused. A PostgreSQL identity test observed hold and purge transactions from independent sessions and verified the resulting audit receipts. Archive tests used synthetic records and provider fixtures.

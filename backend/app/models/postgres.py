@@ -2659,6 +2659,40 @@ class AgentPipelineRun(Base):
     stages: Mapped[list["AgentStageResult"]] = relationship("AgentStageResult", back_populates="pipeline_run", cascade="all, delete-orphan")
 
 
+class PipelineEventOutbox(Base):
+    """Project-scoped event intent awaiting idempotent Mongo materialization."""
+
+    __tablename__ = "pipeline_event_outbox"
+    __table_args__ = (
+        CheckConstraint("status IN ('pending', 'sending', 'delivered', 'failed')", name="ck_pipeline_event_outbox_status"),
+        CheckConstraint("attempts >= 0", name="ck_pipeline_event_outbox_attempts"),
+        Index("ix_pipeline_event_outbox_schedule", "status", "next_attempt_at", "created_at"),
+        Index("ix_pipeline_event_outbox_lease", "status", "lease_expires_at"),
+        Index("ix_pipeline_event_outbox_delivered", "status", "delivered_at"),
+        Index("ix_pipeline_event_outbox_project", "project_id", "status"),
+        Index("ix_pipeline_event_outbox_pipeline", "pipeline_id"),
+        Index("ix_pipeline_event_outbox_timeline", "pipeline_run_id", "created_at"),
+        Index("ix_pipeline_event_outbox_run", "test_run_id"),
+        Index("ix_pipeline_event_outbox_test_case", "test_case_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    project_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("projects.id", ondelete="CASCADE"), nullable=False)
+    pipeline_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("agent_pipeline_runs.id", ondelete="CASCADE"))
+    test_run_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("test_runs.id", ondelete="CASCADE"))
+    test_case_id: Mapped[Optional[uuid.UUID]] = mapped_column(ForeignKey("test_cases.id", ondelete="CASCADE"))
+    pipeline_run_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    payload: Mapped[dict] = mapped_column(JSON().with_variant(JSONB(), "postgresql"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    status: Mapped[str] = mapped_column(String(12), default="pending", server_default="pending")
+    attempts: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    next_attempt_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    lease_token: Mapped[Optional[uuid.UUID]] = mapped_column(UUID(as_uuid=True))
+    lease_expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    last_error_code: Mapped[Optional[str]] = mapped_column(String(48))
+    delivered_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+
 class AgentStageResult(Base):
     """Per-stage result for an AgentPipelineRun."""
     __tablename__ = "agent_stage_results"
@@ -4995,7 +5029,7 @@ class IdentityEventType(str, PyEnum):
     # if a future addition is not.
     #
     # Deliberately absent: a per-attempt LOGIN_FAILED event. ``identity_events``
-    # has no retention clock (see the model docstring), so anything an
+    # retains failures indefinitely (see the model docstring), so anything an
     # unauthenticated attacker can emit at will accumulates forever. The events
     # here are either operator-initiated or bounded by the lockout threshold.
     MFA_ENROLL_STARTED = "MFA_ENROLL_STARTED"
@@ -5166,9 +5200,13 @@ class IdentityEvent(Base):
     UPDATEs an audit table or DELETEs from one outside
     ``services/retention_service.py``.
 
-    Not currently covered by any retention clock: the US-11.4 purge does not
-    touch this table (it has no project scope), so rows accumulate until an
-    operator prunes them out-of-band.
+    The project retention clocks do not apply: this table has no project
+    scope. A separate default-off instance policy can expire only successful
+    SSO_LOGIN, SSO_LOGOUT and MFA_VERIFY_SUCCESS records after explicit admin
+    approval, subject to independent instance identity holds. SCIM_USER_CREATED
+    rows remain live authorization evidence; all other types, failed routine
+    records and unknown future types stay retained. Policy/hold/purge receipts
+    remain in the never-purged settings audit trail.
 
     Beyond that, durability is the **operator's** responsibility: direct
     Postgres credentials can still rewrite or drop rows. Real immutability

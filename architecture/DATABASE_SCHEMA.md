@@ -3353,6 +3353,7 @@ The older per-domain sections omitted these tables. Their full field definitions
 | `live_event_receipts` | `LiveEventReceipt` | [Fields and constraints](../docs/reference/data-dictionary.md#live_event_receipts) |
 | `live_projection_checkpoints` | `LiveProjectionCheckpoint` | [Fields and constraints](../docs/reference/data-dictionary.md#live_projection_checkpoints) |
 | `run_downstream_outbox` | `RunDownstreamOutbox` | [Fields and constraints](../docs/reference/data-dictionary.md#run_downstream_outbox) |
+| `pipeline_event_outbox` | `PipelineEventOutbox` | [Fields and constraints](../docs/reference/data-dictionary.md#pipeline_event_outbox) |
 | `semantic_reindex_jobs` | `SemanticReindexJob` | [Fields and constraints](../docs/reference/data-dictionary.md#semantic_reindex_jobs) |
 | `agent_child_dispatch_outbox` | `AgentChildDispatchOutbox` | [Fields and constraints](../docs/reference/data-dictionary.md#agent_child_dispatch_outbox) |
 | `decision_report_feedback` | `DecisionReportFeedback` | [Fields and constraints](../docs/reference/data-dictionary.md#decision_report_feedback) |

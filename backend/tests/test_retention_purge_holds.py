@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy.dialects import postgresql
@@ -31,6 +32,10 @@ class _CaptureDB(_FakeDB):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.captured: list[tuple[str, str, str]] = []
+        self.outbox_delete_stmts: list = []
+
+    def get_bind(self):
+        return SimpleNamespace(dialect=SimpleNamespace(name="sqlite"))
 
     async def execute(self, stmt):
         kind = type(stmt).__name__.lower()
@@ -40,6 +45,12 @@ class _CaptureDB(_FakeDB):
             froms = stmt.get_final_froms()
             table = getattr(froms[0], "name", "") if froms else ""
         self.captured.append((kind, table, str(stmt.compile(dialect=postgresql.dialect()))))
+        if kind == "delete" and table == "pipeline_event_outbox":
+            # Replay cancellation stages before Mongo, independently of the
+            # later business/source-row DELETE whose ordering we still assert.
+            self.outbox_delete_stmts.append(stmt)
+            self.events.append(("pg_outbox_cancel", table))
+            return SimpleNamespace(rowcount=0)
         return await super().execute(stmt)
 
     def where_of(self, kind: str, table: str, *, contains: str = "") -> list[str]:
@@ -128,6 +139,11 @@ async def test_the_executed_deletes_carry_the_same_clauses():
     assert run_deletes and all("retention_holds" not in w for w in run_deletes), (
         "the run delete is BY ID — the hold already acted on the select that produced the ids"
     )
+    cancellation = db.where_of("delete", "pipeline_event_outbox")
+    assert cancellation and all("project_id" in where and "test_run_id" in where for where in cancellation)
+    assert db.events.index(("pg_outbox_cancel", "pipeline_event_outbox")) < next(
+        i for i, event in enumerate(db.events) if event[0] == "mongo_delete"
+    ), "fence queued replay before deleting Mongo evidence"
 
 
 async def test_execute_locks_the_project_row_first_and_preview_takes_no_lock():

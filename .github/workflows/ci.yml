@@ -906,6 +906,7 @@ jobs:
           DATABASE_URL: postgresql+asyncpg://testlookup_user:test_password@localhost:5432/testlookup_test
           TESTLOOKUP_POSTGRES_TEST_DSN: postgresql+asyncpg://testlookup_user:test_password@localhost:5432/testlookup_test
           MONGO_URI: mongodb://localhost:27017
+          TESTLOOKUP_MONGO_EVENT_TEST_URI: mongodb://localhost:27017
           REDIS_URL: redis://localhost:6379/0
           APP_SECRET_KEY: test-secret-key-for-ci
           JWT_SECRET_KEY: test-jwt-key-for-ci
@@ -1146,6 +1147,8 @@ jobs:
           tests/integration/test_db_connection_budget_postgres.py
           tests/integration/test_db_pool_metrics_postgres.py
           tests/integration/test_nightly_job_observation_postgres.py
+          tests/integration/test_pipeline_event_outbox_postgres.py
+          tests/integration/test_identity_retention_postgres.py
           tests/integration/test_engine_hides_parameters_postgres.py
           tests/integration/test_decision_report_supersession_postgres_mongo.py
           tests/integration/test_http_exchanges_postgres_mongo.py

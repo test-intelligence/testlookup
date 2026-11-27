@@ -190,7 +190,7 @@ Transition Agent Action
 
 Approve, reject or undo one agent action. Nothing is written before every check passes.
 
-Source: [backend/app/routers/agent_actions.py:229](../../../backend/app/routers/agent_actions.py#L229).
+Source: [backend/app/routers/agent_actions.py:230](../../../backend/app/routers/agent_actions.py#L230).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`, `require_role.<locals>._check`.
 

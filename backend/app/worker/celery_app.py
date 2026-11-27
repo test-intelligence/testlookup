@@ -344,6 +344,11 @@ celery_app.conf.update(
             "task": "app.worker.tasks.relay_run_downstream_outbox",
             "schedule": crontab(minute="*"),
         },
+        "relay-pipeline-event-outbox": {
+            "task": "app.worker.tasks.relay_pipeline_event_outbox",
+            "schedule": crontab(minute="*"),
+            "options": {"expires": 55},
+        },
         "relay-queued-criteria-deletions": {
             "task": "app.worker.tasks.relay_queued_criteria_deletions",
             "schedule": crontab(minute="*"),

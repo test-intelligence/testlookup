@@ -87,9 +87,12 @@ environment can.
   person. Erasure pseudonymises the account everywhere except audit records and
   signed compliance packs, which keep the stored name (Article 17(3)).
 - **Retention:** policies for raw events, runs, artifacts and some audit
-  records, **off until you enable them**. Identity events (which hold sign-in IP
-  addresses) and the settings audit log are never purged by TestLookup; prune
-  them yourself if your policy requires it. AI analysis history is capped per run
+  records, **off until you enable them**. A separate, default-off instance policy
+  can expire successful routine sign-in, sign-out and MFA verification events
+  after administrator approval. SCIM authority and all other identity records
+  stay retained; independent instance identity holds stop this expiry. See
+  [identity event retention](docs/operations/identity-event-retention.md).
+  The settings audit log is never purged. AI analysis history is capped per run
   and per test, and agent memory expires after 365 days
   (`AGENT_MEMORY_RETENTION_DAYS`).
 - **Audit:** administrators can export up to 365 days of audit records as CSV,

@@ -239,8 +239,8 @@ async def _stage_reposts(db: AsyncSession, review: ReviewRequest) -> None:
         )
 
 
-async def _emit_review_event(review: ReviewRequest, decision: str) -> None:
-    """Best-effort pipeline event after the commit (section 8.3)."""
+async def _stage_review_event(db: AsyncSession, review: ReviewRequest, decision: str) -> None:
+    """Stage the pipeline event alongside the review decision."""
     if review.pipeline_run_id is None:
         return
     try:
@@ -249,9 +249,11 @@ async def _emit_review_event(review: ReviewRequest, decision: str) -> None:
         await emit_event(
             str(review.pipeline_run_id),
             f"review_{decision}",
+            db=db,
+            event_id=uuid.uuid5(review.id, f"review-{decision}"),
             detail={"review_id": str(review.id), "reason_code": review.reason_code},
         )
-    except Exception as exc:  # noqa: BLE001 -- the decision is already committed
+    except Exception as exc:  # noqa: BLE001 - the review still has its authoritative SQL audit
         logger.warning("review event not logged (%s)", type(exc).__name__)
 
 
@@ -324,8 +326,8 @@ async def accept_review(
         context={"review_id": str(review.id), "pipeline_run_id": str(review.pipeline_run_id or "")},
     )
     await _stage_reposts(db, review)
+    await _stage_review_event(db, review, "accepted")
     await db.commit()
-    await _emit_review_event(review, "accepted")
     return _to_response(review)
 
 
@@ -354,6 +356,6 @@ async def reject_review(
             "reason_code": review.reason_code,
         },
     )
+    await _stage_review_event(db, review, "rejected")
     await db.commit()
-    await _emit_review_event(review, "rejected")
     return _to_response(review)

@@ -1017,3 +1017,28 @@ nightly_job_started_overdue_slot = Gauge(
     "testlookup_nightly_job_started_overdue_slot", "Whether a worker began the overdue slot or a later one", ["schedule"],
     multiprocess_mode="mostrecent",
 )
+
+# Absolute shared event-delivery snapshots: API replicas observe the same
+# SQL rows, so fleet queries must use max rather than sum across scrapers.
+pipeline_event_outbox_entries = Gauge(
+    "testlookup_pipeline_event_outbox_entries", "Retained shared pipeline event intents by delivery state",
+    ["status"], multiprocess_mode="mostrecent",
+)
+pipeline_event_outbox_oldest_age = Gauge(
+    "testlookup_pipeline_event_outbox_oldest_age_seconds", "Oldest unresolved event intent age by state",
+    ["status"], multiprocess_mode="mostrecent",
+)
+pipeline_event_outbox_overdue = Gauge(
+    "testlookup_pipeline_event_outbox_retry_overdue_seconds", "Oldest due retry or expired delivery lease by state",
+    ["status"], multiprocess_mode="mostrecent",
+)
+pipeline_event_outbox_capacity = Gauge(
+    "testlookup_pipeline_event_outbox_capacity", "Shared SQL admission row capacity including retained receipts",
+    multiprocess_mode="mostrecent",
+)
+pipeline_event_admission_failures = Counter(
+    "testlookup_pipeline_event_admission_failures_total", "Event intents refused before durable SQL acceptance",
+    ["reason"],
+)
+for _reason in ("scope", "capacity", "storage", "contention", "payload", "conflict", "other"):
+    pipeline_event_admission_failures.labels(reason=_reason)

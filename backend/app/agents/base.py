@@ -2,6 +2,7 @@
 import time
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
+from uuid import uuid5
 from typing import Any, Optional
 
 from app.core.metrics import (
@@ -333,30 +334,24 @@ class BaseAgent(ABC):
         duration_secs = round(
             time.perf_counter() - self._stage_start.get(pipeline_run_id, time.perf_counter()), 3
         )
-        await emit_event(
-            pipeline_run_id, event_type,
-            stage_name=runtime_stage_name(type(self).stage_name),
-            detail={
-                "duration_seconds": duration_secs,
-                "input_tokens": input_tokens,
-                "output_tokens": output_tokens,
-                "total_tokens": total_tokens,
-                "llm_calls_count": llm_calls_count,
-                "cost_usd": round(cost_usd, 6),
-                # How the number was arrived at: "priced" | "self_hosted" |
-                # "unpriced" | "caller". A $0.00 from a self-hosted provider
-                # and a $0.00 from an unpriced cloud model mean opposite
-                # things, and the reader must be able to tell them apart.
-                "cost_source": cost_source,
-                **({"confidence_score": confidence_score} if confidence_score is not None else {}),
-                **({"evidence_count": evidence_count} if evidence_count is not None else {}),
-                **({"error": error[:500]} if error else {}),
-                **({"error_category": error_category} if error_category else {}),
-                **({"fallback_reason": fallback_reason} if fallback_reason else {}),
-                **({"route_rationale": route_rationale} if route_rationale else {}),
-                **({"result_summary": {k: v for k, v in (result_data or {}).items() if not isinstance(v, (list, dict))}} if result_data else {}),
-            },
-        )
+        event_detail = {
+            "duration_seconds": duration_secs,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": total_tokens,
+            "llm_calls_count": llm_calls_count,
+            "cost_usd": round(cost_usd, 6),
+            # A zero cost from a self-hosted provider and an unpriced cloud
+            # model have different meanings.
+            "cost_source": cost_source,
+            **({"confidence_score": confidence_score} if confidence_score is not None else {}),
+            **({"evidence_count": evidence_count} if evidence_count is not None else {}),
+            **({"error": error[:500]} if error else {}),
+            **({"error_category": error_category} if error_category else {}),
+            **({"fallback_reason": fallback_reason} if fallback_reason else {}),
+            **({"route_rationale": route_rationale} if route_rationale else {}),
+            **({"result_summary": {k: v for k, v in (result_data or {}).items() if not isinstance(v, (list, dict))}} if result_data else {}),
+        }
 
         # Record Prometheus metrics
         duration = time.perf_counter() - self._stage_start.pop(pipeline_run_id, time.perf_counter())
@@ -549,6 +544,14 @@ class BaseAgent(ABC):
                 decisions = self._stage_decisions.pop(pipeline_run_id, None)
                 if decisions:
                     stage.decision_log = decisions
+                await db.flush()
+                await emit_event(
+                    pipeline_run_id, event_type,
+                    stage_name=runtime_stage_name(type(self).stage_name),
+                    detail=event_detail,
+                    db=db,
+                    event_id=uuid5(stage.id, f"{event_type}:{stage_attempt}"),
+                )
                 await db.commit()
 
         # Settlement is intentionally a second transaction. If its commit
