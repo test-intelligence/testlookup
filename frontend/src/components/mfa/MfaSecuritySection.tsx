@@ -37,7 +37,7 @@ function formatEnrolledAt(iso: string | null): string | null {
  *
  * The two states that are easy to get wrong, and are handled explicitly here:
  *
- *  - `sso_managed` — the identity provider owns this user's second factor.
+ *  - SSO-linked without local MFA — show identity provider guidance.
  *    Showing an Enable button would be a lie; we render an explanation and no
  *    controls at all.
  *  - `secret_unreadable` — MFA is ON but the stored seed will not decrypt. The
@@ -170,17 +170,17 @@ export default function MfaSecuritySection() {
     )
   }
 
-  // ── SSO-managed: the IdP owns the second factor ───────────────────────────
-  if (status.sso_managed) {
+  // A linked account can also have an authenticator for password sign-in.
+  if (status.sso_managed && !status.enabled) {
     return (
       <section className="card space-y-3" data-testid="mfa-sso-managed">
         {heading('mb-3')}
         <div className="flex items-start gap-2">
           <Building2 className="mt-0.5 h-4 w-4 flex-shrink-0 text-[var(--color-text-muted)]" />
           <p className="text-sm text-[var(--color-text-secondary)]">
-            Your account signs in through your organisation&apos;s identity provider, and
-            your second factor is managed there. There is nothing to configure in
-            TestLookup — change your MFA settings with your identity provider instead.
+            For single sign-on, manage your second factor with your organisation&apos;s
+            identity provider. If workspace policy requires MFA when you sign in with a
+            password, TestLookup will prompt you to set up an authenticator.
           </p>
         </div>
       </section>
@@ -307,6 +307,12 @@ export default function MfaSecuritySection() {
         )}
       </div>
 
+      {status.sso_managed && (
+        <p className="text-sm text-[var(--color-text-secondary)]">
+          This authenticator and its recovery codes apply to password sign-in.
+        </p>
+      )}
+
       <p
         className={`text-sm ${codesLow ? 'text-[var(--status-broken)]' : 'text-[var(--color-text-secondary)]'}`}
       >
@@ -343,17 +349,19 @@ export default function MfaSecuritySection() {
             <RefreshCw className="h-3.5 w-3.5" />
             Regenerate recovery codes
           </button>
-          <button
-            type="button"
-            onClick={() => {
-              setPanel('disable')
-              setFormError(null)
-            }}
-            className="flex items-center gap-1.5 rounded border border-[var(--status-failed-bd)] px-3 py-1.5 text-sm text-[var(--status-failed)] transition-colors hover:bg-[var(--status-failed-bg-soft)]"
-          >
-            <ShieldOff className="h-3.5 w-3.5" />
-            Turn off two-factor authentication
-          </button>
+          {!status.sso_managed && (
+            <button
+              type="button"
+              onClick={() => {
+                setPanel('disable')
+                setFormError(null)
+              }}
+              className="flex items-center gap-1.5 rounded border border-[var(--status-failed-bd)] px-3 py-1.5 text-sm text-[var(--status-failed)] transition-colors hover:bg-[var(--status-failed-bg-soft)]"
+            >
+              <ShieldOff className="h-3.5 w-3.5" />
+              Turn off two-factor authentication
+            </button>
+          )}
         </div>
       )}
 

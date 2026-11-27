@@ -78,14 +78,15 @@ the policy on. `mfa_service.mfa_gate_applies` is written as
 falls out of the "interactive" bucket rather than being assumed to be one.
 The corollary is stated in §7.
 
-**SSO-managed accounts are exempt from the requirement.** `/api/v1/sso/acs`
-does not consult the MFA policy at all: the IdP has already asserted the
-identity and, per the customer's own policy, performed its own MFA. A local
-second factor on top would mean every federated user holding a seed we control
-and the IdP knows nothing about — a lockout risk for no added assurance. The
-exemption is from the *requirement* only; an SSO-managed user who enrolls
-voluntarily is still challenged on the local password path.
-`mfa_service.is_sso_managed` checks two signals, because
+**SSO-authenticated sessions are exempt from the local requirement.**
+`/api/v1/sso/acs` and the OIDC callback do not consult the MFA policy: the IdP
+has already asserted the identity and, per the customer's own policy,
+performed its own MFA. Account linkage alone grants no exemption, so a linked
+or SCIM-provisioned user who submits a local password must still enroll or
+verify local MFA when policy covers the role. Refresh tokens carry a signed
+`auth_assurance` claim, and rotation preserves it; a legacy token without the
+claim is treated as password-only. `mfa_service.is_sso_managed` still checks
+two account-management signals, because
 `scim_service.scim_create_user` only creates the `federated_identities` link
 `if sso_config_id and external_id` — a SCIM user provisioned without either
 looks purely local. The unconditional `SCIM_USER_CREATED` identity event on
@@ -433,11 +434,12 @@ an auditor will ask about:
   per-user, listed under Settings → API Keys, revocable, and can be pinned to
   one project. There is currently no policy switch to forbid key creation for
   MFA-required roles.
-- **Sessions minted before the policy changed are not retroactively
-  challenged.** Turning the requirement on is enforced at `/auth/login` and,
-  since 0117, re-evaluated on every `/auth/refresh` — so a live session is
-  bounced to enrollment within one access-token lifetime rather than one
-  refresh-token lifetime (7 days). It is not enforced per request.
+- **Password-only sessions minted before the policy changed are challenged on
+  refresh.** Turning the requirement on is enforced at `/auth/login` and
+  re-evaluated against signed session assurance on every `/auth/refresh` — so
+  a password-only session is bounced to enrollment within one access-token
+  lifetime, while sessions established by MFA or SSO continue rotating. It is
+  not enforced per request.
 - **Lockout is per account, not per source.** An attacker who knows a username
   can lock its owner out for the cooldown by failing enough times. The window
   is bounded (default 15 minutes), failures while already locked do not extend

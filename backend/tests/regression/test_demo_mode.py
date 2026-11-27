@@ -21,6 +21,7 @@ from fastapi import HTTPException
 
 from app.core import demo_mode
 from app.core.config import settings
+from app.core.security import AuthenticationAssurance
 from app.models.postgres import UserRole
 
 pytestmark = pytest.mark.regression
@@ -219,7 +220,8 @@ def issued(monkeypatch):
         calls.append(f"access:{user_id}")
         return "access-token-demo"
 
-    async def _refresh(_db, user_id):
+    async def _refresh(_db, user_id, *, authentication_assurance):
+        assert authentication_assurance is AuthenticationAssurance.PASSWORD
         calls.append(f"refresh:{user_id}")
         return "refresh-token-demo"
 

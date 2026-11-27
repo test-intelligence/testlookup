@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.deps import require_role
+from app.core.security import AuthenticationAssurance
 from app.services.auth_session_tokens import issue_access_jwt
 from app.services.refresh_token_service import issue_refresh_token
 from app.db.postgres import get_db
@@ -471,7 +472,9 @@ async def oidc_callback(
     await db.execute(select(User.id).where(User.id == user.id).with_for_update())
     await db.refresh(user)
     access_token = await issue_access_jwt(db, str(user.id))
-    refresh_token = await issue_refresh_token(db, user.id)
+    refresh_token = await issue_refresh_token(
+        db, user.id, authentication_assurance=AuthenticationAssurance.SSO
+    )
     await log_identity_event(
         db,
         IdentityEventType.SSO_LOGIN,
@@ -656,7 +659,9 @@ async def saml_acs(
 
     # Issue tokens
     access_token = await issue_access_jwt(db, str(user.id))
-    refresh_token = await issue_refresh_token(db, user.id)
+    refresh_token = await issue_refresh_token(
+        db, user.id, authentication_assurance=AuthenticationAssurance.SSO
+    )
 
     await log_identity_event(
         db,

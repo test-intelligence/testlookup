@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.deps import get_current_active_user
 from app.core.security import (
+    AuthenticationAssurance,
     MFA_CHALLENGE_TOKEN_TYPE,
     MFA_ENROLLMENT_TOKEN_TYPE,
     JWTError,
@@ -199,7 +200,9 @@ def _assert_not_locked(user: User) -> None:
 
 async def _issue_session(db: AsyncSession, user: User) -> TokenResponse:
     access_token = await issue_access_jwt(db, str(user.id))
-    refresh_token = await issue_refresh_token(db, user.id)
+    refresh_token = await issue_refresh_token(
+        db, user.id, authentication_assurance=AuthenticationAssurance.MFA
+    )
     await mfa_service.register_successful_login(db, user)
     return TokenResponse(
         access_token=access_token,
