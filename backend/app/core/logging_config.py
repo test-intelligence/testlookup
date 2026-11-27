@@ -166,8 +166,25 @@ def configure_logging() -> None:
         structlog.dev.set_exc_info,
         structlog.processors.format_exc_info,
         structlog.processors.UnicodeDecoder(),
-        _privacy_redaction,
     ]
+    structured_processors = shared_processors.copy()
+    if settings.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT:
+        from app.core.operational_logs import operational_log_export
+
+        structured_processors.append(operational_log_export(
+            endpoint=settings.OTEL_EXPORTER_OTLP_LOGS_ENDPOINT,
+            service=settings.OTEL_SERVICE_NAME,
+            environment=settings.APP_ENV,
+            role=settings.OTEL_LOGS_ROLE,
+            min_level=level,
+            service_version=settings.APP_VERSION,
+            build_revision=settings.BUILD_REVISION,
+            installation=settings.OBSERVABILITY_INSTALLATION,
+        ))
+    # The exporter hashes caller IDs before the stdout scrubber can replace a
+    # numeric ID. Its independent allowlist does not forward any free text.
+    shared_processors.append(_privacy_redaction)
+    structured_processors.append(_privacy_redaction)
 
     renderer: Any = (
         structlog.processors.JSONRenderer()
@@ -181,7 +198,7 @@ def configure_logging() -> None:
 
     structlog.configure(
         processors=[
-            *shared_processors,
+            *structured_processors,
             structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
         ],
         logger_factory=structlog.stdlib.LoggerFactory(),

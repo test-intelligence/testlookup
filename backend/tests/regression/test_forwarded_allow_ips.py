@@ -27,6 +27,8 @@ import yaml
 from compose_topology_contract import load_compose_file
 from uvicorn.middleware.proxy_headers import _TrustedHosts
 
+from ._overlay_layers import overlay_layers
+
 ROOT = Path(__file__).resolve().parents[3]
 CONF = ROOT / "backend" / "gunicorn_conf.py"
 CONFIGMAP = ROOT / "k8s" / "base" / "configmap.yaml"
@@ -493,6 +495,11 @@ NON_PRODUCTION_COMPOSE = (
     "docker-compose.yml",            # dev: vite serves and proxies
     "docker-compose.dev-lite.yml",   # dev: same, minus the heavy services
     "docker-compose.monitoring.yml", # prometheus/grafana only, no app services
+    "docker-compose.monitoring-auth.yml",  # token mounts and backend env only
+    "docker-compose.objectives.yml",  # metrics/site configuration only
+    "docker-compose.infrastructure-metrics.yml",  # site-owned exporter scrapes
+    "docker-compose.alerting.yml",  # optional notification transport
+    "docker-compose.telemetry.yml",  # optional telemetry transport/storage
 )
 
 
@@ -541,12 +548,10 @@ def test_a_compose_file_claiming_to_be_non_production_has_no_production_frontend
         path = ROOT / name
         if not path.exists():
             continue
-        services = (yaml.safe_load(path.read_text(encoding="utf-8")) or {}).get(
-            "services"
-        ) or {}
+        services = load_compose_file(path).get("services") or {}
         frontend = services.get("frontend") or {}
         target = str((frontend.get("build") or {}).get("target", ""))
-        if target == "production":
+        if target == "production" or frontend.get("image"):
             mislabelled.append(name)
     assert not mislabelled, (
         "these are listed as non-production but build the production frontend, "
@@ -631,18 +636,22 @@ def test_the_demo_override_trusts_only_its_own_compose_network():
 #: addresses, so trusting the private ranges pod networks come from is right.
 #: Everything else must name its own, because on a cluster whose users share
 #: RFC1918 with its pods the base value trusts the callers too.
-OVERLAYS_MAY_INHERIT_BASE = frozenset({"aws-eks", "azure-aks", "dev", "prod", "staging"})
+OVERLAYS_MAY_INHERIT_BASE = frozenset({
+    "aws-eks", "azure-aks", "dev", "prod", "staging",
+    "prod-telemetry",  # same public-facing prod topology, plus telemetry env/mounts
+})
 
 
 def _overlay_boundary(path):
     import re
 
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if line.strip().startswith("#"):
-            continue
-        match = re.match(r'\s*TRUSTED_PROXY_IPS:\s*"?([^"#]+)"?', line)
-        if match:
-            return match.group(1).strip()
+    for layer in reversed(overlay_layers(path)):
+        for line in layer.read_text(encoding="utf-8").splitlines():
+            if line.strip().startswith("#"):
+                continue
+            match = re.match(r'\s*TRUSTED_PROXY_IPS:\s*"?([^"#]+)"?', line)
+            if match:
+                return match.group(1).strip()
     return None
 
 

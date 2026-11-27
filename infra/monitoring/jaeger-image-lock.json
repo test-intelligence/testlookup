@@ -1,0 +1,11 @@
+{
+  "image": "cr.jaegertracing.io/jaegertracing/jaeger:2.23.0@sha256:3823829974ccfc2485d2e48b165579091f32295022ae80ca49704e2f4834116e",
+  "upstream_source": "https://github.com/jaegertracing/jaeger/tree/v2.23.0",
+  "bundle": "telemetry",
+  "release_binaries": {
+    "linux-amd64": {
+      "url": "https://github.com/jaegertracing/jaeger/releases/download/v2.23.0/jaeger-2.23.0-linux-amd64.tar.gz",
+      "sha256": "4b7bd152ed31d2205e4e73b873d289c61cd3fabaecc86443070143448d40b753"
+    }
+  }
+}

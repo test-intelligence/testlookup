@@ -25,6 +25,12 @@ All of them authenticate with either an `X-API-Key` header or a signed-in sessio
 5. Optionally open **Optional metadata** to set a **Build label**, **Release**, **Branch** and **Commit**. Without a build label, one is generated.
 6. **Upload**. The upload form, which opens under the page header, shows the report being processed, then **View run** opens it.
 
+If **Upload confirmation pending** appears, use **Check status** to follow that
+upload. If a connection drops before a receipt arrives, keep the form open and
+retry with the same files and settings. Changing the selection or settings
+starts another attempt. Closing or reloading the form ends its local recovery
+state, so check the original run before uploading the report again.
+
 Ticking **Skip analysis** makes the upload faster: the run gets no analysis, no suite comparison report and no automatic Investigator run. Transition notifications are still sent. You can start the analysis later from the run's page.
 
 The **Upload report** button is controlled by the `manual_upload` feature flag. It is **on** for a new install; an administrator can turn it off under **Settings → System → Feature flags**, for example to make CI the only way in. If the button is missing, that flag is off. If it is greyed out with "QA Engineer role required", your role is below `QA_ENGINEER`.

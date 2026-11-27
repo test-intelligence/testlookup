@@ -1,0 +1,45 @@
+# Opt-in replacement for provisioning/datasources/prometheus.yml. Mount over
+# that exact file; adding a second Jaeger UID definition is invalid provisioning.
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+
+  - name: Jaeger
+    uid: jaeger
+    type: jaeger
+    access: proxy
+    url: http://jaeger:16686
+    isDefault: false
+    editable: false
+    jsonData:
+      tracesToLogsV2:
+        datasourceUid: loki
+        spanStartTimeShift: '-2m'
+        spanEndTimeShift: '2m'
+        filterByTraceID: false
+        filterBySpanID: false
+        customQuery: true
+        query: '{service_namespace="testlookup"} | trace_id="$${__span.traceId}"'
+
+  - name: Loki
+    uid: loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    isDefault: false
+    editable: false
+    jsonData:
+      maxLines: 1000
+      timeout: 30
+      derivedFields:
+        - name: TraceID
+          datasourceUid: jaeger
+          matcherRegex: '"trace_id"\s*:\s*"([0-9a-fA-F]{32})"'
+          url: '$${__value.raw}'
+          urlDisplayLabel: Open trace

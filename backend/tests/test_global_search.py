@@ -140,7 +140,7 @@ class TestGlobalSearchResponseSchema:
     def test_single_entity_type_response(self):
         resp = GlobalSearchResponse(
             items=[
-                GlobalSearchResult(entity_type="suite", entity_id="s1", title="api-tests", navigation_url="/cov"),
+                GlobalSearchResult(entity_type="suite", entity_id="s1", title="api-tests", navigation_url="/cov"), # gitleaks:allow -- synthetic test credential, never production authority
                 GlobalSearchResult(entity_type="suite", entity_id="s2", title="ui-tests", navigation_url="/cov"),
             ],
             total=2,

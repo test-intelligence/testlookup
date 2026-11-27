@@ -54,7 +54,7 @@ BACKEND = Path(__file__).resolve().parents[2]
 # Minted by python-jose 3.5.0 with this secret (2026-10-12), exp 2099-01-01:
 #   jwt.encode({"sub": SUB, "iat": <2026-10-11T12:00:00.123456Z as a float>,
 #               "exp": datetime(2099, 1, 1), "type": "access", "jti": ...}, ...)
-JOSE_SECRET = "jose-era-test-secret-0123456789abcdef"
+JOSE_SECRET = "jose-era-test-secret-0123456789abcdef" # gitleaks:allow -- synthetic test credential, never production authority
 JOSE_SUB = "7b0c6a2e-4f3d-4a59-9d6e-0d5b8f1a2c33"
 JOSE_ACCESS = (
     "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9."
@@ -73,7 +73,7 @@ JOSE_REFRESH = (
 
 @pytest.fixture(autouse=True)
 def _hs256(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(settings, "JWT_SECRET_KEY", "pyjwt-regression-secret-0123456789abcdef")
+    monkeypatch.setattr(settings, "JWT_SECRET_KEY", "pyjwt-regression-secret-0123456789abcdef") # gitleaks:allow -- synthetic test credential, never production authority
     monkeypatch.setattr(settings, "JWT_ALGORITHM", "HS256")
 
 

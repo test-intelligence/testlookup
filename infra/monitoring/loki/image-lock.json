@@ -1,0 +1,27 @@
+{
+  "image": "docker.io/grafana/loki:3.7.10@sha256:b43c257ccfc925d4a50b8717cac61a3b51df8c48d01847936057e5c4075a24a7",
+  "upstream_source": "https://github.com/grafana/loki/tree/v3.7.10",
+  "upstream_release": "https://github.com/grafana/loki/releases/tag/v3.7.10",
+  "digest_source": "https://registry-1.docker.io/v2/grafana/loki/manifests/3.7.10",
+  "digest_kind": "multi-platform manifest index",
+  "verified_at": "2026-11-27",
+  "image_user": "10001",
+  "bundle": "telemetry-external",
+  "release_checksums": "https://github.com/grafana/loki/releases/download/v3.7.10/SHA256SUMS",
+  "verification_grafana": {
+    "version": "13.3.1",
+    "url": "https://dl.grafana.com/grafana/release/13.3.1/grafana_13.3.1_42849527790_linux_amd64.tar.gz",
+    "sha256": "6acf8939dd2f73332cbcafc27a33973fb1115b8867e7ffa3223c6e2ecbed8531",
+    "source": "https://grafana.com/grafana/download/13.3.1?edition=oss"
+  },
+  "release_binaries": {
+    "linux-amd64": {
+      "url": "https://github.com/grafana/loki/releases/download/v3.7.10/loki-linux-amd64.zip",
+      "sha256": "200e74f7e631969bd0f2a066a2e1d33cdea9b3c0801aaaa7d78947c4ac29bddb"
+    },
+    "windows-amd64": {
+      "url": "https://github.com/grafana/loki/releases/download/v3.7.10/loki-windows-amd64.exe.zip",
+      "sha256": "7e3ae97518b290cbcaf9dc359af00e9d0a541333fe131fe7ce3056197306bfaf"
+    }
+  }
+}

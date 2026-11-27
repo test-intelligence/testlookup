@@ -8,6 +8,7 @@ All metric objects are module-level singletons — import directly:
     from app.core.metrics import ingestion_runs_total, pipeline_stage_duration_seconds
 """
 from prometheus_client import Counter, Gauge, Histogram
+from prometheus_client.core import GaugeMetricFamily
 
 # ── Ingestion ─────────────────────────────────────────────────────────────────
 
@@ -302,13 +303,13 @@ pipeline_stage_llm_calls_total = Counter(
 pipeline_fallback_total = Counter(
     "testlookup_pipeline_fallback_total",
     "Number of fallback invocations per agent stage",
-    ["stage_name", "reason"],  # reason: llm_timeout | llm_error | token_limit | provider_unavailable
+    ["stage_name", "reason"],  # closed capability/reason inventories: metric_dimensions.py
 )
 
 pipeline_stage_errors_by_category = Counter(
     "testlookup_pipeline_stage_errors_by_category",
     "Error counts by category per agent stage",
-    ["stage_name", "error_category"],  # error_category: transient | permanent | provider_error | token_limit | timeout
+    ["stage_name", "error_category"],  # closed inventories: metric_dimensions.py
 )
 
 # ── Release Gate ──────────────────────────────────────────────────────────────
@@ -560,33 +561,17 @@ report_exports_total = Counter(
 test_case_transitions_total = Counter(
     "testlookup_test_case_transitions_total",
     "Validated authored test-case lifecycle transitions",
-    ["project", "from", "to", "actor_role"],
-)
-
-test_cases_by_state = Gauge(
-    "testlookup_test_cases_by_state",
-    "Current authored test cases in each governed lifecycle state",
-    ["project", "state"],
-    multiprocess_mode="mostrecent",
+    ["from", "to", "actor_role"],
 )
 
 test_case_promotions_total = Counter(
     "testlookup_test_case_promotions_total",
     "Automation canonical cases promoted into authored test management",
-    ["project"],
 )
 
 test_case_deprecations_without_reason_total = Counter(
     "testlookup_test_case_deprecations_without_reason_total",
     "Legacy DELETE deprecations that used the first-release compatibility reason",
-    ["project"],
-)
-
-automation_cases_orphaned = Gauge(
-    "testlookup_automation_cases_orphaned",
-    "Deleted automation canonical cases awaiting retirement confirmation",
-    ["project"],
-    multiprocess_mode="mostrecent",
 )
 
 # ── Tier 0-2 operations (Phase E-3, 2026-04-15) ─────────────────────────────
@@ -618,7 +603,7 @@ perf_baseline_refresh_runs_total = Counter(
 
 retro_digest_dispatch_total = Counter(
     "testlookup_retro_digest_dispatch_total",
-    "Total weekly retro digest dispatch task runs",
+    "Weekly retro content generation outcomes, not successful provider deliveries",
     ["status"],  # success | skipped | failure
 )
 
@@ -707,6 +692,13 @@ celery_queue_length = Gauge(
     multiprocess_mode="mostrecent",
 )
 
+celery_queue_depth_observed_timestamp_seconds = Gauge(
+    "testlookup_celery_queue_depth_observed_timestamp_seconds",
+    "UTC epoch of a complete successful logical queue depth read; zero means an explicit failed read",
+    ["queue_name"],
+    multiprocess_mode="mostrecent",
+)
+
 
 # ── Celery task runtime ───────────────────────────────────────────────────────
 #
@@ -729,6 +721,18 @@ celery_task_runtime_seconds = Histogram(
     "Celery task execution time in seconds",
     ["task_name", "queue_name"],
     buckets=(0.1, 0.5, 1, 2, 5, 10, 30, 60, 120, 300, 600, float("inf")),
+)
+
+# Queue-only attempt measurements complement the existing runtime histogram's
+# completion count. Unknown legacy/invalid stamps never become zero waits.
+celery_task_queue_wait_seconds = Histogram(
+    "celery_task_queue_wait_seconds", "Publish-to-start delay after scheduled ETA, including worker reservation",
+    ["queue_name"],
+    buckets=(0.01, 0.05, 0.1, 0.5, 1, 2, 5, 10, 30, 60, 120, 300, 600, 1800, 3600, float("inf")),
+)
+celery_task_queue_wait_unavailable_total = Counter(
+    "celery_task_queue_wait_unavailable_total", "Broker execution starts without a trustworthy dispatch-ready delay",
+    ["queue_name", "reason"],
 )
 
 
@@ -834,12 +838,229 @@ ws_connections_total = Counter(
     ["outcome"],
 )
 
-# E9.5: fraction of candidate workflow steps backed by an exact replay-cache
-# key during the latest dry-run. Project/workflow labels are bounded by stored
-# definitions and let operators distinguish a safe regression result from an
-# insufficient one.
-workflow_eval_coverage = Gauge(
-    "testlookup_workflow_eval_coverage",
-    "Fraction of candidate workflow steps measured by the replay corpus",
-    ["project_id", "workflow_id"],
+# Tenant/workflow current-state analytics stay in SQL and the authorized APIs.
+# Process gauges retained deleted IDs and could not represent a fleet snapshot.
+
+# Operational collection is bounded; a previous gauge value is not proof that
+# its dependency was observed during the current scrape. Shared-state gauges
+# use mostrecent within a pod and max (not sum) across API replicas in rules.
+metric_collection_success = Gauge(
+    "testlookup_metric_collection_success",
+    "Whether the latest bounded collection completed successfully",
+    ["collector"],
+    multiprocess_mode="mostrecent",
+)
+metric_collection_last_success = Gauge(
+    "testlookup_metric_collection_last_success_timestamp_seconds",
+    "Unix timestamp of the latest complete successful collection",
+    ["collector"],
+    multiprocess_mode="mostrecent",
+)
+metric_collection_errors_total = Counter(
+    "testlookup_metric_collection_errors_total",
+    "Failed or timed-out operational collections",
+    ["collector"],
+)
+downstream_outbox_entries = Gauge(
+    "testlookup_downstream_outbox_entries",
+    "Durable downstream operations by bounded operation and lifecycle state",
+    ["operation", "status"],
+    multiprocess_mode="mostrecent",
+)
+downstream_outbox_oldest_age_seconds = Gauge(
+    "testlookup_downstream_outbox_oldest_age_seconds",
+    "Age of the oldest non-completed operation in the current SQL snapshot",
+    ["operation", "status"],
+    multiprocess_mode="mostrecent",
+)
+downstream_outbox_overdue_seconds = Gauge(
+    "testlookup_downstream_outbox_overdue_seconds",
+    "Seconds past the oldest retry or lease deadline for nonterminal work",
+    ["operation", "status"],
+    multiprocess_mode="mostrecent",
+)
+
+# Redis/Valkey INFO memory is server-wide, even when logical databases differ.
+# Roles identify configured endpoint authority, never URLs or credentials.
+# Keep each role separate and max (never sum) redundant API observations.
+redis_memory_used_bytes = Gauge(
+    "redis_memory_used_bytes",
+    "Allocator bytes reported by INFO memory for the configured Redis role",
+    ["store_role"], multiprocess_mode="mostrecent",
+)
+redis_memory_max_bytes = Gauge(
+    "redis_memory_max_bytes",
+    "Configured Redis maxmemory bytes; zero explicitly means no dataset limit",
+    ["store_role"], multiprocess_mode="mostrecent",
+)
+redis_memory_rss_bytes = Gauge(
+    "testlookup_redis_memory_rss_bytes",
+    "Process resident memory reported by Redis; not a container capacity limit",
+    ["store_role"], multiprocess_mode="mostrecent",
+)
+redis_memory_not_counted_for_evict_bytes = Gauge(
+    "testlookup_redis_memory_not_counted_for_evict_bytes",
+    "Redis memory excluded from the maxmemory eviction calculation",
+    ["store_role"], multiprocess_mode="mostrecent",
+)
+redis_memory_counted_for_evict_bytes = Gauge(
+    "testlookup_redis_memory_counted_for_evict_bytes",
+    "Allocator memory minus excluded eviction buffers, bounded at zero",
+    ["store_role"], multiprocess_mode="mostrecent",
+)
+redis_memory_limit_configured = Gauge(
+    "testlookup_redis_memory_limit_configured",
+    "Whether the configured Redis role reports a positive maxmemory limit",
+    ["store_role"], multiprocess_mode="mostrecent",
+)
+
+# SQLAlchemy pools are private to each API/prefork process. Sum their current
+# absolute values, but retain the worst live process's utilization: dividing
+# fleet totals would hide an exhausted child behind idle siblings. Only the
+# bounded PG_PROCESS_ROLE (api/worker/operation) is exported as a label.
+sqlalchemy_pool_checked_out = Gauge(
+    "sqlalchemy_pool_checked_out",
+    "Connections checked out from initialized process-local pools",
+    ["role"], multiprocess_mode="livesum",
+)
+sqlalchemy_pool_size = Gauge(
+    "sqlalchemy_pool_size",
+    "Configured persistent size of initialized process-local pools",
+    ["role"], multiprocess_mode="livesum",
+)
+sqlalchemy_pool_max_overflow = Gauge(
+    "sqlalchemy_pool_max_overflow",
+    "Configured finite overflow allowance, zero if unbounded",
+    ["role"], multiprocess_mode="livesum",
+)
+sqlalchemy_pool_capacity = Gauge(
+    "sqlalchemy_pool_capacity",
+    "Configured finite pool size plus overflow, zero if unbounded",
+    ["role"], multiprocess_mode="livesum",
+)
+sqlalchemy_pool_capacity_limited = Gauge(
+    "sqlalchemy_pool_capacity_limited",
+    "Initialized pools with a finite configured capacity",
+    ["role"], multiprocess_mode="livesum",
+)
+sqlalchemy_pool_overflow = Gauge(
+    "sqlalchemy_pool_overflow",
+    "Open connections above persistent pool size, never negative",
+    ["role"], multiprocess_mode="livesum",
+)
+sqlalchemy_pool_utilization_ratio = Gauge(
+    "sqlalchemy_pool_utilization_ratio",
+    "Maximum live process pool checked-out / finite capacity, zero if unbounded",
+    ["role"], multiprocess_mode="livemax",
+)
+sqlalchemy_pool_acquiring = Gauge(
+    "sqlalchemy_pool_acquiring",
+    "Pool acquisition attempts in progress, including queue wait/connect/pre-ping",
+    ["role"], multiprocess_mode="livesum",
+)
+sqlalchemy_pool_acquire_seconds = Histogram(
+    "sqlalchemy_pool_acquire_seconds",
+    "One pool acquisition duration including wait/connect/pre-ping; errors include cancellation",
+    ["role", "outcome"],  # success | timeout | error
+    buckets=(0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60),
+)
+sqlalchemy_pool_timeouts_total = Counter(
+    "sqlalchemy_pool_timeouts_total",
+    "Pool queue acquisition timeouts (SQLAlchemy 3o7r), once per public attempt",
+    ["role"],
+)
+
+# Absolute durable subscription snapshots; scrape replicas must not sum them.
+# Schedule/state/outcome vocabularies are bounded, with no subscriber labels.
+weekly_digest_subscriptions = Gauge(
+    "testlookup_weekly_digest_subscriptions",
+    "Enabled weekly subscriptions by durable due/observation state",
+    ["schedule", "state"], multiprocess_mode="mostrecent",
+)
+weekly_digest_oldest_overdue_seconds = Gauge(
+    "testlookup_weekly_digest_oldest_overdue_seconds",
+    "Oldest unmet weekly delivery slot beyond daily-dispatch plus processing grace",
+    ["schedule"], multiprocess_mode="mostrecent",
+)
+weekly_digest_delivery_outcomes = Gauge(
+    "testlookup_weekly_digest_delivery_outcomes",
+    "Enabled weekly subscriptions by last observed attempt outcome; generation is not delivery",
+    ["schedule", "outcome"], multiprocess_mode="mostrecent",
+)
+
+# Nightly jobs use shared SQL observations. The schedule label comes from the
+# two-job registry, with no task IDs or project data.
+nightly_job_enabled = Gauge(
+    "testlookup_nightly_job_enabled", "Whether the nightly job's feature is enabled", ["schedule"],
+    multiprocess_mode="mostrecent",
+)
+nightly_job_next_due_timestamp = Gauge(
+    "testlookup_nightly_job_next_due_timestamp_seconds", "Next UTC slot, or zero when disabled", ["schedule"],
+    multiprocess_mode="mostrecent",
+)
+nightly_job_last_attempt_timestamp = Gauge(
+    "testlookup_nightly_job_last_attempt_timestamp_seconds", "Start of the most recent observed slot attempt", ["schedule"],
+    multiprocess_mode="mostrecent",
+)
+nightly_job_last_success_timestamp = Gauge(
+    "testlookup_nightly_job_last_success_timestamp_seconds", "Completion of the most recent successful slot", ["schedule"],
+    multiprocess_mode="mostrecent",
+)
+nightly_job_overdue = Gauge(
+    "testlookup_nightly_job_overdue", "Whether an eligible nightly slot missed its success deadline", ["schedule"],
+    multiprocess_mode="mostrecent",
+)
+nightly_job_started_overdue_slot = Gauge(
+    "testlookup_nightly_job_started_overdue_slot", "Whether a worker began the overdue slot or a later one", ["schedule"],
+    multiprocess_mode="mostrecent",
+)
+
+# Absolute shared event-delivery snapshots: API replicas observe the same
+# SQL rows, so fleet queries must use max rather than sum across scrapers.
+pipeline_event_outbox_entries = Gauge(
+    "testlookup_pipeline_event_outbox_entries", "Retained shared pipeline event intents by delivery state",
+    ["status"], multiprocess_mode="mostrecent",
+)
+pipeline_event_outbox_oldest_age = Gauge(
+    "testlookup_pipeline_event_outbox_oldest_age_seconds", "Oldest unresolved event intent age by state",
+    ["status"], multiprocess_mode="mostrecent",
+)
+pipeline_event_outbox_overdue = Gauge(
+    "testlookup_pipeline_event_outbox_retry_overdue_seconds", "Oldest due retry or expired delivery lease by state",
+    ["status"], multiprocess_mode="mostrecent",
+)
+pipeline_event_outbox_capacity = Gauge(
+    "testlookup_pipeline_event_outbox_capacity", "Shared SQL admission row capacity including retained receipts",
+    multiprocess_mode="mostrecent",
+)
+pipeline_event_admission_failures = Counter(
+    "testlookup_pipeline_event_admission_failures_total", "Event intents refused before durable SQL acceptance",
+    ["reason"],
+)
+for _reason in ("scope", "capacity", "storage", "contention", "payload", "conflict", "other"):
+    pipeline_event_admission_failures.labels(reason=_reason)
+
+# Journey SLIs are opt-in and explicitly installation scoped. API counters
+# sum real attempts across processes; durable SQL cohorts are replicated
+# absolute snapshots: select one freshest valid API target for the entire
+# cohort bundle. Independent max per outcome can invent a denominator.
+api_journey_events = Counter(
+    "testlookup_api_journey_events_total", "Eligible completed core API attempts by proposed objective outcome",
+    ["installation", "environment", "objective", "outcome"],
+)
+api_sli_configured = Gauge(
+    "testlookup_api_sli_configured", "API target has initialized both outcomes for this scoped measurement; not objective adoption",
+    ["installation", "environment", "objective"], multiprocess_mode="mostrecent",
+)
+journey_cohort_events = GaugeMetricFamily(
+    "testlookup_journey_cohort_events", "Retained SQL intents in a matured acceptance cohort; not a cumulative counter",
+    labels=["installation", "environment", "journey", "window", "outcome"],
+)
+journey_cohort_observed_at = GaugeMetricFamily(
+    "testlookup_journey_cohort_observed_at_seconds", "UTC observation of the last complete shared SQL cohort snapshot",
+    labels=["installation", "environment"],
+)
+journey_source_supported = GaugeMetricFamily(
+    "testlookup_journey_source_supported", "Whether this journey has the documented retained SQL acceptance/completion source; not historical SLO coverage",
+    labels=["installation", "environment", "journey"],
 )

@@ -10,9 +10,9 @@ Two defects kept TestLookupFinalizeStepFailing silent:
    created at import with value 0.
 
 And there was no PrometheusRule under ``k8s/``, so on a cluster nothing fired
-at all. promtool is not available offline, so the rules are validated here:
-parsed, their metric names checked against the declarations, and the k8s
-resource compared with the one source file.
+at all. These offline checks validate declarations and generated-rule parity.
+The existing backend CI job also runs semantic fixtures with checksum-pinned
+promtool matching the reference monitoring runtime.
 """
 from __future__ import annotations
 
@@ -26,6 +26,8 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parents[3]
 ALERTS = REPO_ROOT / "infra" / "monitoring" / "prometheus-rules" / "testlookup-alerts.yml"
 PROMETHEUS_RULE = REPO_ROOT / "k8s" / "monitoring" / "prometheusrule.yaml"
+OBJECTIVES = REPO_ROOT / "infra" / "monitoring" / "objectives"
+OBJECTIVE_OVERLAY = REPO_ROOT / "k8s" / "monitoring-objectives"
 METRICS = REPO_ROOT / "backend" / "app" / "core" / "metrics.py"
 PIPELINE = REPO_ROOT / "backend" / "app" / "services" / "ingestion_pipeline.py"
 
@@ -96,7 +98,7 @@ def _declared_metrics() -> set[str]:
     names = set()
     for node in ast.walk(tree):
         if (isinstance(node, ast.Call)
-                and getattr(node.func, "id", "") in {"Counter", "Gauge", "Histogram", "Summary"}
+                and getattr(node.func, "id", "") in {"Counter", "Gauge", "Histogram", "Summary", "GaugeMetricFamily"}
                 and node.args and isinstance(node.args[0], ast.Constant)):
             names.add(node.args[0].value)
     return names
@@ -136,6 +138,51 @@ def test_the_rule_is_opt_in_not_in_base() -> None:
     )
     # The rule and the PodMonitors that feed it (QA-B45-P5); both need the
     # Operator CRDs, so both stay out of base.
-    assert kustomization["resources"] == ["prometheusrule.yaml", "podmonitors.yaml"]
+    assert kustomization["resources"] == [
+        "prometheusrule.yaml", "podmonitors.yaml", "telemetry-contract.yaml",
+    ]
     base = yaml.safe_load((REPO_ROOT / "k8s" / "base" / "kustomization.yaml").read_text(encoding="utf-8"))
     assert not any("monitoring" in str(r) or "prometheusrule" in str(r) for r in base["resources"])
+
+
+def test_api_objectives_have_opt_in_deployment_parity() -> None:
+    source = OBJECTIVES / "api-slos.yml"
+    rules = yaml.safe_load(source.read_text(encoding="utf-8"))["groups"]
+    operator = yaml.safe_load((OBJECTIVE_OVERLAY / "prometheusrule.yaml").read_text(encoding="utf-8"))
+    assert operator["kind"] == "PrometheusRule"
+    assert operator["spec"]["groups"] == rules
+    assert not source.is_relative_to(ALERTS.parent)
+    compose = yaml.safe_load((REPO_ROOT / "docker-compose.objectives.yml").read_text(encoding="utf-8"))
+    prometheus = compose["services"]["prometheus"]
+    assert "--storage.tsdb.retention.time=35d" in prometheus["command"]
+    assert any("--storage.tsdb.retention.size=${SLO_PROMETHEUS_RETENTION_SIZE:?" in flag for flag in prometheus["command"])
+    assert "./infra/monitoring/objectives/api-slos.yml:/etc/prometheus/rules/api-slos.yml:ro" in prometheus["volumes"]
+    adoption = next(mount for mount in prometheus["volumes"] if isinstance(mount, dict))
+    assert adoption["target"] == "/etc/prometheus/rules/slo-adoption.yml" and adoption["read_only"]
+    assert adoption["source"].endswith(":-./infra/monitoring/objectives/adoption.example.yml}")
+
+
+def test_semantic_fixtures_execute_in_the_existing_backend_ci_job() -> None:
+    """A fixture outside the runtime glob must be executed, not merely committed."""
+    workflow = yaml.safe_load((REPO_ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"))
+    job = workflow["jobs"]["backend-test"]
+    step = next(s for s in job["steps"] if s.get("name") == "Verify alert semantics with checksum-pinned promtool")
+    assert not step.get("continue-on-error") and not step.get("if")
+    assert step["working-directory"] == "."
+    compose = yaml.safe_load((REPO_ROOT / "docker-compose.monitoring.yml").read_text(encoding="utf-8"))
+    runtime_image = compose["services"]["prometheus"]["image"].split("@", 1)[0]
+    runtime_version = runtime_image.rsplit(":", 1)[1].lstrip("v")
+    assert step["env"]["PROMETHEUS_VERSION"] == runtime_version
+    assert re.fullmatch(r"[0-9a-f]{64}", step["env"]["PROMETHEUS_ARCHIVE_SHA256"])
+    commands = step["run"]
+    assert commands.index("sha256sum --check --strict") < commands.index("tar -xzf")
+    assert '"$tool" check rules "$monitoring/prometheus-rules/testlookup-alerts.yml"' in commands
+    assert '"$tool" check rules "$monitoring/objectives/api-slos.yml"' in commands
+    assert '"$tool" test rules "$monitoring"/tests/*.yml' in commands
+    assert '"$tool" check config "$scratch/config/prometheus.yml"' in commands
+    assert "python -m pytest scripts/monitoring/tests -q" in commands
+    fixture = REPO_ROOT / "infra/monitoring/tests/operational-alerts.yml"
+    assert not fixture.is_relative_to(ALERTS.parent), "fixture would be loaded as a production rule file"
+    data = yaml.safe_load(fixture.read_text(encoding="utf-8"))
+    assert data["tests"] and len(data["rule_files"]) == 1
+    assert (fixture.parent / data["rule_files"][0]).resolve() == ALERTS.resolve()

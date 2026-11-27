@@ -49,7 +49,7 @@ The generated [endpoint index](../reference/api-index.md), [data dictionary](../
 | Test management | `test_management_*`, `test_case_lifecycle_service`, `suite_*`, `duplicate_detection_service` | Managed cases, plans, strategies, canonical identity and reviews |
 | Flaky/performance | `flaky_*`, `quarantine_*`, `perf_regression_service`, `performance_budgets` | Baselines, quarantine state, signals and coaching |
 | Identity/settings | `mfa_service`, `sso_service`, `scim_service`, `refresh_token_service`, `feature_flags`, `secret_service` | Users, tokens, membership, project policies, audit |
-| External integrations | `connectors`, `jira_client`, GitHub/GitLab services, `notification`, `webhook_service` | Remote APIs, attempts/delivery audit and retry |
+| External integrations | `connectors`, `jira_client`, GitHub/GitLab services, `notification`, `webhook_service` | Remote APIs, attempts/delivery audit and retry | <!-- gitleaks:allow -- documented identifier or placeholder, not a credential -->
 | RAG/search | `knowledge_*`, `rag_*`, `search_*`, `semantic_search` | Source documents/chunks, vector index, generated drafts and provenance |
 | Administration | `retention_service`, `run_deletion_service`, `deletion_job_service`, `storage_accounting_service` | Purge policy, tombstones, storage lifecycle and operational reports |
 

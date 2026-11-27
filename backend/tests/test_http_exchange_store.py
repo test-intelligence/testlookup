@@ -20,7 +20,7 @@ from app.services.http_exchange_vocab import EXCHANGES_PER_RUN_MAX, REDACTED
 
 PROJECT = "project-alpha"
 RUN = "run-alpha"
-BEARER = "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ3MjNkLXNhbXBsZSJ9.c2lnbmF0dXJlLXNhbXBsZS12YWx1ZS0x"
+BEARER = "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ3MjNkLXNhbXBsZSJ9.c2lnbmF0dXJlLXNhbXBsZS12YWx1ZS0x" # gitleaks:allow -- synthetic test credential, never production authority
 
 
 class MongoDown(Exception):

@@ -9,7 +9,7 @@ from typing import Any, Optional
 
 from testlookup_cli import output
 from testlookup_cli.config import get_profile, save_profile
-from testlookup_cli.errors import CLIError, map_http_error, map_connection_error, EXIT_AUTH
+from testlookup_cli.errors import CLIError, map_http_error, map_connection_error, response_request_id, EXIT_AUTH
 
 
 _MAX_BODY_SNIPPET = 160
@@ -76,7 +76,7 @@ def _raise_for_status(resp: httpx.Response) -> None:
     if not detail:
         detail = _error_body_snippet(resp)
     mapped = map_http_error(resp.status_code, str(detail))
-    raise APIError(sentence or str(mapped), mapped.exit_code, resp.status_code, detail=raw_detail)
+    raise APIError(sentence or str(mapped), mapped.exit_code, resp.status_code, detail=raw_detail, request_id=response_request_id(resp))
 
 
 def _json_body(resp: httpx.Response) -> Any:
@@ -95,7 +95,8 @@ def _json_body(resp: httpx.Response) -> Any:
         raise CLIError(
             f"The server answered {resp.status_code} with a {content_type} page that is not JSON. The URL may "
             "point at the web app or a proxy rather than the TestLookup API; check the "
-            "profile URL (testlookup auth login --url <url>) or TESTLOOKUP_URL."
+            "profile URL (testlookup auth login --url <url>) or TESTLOOKUP_URL.",
+            request_id=response_request_id(resp),
         ) from None
 
 
@@ -107,8 +108,8 @@ class APIError(CLIError):
     409 ``export_running`` names) without parsing the message.
     """
 
-    def __init__(self, message: str, exit_code: int, status_code: int, *, detail: Any = None):
-        super().__init__(message, exit_code, status_code)
+    def __init__(self, message: str, exit_code: int, status_code: int, *, detail: Any = None, request_id: object = None):
+        super().__init__(message, exit_code, status_code, request_id=request_id)
         self.detail = detail
 
 
@@ -457,5 +458,5 @@ async def login(base_url: str, username: str, password: str) -> dict:
             data={"username": username, "password": password},
         )
         if resp.status_code != 200:
-            raise CLIError("Login failed — check username and password", EXIT_AUTH)
+            raise CLIError("Login failed — check username and password", EXIT_AUTH, request_id=response_request_id(resp))
         return _json_body(resp)

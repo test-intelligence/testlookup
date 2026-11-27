@@ -1,0 +1,25 @@
+# Required roles for the shipped Compose monitoring profile. Keep this
+# independent of discovery: removing a scrape job must not remove its contract.
+# Optional exporters/alerting services are not requirements of the base profile.
+groups:
+  - name: testlookup.telemetry_contract.compose
+    interval: 30s
+    rules:
+      - record: testlookup:telemetry_expected_role
+        expr: vector(1)
+        labels:
+          telemetry_profile: compose
+          telemetry_role: backend
+          job: testlookup-backend
+      - record: testlookup:telemetry_expected_role
+        expr: vector(1)
+        labels:
+          telemetry_profile: compose
+          telemetry_role: worker
+          job: testlookup-worker
+      - record: testlookup:telemetry_expected_role
+        expr: vector(1)
+        labels:
+          telemetry_profile: compose
+          telemetry_role: worker-children
+          job: testlookup-worker

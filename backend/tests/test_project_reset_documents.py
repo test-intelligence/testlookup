@@ -66,6 +66,9 @@ class _Db:
             rows = self._runs
         return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: list(rows)))
 
+    def get_bind(self):
+        return SimpleNamespace(dialect=SimpleNamespace(name="sqlite"))
+
     async def stream_scalars(self, stmt):
         self.streamed.append(stmt)
         return self.stream
@@ -95,9 +98,12 @@ async def test_every_run_keyed_collection_is_deleted_in_500_id_chunks():
     assert run_keyed, "the table has run-keyed collections"
     for collection, attr in run_keyed:
         calls = mongo.calls[collection]
-        assert [len(c) for c in calls] == [500, 500, 200], collection
-        assert sorted(v for c in calls for v in c) == sorted(expected[attr]), collection
-        assert counts[collection] == 1200, collection
+        wanted_ids = expected[attr]
+        if collection == retention_service._PIPELINE_EVENT_LOG:
+            wanted_ids = [*wanted_ids, *expected["audit_run_strs"]]
+        assert [len(c) for c in calls] == [500, 500, 200] * (len(wanted_ids) // 1200), collection
+        assert sorted(v for c in calls for v in c) == sorted(wanted_ids), collection
+        assert counts[collection] == len(wanted_ids), collection
 
 
 @pytest.mark.asyncio
@@ -156,6 +162,8 @@ async def test_the_result_has_a_key_for_every_mongo_plans_collection():
     assert set(counts) == {c for c, _f, _a in retention_service._MONGO_PLANS}
     for collection, _f, attr in retention_service._MONGO_PLANS:
         want = 1 if attr == "purge_tc_strs" else len(expected[attr])
+        if collection == retention_service._PIPELINE_EVENT_LOG:
+            want += len(expected["audit_run_strs"])
         assert counts[collection] == want, collection
         assert mongo.calls[collection], f"{collection} was never visited"
 

@@ -75,6 +75,8 @@ LABEL org.opencontainers.image.licenses="Apache-2.0"
 
 # Run as non-root user (UID 1000 matches the k8s securityContext)
 RUN adduser --disabled-password --gecos '' --uid 1000 mcp
+ARG BUILD_REVISION=""
+ENV BUILD_REVISION=$BUILD_REVISION
 USER mcp
 
 EXPOSE 8002

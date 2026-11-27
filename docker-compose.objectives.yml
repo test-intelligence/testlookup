@@ -1,0 +1,19 @@
+# Optional after docker-compose.monitoring.yml. See docs/operations/api-objectives.md.
+services:
+  backend:
+    environment:
+      OBSERVABILITY_INSTALLATION: ${OBSERVABILITY_INSTALLATION:?Set a stable installation identifier}
+  prometheus:
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=35d
+      - --storage.tsdb.retention.size=${SLO_PROMETHEUS_RETENTION_SIZE:?Set a Prometheus retention size within the volume budget}
+    volumes:
+      - ./infra/monitoring/objectives/api-slos.yml:/etc/prometheus/rules/api-slos.yml:ro
+      - type: bind
+        source: ${SLO_ADOPTION_RULES_FILE:-./infra/monitoring/objectives/adoption.example.yml}
+        target: /etc/prometheus/rules/slo-adoption.yml
+        read_only: true
+        bind:
+          create_host_path: false

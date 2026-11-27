@@ -44,10 +44,8 @@ from app.models.postgres import (
     TestSuiteOwner,
     User,
 )
-from app.core.metrics import automation_cases_orphaned
 from app.services.test_management_audit_service import audit_event
 from app.services.test_management_metrics_service import (
-    stage_orphan_gauge_refresh,
     stage_test_management_counter,
 )
 from app.services.test_case_lifecycle_service import stage_test_case_snapshot
@@ -590,7 +588,6 @@ async def sync_canonical_test_cases(
                 tc.canonical_test_case_id = canonical.id
                 counts["linked"] += 1
 
-    stage_orphan_gauge_refresh(db, project_id)
     logger.info(
         "canonical_sync_complete",
         project_id=str(project_id),
@@ -1333,7 +1330,6 @@ async def confirm_canonical_retirement(
         old_values={"retirement_confirmed_at": None},
         new_values={"retirement_confirmed_at": canonical.retirement_confirmed_at.isoformat()},
     )
-    stage_orphan_gauge_refresh(db, canonical.project_id)
     await db.flush()
     return canonical
 
@@ -1366,29 +1362,6 @@ async def list_orphaned_canonical_cases(
             )
         ).scalars().all()
     )
-    count_stmt = select(
-        CanonicalTestCase.project_id,
-        func.count(CanonicalTestCase.id),
-    ).where(
-        CanonicalTestCase.status == "deleted",
-        CanonicalTestCase.retirement_confirmed_at.is_(None),
-    )
-    if project_ids is not None:
-        count_stmt = count_stmt.where(CanonicalTestCase.project_id.in_(project_ids))
-    count_rows = await db.execute(count_stmt.group_by(CanonicalTestCase.project_id))
-    counts = {project_id: int(count) for project_id, count in count_rows.all()}
-    # Explicitly reset scoped projects with no rows; otherwise a previous
-    # non-zero gauge remains stale forever after the queue is cleared.
-    if project_ids is None:
-        all_project_rows = await db.execute(select(Project.id))
-        metric_project_ids = list(all_project_rows.scalars().all())
-    else:
-        metric_project_ids = project_ids
-    for project_id in metric_project_ids:
-        try:
-            automation_cases_orphaned.labels(str(project_id)).set(counts.get(project_id, 0))
-        except Exception:
-            logger.warning("automation_orphan_metric_failed", project_id=str(project_id))
     return rows, total
 
 
@@ -1647,7 +1620,6 @@ async def reconcile_canonical_deletions(
     """
     from app.core.config import settings
 
-    stage_orphan_gauge_refresh(db, project_id)
     effective_window = (
         window_runs if window_runs is not None
         else settings.CANONICAL_DELETION_WINDOW_RUNS

@@ -1,0 +1,7 @@
+# Optional with the Prometheus Operator. First apply the application's metrics
+# profile and set OBSERVABILITY_INSTALLATION. See docs/operations/api-objectives.md.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: testlookup
+resources:
+  - prometheusrule.yaml

@@ -152,6 +152,17 @@ class Settings(BaseSettings):
     # ── Application ─────────────────────────────────────────
     APP_NAME: str = "TestLookup"
     APP_ENV: Literal["development", "staging", "production"] = "development"
+    # Required only for opt-in SLI objective inputs. Never infer an installation
+    # from a hostname, URL, project or mutable process identity.
+    OBSERVABILITY_INSTALLATION: str = ""
+
+    @field_validator("OBSERVABILITY_INSTALLATION")
+    @classmethod
+    def validate_observability_installation(cls, value: str) -> str:
+        if value and _re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,62}", value, flags=_re.ASCII) is None:
+            raise ValueError("OBSERVABILITY_INSTALLATION must be 1 to 63 ASCII letters, digits, dots, underscores or hyphens, starting with a letter or digit")
+        return value
+
     APP_SECRET_KEY: str = "change-me-in-production"
     # Optional previous key for secret-at-rest rotation. When set, the secret
     # service decrypts with a MultiFernet [current, previous] so values
@@ -970,12 +981,20 @@ class Settings(BaseSettings):
     # When empty: stdout in development only; elsewhere nothing is exported
     # and one warning is logged (core/tracing.py, re-audit N22)
     OTEL_EXPORTER_OTLP_ENDPOINT: Optional[str] = None
+    # Signal-specific OTLP/HTTP URL, including /v1/logs. Unset keeps stdout
+    # as the only log destination. The reference profile uses a private
+    # Compose network; remote and platform-managed endpoints use HTTPS.
+    OTEL_EXPORTER_OTLP_LOGS_ENDPOINT: str = ""
+    OTEL_LOGS_ROLE: Literal["api", "worker", "worker-children", "beat"] = "api"
     # Prometheus metrics endpoint
     METRICS_ENABLED: bool = True
     # Optional bearer token for GET /metrics. Empty (the default) leaves the
     # scrape open, as before: the shipped proxies do not route /metrics. When
     # set, a scrape must send "Authorization: Bearer <token>" or it gets 401.
     METRICS_TOKEN: str = ""
+    # Mounted bearer credential, loaded when the API process starts. A
+    # configured file takes precedence and must contain a nonempty token.
+    METRICS_TOKEN_FILE: str = ""
     # The API reference (/api-docs, /api-docs/redoc, /api-docs/openapi.json).
     # false turns all three routes off.
     API_DOCS_ENABLED: bool = True

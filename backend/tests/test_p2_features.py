@@ -283,22 +283,19 @@ class TestPipelineEventLog:
     """Verify immutable event log operations."""
 
     @pytest.mark.asyncio
-    async def test_emit_event_inserts_to_mongo(self):
+    async def test_emit_event_stages_an_immutable_intent(self):
         from app.services.pipeline_event_log import emit_event
 
-        mock_collection = AsyncMock()
-        mock_collection.insert_one = AsyncMock()
-        mock_db = MagicMock()
-        mock_db.__getitem__ = MagicMock(return_value=mock_collection)
-
-        with patch("app.services.pipeline_event_log.get_mongo_db", return_value=mock_db):
-            await emit_event(
+        db = MagicMock()
+        with patch("app.services.pipeline_event_log.stage_pipeline_event", new_callable=AsyncMock) as stage:
+            assert await emit_event(
                 "run-123", "stage_started",
                 stage_name="ingestion",
                 detail={"message": "starting"},
+                db=db,
             )
-            mock_collection.insert_one.assert_called_once()
-            event = mock_collection.insert_one.call_args[0][0]
+            stage.assert_awaited_once()
+            event = stage.call_args.kwargs["event"]
             assert event["pipeline_run_id"] == "run-123"
             assert event["event_type"] == "stage_started"
             assert event["stage_name"] == "ingestion"
@@ -308,9 +305,9 @@ class TestPipelineEventLog:
     async def test_emit_event_does_not_raise_on_error(self):
         from app.services.pipeline_event_log import emit_event
 
-        with patch("app.services.pipeline_event_log.get_mongo_db", side_effect=Exception("mongo down")):
+        with patch("app.services.pipeline_event_log.get_session_factory", side_effect=Exception("database down")):
             # Should not raise — event logging is best-effort
-            await emit_event("run-123", "stage_started")
+            assert not await emit_event("run-123", "stage_started")
 
     @pytest.mark.asyncio
     async def test_get_pipeline_timeline_returns_events(self):
@@ -329,7 +326,10 @@ class TestPipelineEventLog:
         mock_db = MagicMock()
         mock_db.__getitem__ = MagicMock(return_value=mock_collection)
 
-        with patch("app.services.pipeline_event_log.get_mongo_db", return_value=mock_db):
+        with (
+            patch("app.services.pipeline_event_log.get_mongo_db", return_value=mock_db),
+            patch("app.services.pipeline_event_log._read_retained_events", new=AsyncMock(return_value=[])),
+        ):
             events = await get_pipeline_timeline("run-123")
             assert len(events) == 2
             assert events[0]["event_type"] == "stage_started"
@@ -338,7 +338,10 @@ class TestPipelineEventLog:
     async def test_get_pipeline_timeline_returns_empty_on_error(self):
         from app.services.pipeline_event_log import get_pipeline_timeline
 
-        with patch("app.services.pipeline_event_log.get_mongo_db", side_effect=Exception("mongo down")):
+        with (
+            patch("app.services.pipeline_event_log.get_mongo_db", side_effect=Exception("mongo down")),
+            patch("app.services.pipeline_event_log._read_retained_events", new=AsyncMock(return_value=[])),
+        ):
             events = await get_pipeline_timeline("run-123")
             assert events == []
 
@@ -346,17 +349,13 @@ class TestPipelineEventLog:
     async def test_emit_event_includes_test_case_id(self):
         from app.services.pipeline_event_log import emit_event
 
-        mock_collection = AsyncMock()
-        mock_collection.insert_one = AsyncMock()
-        mock_db = MagicMock()
-        mock_db.__getitem__ = MagicMock(return_value=mock_collection)
-
-        with patch("app.services.pipeline_event_log.get_mongo_db", return_value=mock_db):
-            await emit_event(
+        with patch("app.services.pipeline_event_log.stage_pipeline_event", new_callable=AsyncMock) as stage:
+            assert await emit_event(
                 "run-123", "cache_hit",
                 test_case_id="tc-456",
                 detail={"type": "redis_exact"},
+                db=MagicMock(),
             )
-            event = mock_collection.insert_one.call_args[0][0]
+            event = stage.call_args.kwargs["event"]
             assert event["test_case_id"] == "tc-456"
             assert event["detail"]["type"] == "redis_exact"

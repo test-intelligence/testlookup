@@ -30,11 +30,12 @@ describe('HelpMenu (UX redesign P1)', () => {
     )
   })
 
-  it('lists the guides that left the sidebar, and the build line', () => {
+  it('lists the guides that left the sidebar, and loads the build line when opened', async () => {
     renderAt('/runs')
+    expect(screen.queryByText('v9.9.9')).not.toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Help' }))
     const hrefs = screen.getAllByRole('menuitem').map((el) => el.getAttribute('href')).filter(Boolean)
     expect(hrefs).toEqual(['/getting-started', '/docs', '/docs/charts', '/docs/troubleshooting'])
-    expect(screen.getByText('v9.9.9')).toBeInTheDocument()
+    expect(await screen.findByText('v9.9.9')).toBeInTheDocument()
   })
 })

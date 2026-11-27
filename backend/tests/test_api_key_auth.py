@@ -64,7 +64,7 @@ class TestDualAuthDependency:
 class TestApiKeyHashLogic:
     def test_sha256_hash_matches(self):
         """Verify the hashing logic matches what the API key endpoint stores."""
-        raw_key = "qai_test_key_12345678"
+        raw_key = "qai_test_key_12345678" # gitleaks:allow -- synthetic test credential, never production authority
         expected_hash = hashlib.sha256(raw_key.encode()).hexdigest()
         assert len(expected_hash) == 64  # SHA-256 hex digest
 

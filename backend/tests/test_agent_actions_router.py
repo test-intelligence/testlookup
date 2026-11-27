@@ -317,7 +317,8 @@ async def test_a_happy_approve_stages_audit_and_activity_before_the_one_commit(l
         db, ("add", "AccessAuditLog"), ("add", "ProjectActivityEvent"), ("commit",), ("refresh",),
         ("event", "agent_action_approved"),
     )
-    assert audit_at < commit_at and activity_at < commit_at < refresh_at < event_at
+    assert audit_at < event_at and activity_at < event_at < commit_at < refresh_at
+    assert live.emitted.await_args.kwargs["db"] is db
     assert answer.status == "approved" and answer.approved_by == str(approver.id)
     live.bump.assert_not_awaited()  # nothing changed analytics data yet: the executor bumps
 

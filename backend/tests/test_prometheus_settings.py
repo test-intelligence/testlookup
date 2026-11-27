@@ -244,7 +244,7 @@ def _probe_cfg(**overrides) -> dict:
 async def test_the_probe_answers_healthy_auth_error_down_and_skipped(world, monkeypatch):
     healthy = await integration_probe_service.probe_prometheus(_probe_cfg())
     assert (healthy.status, healthy.message) == ("healthy", "Prometheus API reachable")
-    refused = await integration_probe_service.probe_prometheus(_probe_cfg(prometheus_bearer_token="prom_w23dWrongQz"))
+    refused = await integration_probe_service.probe_prometheus(_probe_cfg(prometheus_bearer_token="prom_w23dWrongQz")) # gitleaks:allow -- synthetic test credential, never production authority
     assert refused.status == "auth_error"
     blocked = await integration_probe_service.probe_prometheus(_probe_cfg(prometheus_base_url="http://127.0.0.1:9090"))
     assert (blocked.status, blocked.message) == ("down", "Target host is not allowed (blocked_target:127.0.0.1)")

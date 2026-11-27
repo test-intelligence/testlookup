@@ -1,0 +1,76 @@
+# Jaeger 2.23.0 small-install, single-instance reference. No HA/shared Badger.
+# Mount a dedicated writable volume at /var/lib/jaeger, owned by 10001:10001.
+# Upstream OTEL Collector owns batching and the persistent retry queue. Keep
+# this final hop synchronous, so HTTP acknowledgement follows the disk write.
+extensions:
+  jaeger_storage:
+    backends:
+      incident_traces:
+        badger:
+          directories:
+            keys: /var/lib/jaeger/keys
+            values: /var/lib/jaeger/values
+          ephemeral: false
+          consistency: true
+          ttl:
+            spans: 72h
+          maintenance_interval: 5m
+          metrics_update_interval: 10s
+  jaeger_query:
+    storage:
+      traces: incident_traces
+    http:
+      endpoint: 0.0.0.0:16686
+      read_header_timeout: 5s
+      write_timeout: 30s
+    # Query gRPC is not used by the reference Grafana datasource.
+    grpc:
+      endpoint: 127.0.0.1:16685
+  healthcheckv2:
+    use_v2: true
+    http:
+      endpoint: 0.0.0.0:13133
+
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 0.0.0.0:4318
+        max_request_body_size: 4194304
+        read_header_timeout: 5s
+        write_timeout: 30s
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 384
+    spike_limit_mib: 96
+
+exporters:
+  jaeger_storage_exporter:
+    trace_storage: incident_traces
+    queue:
+      enabled: false
+    retry_on_failure:
+      enabled: false
+
+service:
+  extensions: [jaeger_storage, jaeger_query, healthcheckv2]
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter]
+      exporters: [jaeger_storage_exporter]
+  telemetry:
+    resource:
+      service.name: testlookup-jaeger
+    logs:
+      level: warn
+    metrics:
+      level: normal
+      readers:
+      - pull:
+          exporter:
+            prometheus:
+              host: 0.0.0.0
+              port: 8888

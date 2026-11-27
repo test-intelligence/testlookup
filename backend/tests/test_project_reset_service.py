@@ -57,7 +57,7 @@ def _project(name: str = "GoogleSearch", *, active: bool = True):
     )
 
 
-def _fake_db(*, project, run_count=0, full_table_counts=None):
+def _fake_db(*, project, run_count=0, full_table_counts=None, unresolved_upload=None):
     """Mock async session: returns canned counts and swallows deletes.
 
     Sequence of ``execute`` calls inside reset_project:
@@ -95,6 +95,7 @@ def _fake_db(*, project, run_count=0, full_table_counts=None):
 
     db = SimpleNamespace(
         execute=AsyncMock(side_effect=results),
+        scalar=AsyncMock(return_value=unresolved_upload),
         add=MagicMock(),
         commit=AsyncMock(),
         flush=AsyncMock(),
@@ -126,6 +127,23 @@ async def test_reset_project_runs_mode_deletes_runs_only():
     db.commit.assert_awaited_once()
     # An audit log row is added on success.
     assert db.add.called
+
+
+@pytest.mark.asyncio
+async def test_unresolved_upload_prevents_reset_before_data_changes():
+    from app.services.project_reset_service import ResetBlockedByUpload, reset_project
+
+    project = _project()
+    db = _fake_db(project=project, run_count=2, unresolved_upload=uuid.uuid4())
+    with pytest.raises(ResetBlockedByUpload, match="Resolve pending uploads"):
+        await reset_project(
+            db, project_id=project.id, mode="runs", confirmation_name=project.name,
+        )
+    db.scalar.assert_awaited_once()
+    assert "upload_dispatch_receipts" in str(db.scalar.await_args.args[0])
+    assert db.execute.await_count == 2
+    db.commit.assert_not_awaited()
+    db.add.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -297,6 +315,9 @@ def _mongo_phase_db(*, project, run_ids, journal):
     ])
 
     async def execute(stmt):
+        if getattr(stmt, "is_delete", False) and stmt.table.name == "pipeline_event_outbox":
+            journal.append(("outbox", ""))
+            return MagicMock()
         journal.append(("delete", "") if getattr(stmt, "is_delete", False) else ("select", ""))
         return next(results)
 
@@ -309,6 +330,8 @@ def _mongo_phase_db(*, project, run_ids, journal):
 
     return SimpleNamespace(
         execute=execute,
+        scalar=AsyncMock(return_value=None),
+        get_bind=lambda: SimpleNamespace(dialect=SimpleNamespace(name="sqlite")),
         stream_scalars=stream_scalars,
         add=MagicMock(),
         commit=AsyncMock(side_effect=lambda: journal.append(("commit", ""))),
@@ -331,11 +354,11 @@ async def test_a_store_deletes_the_documents_first_and_records_them():
 
     documents = result["documents"]
     assert set(documents) == {c for c, _f, _a in _MONGO_PLANS}
-    assert documents["ai_analysis_payloads"] == 1 and documents["pipeline_event_log"] == 0
+    assert documents["ai_analysis_payloads"] == 1 and documents["pipeline_event_log"] == 3
     assert documents["run_summaries"] == 3 and documents["decision_reports"] == 3
     assert db.add.call_args.args[0].changed_fields["documents"] == documents
     kinds = [k for k, _ in journal]
-    assert kinds.index("mongo") < kinds.index("delete") < kinds.index("commit"), (
+    assert kinds.index("outbox") < kinds.index("mongo") < kinds.index("delete") < kinds.index("commit"), (
         "the Mongo phase must run while the run → document mapping still exists"
     )
 

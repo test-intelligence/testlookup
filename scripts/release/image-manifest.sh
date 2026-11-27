@@ -13,9 +13,9 @@
 #   manifest_refs any app any             # app refs still carry @APP_TAG
 #
 #   manifest_refs <surface> <role> <bundle>
-#     surface  compose | k8s | any
+#     surface  compose | k8s | telemetry | any
 #     role     app | infra | any
-#     bundle   comma list (core,llm,external,excluded) | any
+#     bundle   comma list (core,llm,telemetry,telemetry-external,external,excluded) | any
 #
 # Set APP_TAG before calling to have `@APP_TAG` substituted in app refs.
 # Running this file directly prints the whole manifest (a quick sanity check).
@@ -57,7 +57,19 @@ manifest_refs() {
 }
 
 # Strip the tag from a ref: valkey/valkey:8.1-alpine -> valkey/valkey
-manifest_ref_name() { printf '%s\n' "${1%:*}"; }
+manifest_ref_name() {
+  local tagged="${1%@sha256:*}"
+  printf '%s\n' "${tagged%:*}"
+}
+
+# docker save/load preserves repository tags but not the registry index digest.
+# A separate namespace prevents the temporary alias overwriting a vendor tag.
+manifest_archive_ref() {
+  case "$1" in
+    *@sha256:*) printf 'localhost/testlookup-telemetry/%s\n' "${1%@sha256:*}" ;;
+    *) printf '%s\n' "$1" ;;
+  esac
+}
 
 # Turn a ref into a filesystem-safe basename for images/<name>.tar
 manifest_ref_slug() { printf '%s\n' "$1" | tr '/:' '__' | tr -cd 'A-Za-z0-9._-'; }

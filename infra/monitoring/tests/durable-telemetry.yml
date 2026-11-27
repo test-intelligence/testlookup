@@ -1,0 +1,56 @@
+rule_files:
+  - ../otel-collector/telemetry-rules.yml
+evaluation_interval: 30s
+tests:
+  - name: one exporter stays above the byte queue threshold then recovers
+    interval: 30s
+    input_series:
+      - series: 'otelcol_exporter_queue_size{job="testlookup-otel-collector",exporter="otlp_http/loki"}'
+        values: '80 90+0x5 40+0x5'
+      - series: 'otelcol_exporter_queue_capacity{job="testlookup-otel-collector",exporter="otlp_http/loki"}'
+        values: '100+0x12'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: TestLookupTelemetryExporterQueueHigh
+        exp_alerts: []
+      - eval_time: 3m
+        alertname: TestLookupTelemetryExporterQueueHigh
+        exp_alerts:
+          - exp_labels:
+              job: testlookup-otel-collector
+              exporter: otlp_http/loki
+              severity: warning
+              alert_family: telemetry_export
+            exp_annotations:
+              summary: "A durable telemetry exporter queue is nearing its limit"
+              description: "Check the otlp_http/loki destination, credentials and storage. The remaining buffer can fill during an outage. Runbook at docs/operations/durable-telemetry.md."
+      - eval_time: 4m
+        alertname: TestLookupTelemetryExporterQueueHigh
+        exp_alerts: []
+  - name: several signals with identical scrape labels reduce to one affected collector
+    interval: 30s
+    input_series:
+      - series: 'otelcol_exporter_enqueue_failed_log_records{job="testlookup-otel-collector",instance="collector:8888",telemetry_profile="compose",telemetry_role="otel-collector"}'
+        values: '0+0x3 2+0x15'
+      - series: 'otelcol_receiver_refused_spans{job="testlookup-otel-collector",instance="collector:8888",telemetry_profile="compose",telemetry_role="otel-collector"}'
+        values: '0+0x3 1+0x15'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: TestLookupTelemetryExportLoss
+        exp_alerts: []
+      - eval_time: 4m
+        alertname: TestLookupTelemetryExportLoss
+        exp_alerts:
+          - exp_labels:
+              job: testlookup-otel-collector
+              instance: collector:8888
+              telemetry_profile: compose
+              telemetry_role: otel-collector
+              severity: warning
+              alert_family: telemetry_export
+            exp_annotations:
+              summary: "A durable telemetry hop refused or lost data"
+              description: "Review Collector receiver refusals, enqueue failures, exporter retry exhaustion and available disk. Compare the last known searchable trace or log with the source. Runbook at docs/operations/durable-telemetry.md."
+      - eval_time: 8m
+        alertname: TestLookupTelemetryExportLoss
+        exp_alerts: []

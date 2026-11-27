@@ -66,6 +66,7 @@ from app.models.postgres import (
     TestRun,
     TestStrategy,
     TestSuite,
+    UploadDispatchReceipt,
 )
 
 logger = structlog.get_logger(__name__)
@@ -139,6 +140,10 @@ class ResetBlockedByHold(Exception):
         super().__init__("; ".join(self.reasons))
 
 
+class ResetBlockedByUpload(Exception):
+    """Accepted upload work could recreate runs after the reset."""
+
+
 async def reset_project(
     db: AsyncSession,
     *,
@@ -199,6 +204,18 @@ async def reset_project(
     )
     if held:
         raise ResetBlockedByHold([hold.sentence() for hold in held])
+
+    # Upload admission takes a shared lock on this project row. An existing
+    # unresolved receipt could recreate a deleted run, while a new reservation
+    # waits for this reset to finish before it can accept any work.
+    outstanding_upload = await db.scalar(
+        select(UploadDispatchReceipt.task_id).where(
+            UploadDispatchReceipt.project_id == project_id,
+            UploadDispatchReceipt.completed_at.is_(None),
+        ).limit(1)
+    )
+    if outstanding_upload is not None:
+        raise ResetBlockedByUpload("Resolve pending uploads before resetting this project.")
 
     # Count first, then delete in a single transaction. Pre-counting
     # serves two purposes: (1) the audit log captures real numbers even

@@ -2221,15 +2221,6 @@ async def _complete_cost_budget_block(
         final_state=state,
         fencing_token=state.get("_fencing_token"),
     )
-    await emit_event(
-        pipeline_run_id,
-        "pipeline_completed",
-        detail={
-            "workflow_type": workflow_type,
-            "cost_budget_blocked": True,
-            "budget_action": state.get("_cost_budget_action"),
-        },
-    )
     return state
 
 
@@ -2909,20 +2900,6 @@ async def run_offline_pipeline(
             final_state=final_state,
             fencing_token=initial_state.get("_fencing_token"),
         )
-        await emit_event(
-            pipeline_run_id,
-            "workflow_verified",
-            stage_name="workflow",
-            detail=final_state.get("workflow_verification", {}),
-        )
-        await emit_event(pipeline_run_id, "pipeline_completed", detail={
-            "workflow_type": workflow_type,
-            "stages_completed": final_state.get("completed_stages", []),
-            "stages_skipped": final_state.get("skipped_stages", []),
-            "analysis_mode_requested": final_state.get("analysis_mode_requested"),
-            "analysis_mode_resolved": final_state.get("analysis_mode_resolved"),
-            "error_count": len(final_state.get("errors", [])),
-        })
         logger.info(
             "pipeline_complete",
             pipeline_run_id=pipeline_run_id,
@@ -3209,20 +3186,6 @@ async def run_deep_pipeline(
             final_state=final_state,
             fencing_token=initial_state.get("_fencing_token"),
         )
-        await emit_event(
-            pipeline_run_id,
-            "workflow_verified",
-            stage_name="workflow",
-            detail=final_state.get("workflow_verification", {}),
-        )
-        await emit_event(pipeline_run_id, "pipeline_completed", detail={
-            "workflow_type": "deep",
-            "stages_completed": final_state.get("completed_stages", []),
-            "stages_skipped": final_state.get("skipped_stages", []),
-            "analysis_mode_requested": final_state.get("analysis_mode_requested"),
-            "analysis_mode_resolved": final_state.get("analysis_mode_resolved"),
-            "error_count": len(final_state.get("errors", [])),
-        })
         logger.info(
             "deep_pipeline_complete",
             pipeline_run_id=pipeline_run_id,
@@ -4462,4 +4425,34 @@ async def _mark_pipeline_done(
                 skipped_reason="Stage not on active pipeline branch",
             )
         )
+        if run is not None and success and final_state is not None:
+            await db.flush()
+            await _stage_completion_events(db, run, final_state)
         await db.commit()
+
+
+async def _stage_completion_events(db, run: AgentPipelineRun, final_state: dict) -> None:
+    """Stage event intent with the terminal state and its current attempt."""
+    detail: dict[str, Any] = {"workflow_type": run.workflow_type}
+    if final_state.get("cost_budget_blocked"):
+        detail.update(
+            cost_budget_blocked=True,
+            budget_action=final_state.get("_cost_budget_action"),
+        )
+    else:
+        await emit_event(
+            str(run.id), "workflow_verified", stage_name="workflow",
+            detail=final_state.get("workflow_verification", {}), db=db,
+            event_id=uuid.uuid5(run.id, f"workflow-verified:{run.attempt}"),
+        )
+        detail.update(
+            stages_completed=final_state.get("completed_stages", []),
+            stages_skipped=final_state.get("skipped_stages", []),
+            analysis_mode_requested=final_state.get("analysis_mode_requested"),
+            analysis_mode_resolved=final_state.get("analysis_mode_resolved"),
+            error_count=len(final_state.get("errors", [])),
+        )
+    await emit_event(
+        str(run.id), "pipeline_completed", detail=detail, db=db,
+        event_id=uuid.uuid5(run.id, f"pipeline-completed:{run.attempt}"),
+    )

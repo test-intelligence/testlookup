@@ -237,6 +237,9 @@ async def update_subscription(
     if "schedule" in update_data:
         delta = timedelta(days=1) if update_data["schedule"] == "DAILY" else timedelta(weeks=1)
         sub.next_delivery_at = datetime.now(timezone.utc) + delta
+        from app.services.digest_delivery_observation import reset_digest_observation
+
+        reset_digest_observation(sub)
 
     for field, value in update_data.items():
         setattr(sub, field, value)
@@ -309,6 +312,9 @@ async def resume_subscription(
     sub.is_paused = False
     delta = timedelta(days=1) if sub.schedule == "DAILY" else timedelta(weeks=1)
     sub.next_delivery_at = datetime.now(timezone.utc) + delta
+    from app.services.digest_delivery_observation import reset_digest_observation
+
+    reset_digest_observation(sub)
     await db.commit()
     await db.refresh(sub)
     return sub

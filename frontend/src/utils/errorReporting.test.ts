@@ -34,273 +34,374 @@
  * rather than dropped, and the buffer is bounded so a render loop cannot grow
  * it without limit.
  */
-import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach, vi } from 'vitest'
+import {
+  describe,
+  it,
+  expect,
+  beforeAll,
+  beforeEach,
+  afterAll,
+  afterEach,
+  vi,
+} from "vitest";
 
-import mainSource from '../main.tsx?raw'
-import { useAuthStore } from '../store/authStore'
+import mainSource from "../main.tsx?raw";
+import { useAuthStore } from "../store/authStore";
 
-import { flush, reportBoundaryError, reportWebVital, setTelemetrySuppressed } from './errorReporting'
+import {
+  flush,
+  reportBoundaryError,
+  reportWebVital,
+  setTelemetrySuppressed,
+} from "./errorReporting";
 
 /** Chromium's per-origin beacon quota. Bodies at or above this get refused. */
-const BEACON_QUOTA = 64 * 1024
+const BEACON_QUOTA = 64 * 1024;
 
-type Sent = { url: string; bytes: number; body: string }
+type Sent = { url: string; bytes: number; body: string };
 
-let sent: Sent[]
-let beaconAccepts: (bytes: number) => boolean
+let sent: Sent[];
+let beaconAccepts: (bytes: number) => boolean;
+const BrowserBlob = globalThis.Blob;
 
 /** Stand-in for a real UA: refuses anything at or above the quota, like Chromium. */
 function installBeacon() {
   const beacon = vi.fn((url: string, data?: BodyInit | null) => {
-    const body = String((data as Blob & { __text?: string })?.__text ?? data ?? '')
-    const bytes = body.length
-    if (!beaconAccepts(bytes)) return false
-    sent.push({ url, bytes, body })
-    return true
-  })
-  Object.defineProperty(navigator, 'sendBeacon', { value: beacon, configurable: true, writable: true })
-  return beacon
+    const body = String(
+      (data as Blob & { __text?: string })?.__text ?? data ?? "",
+    );
+    const bytes = (data as Blob)?.size ?? new BrowserBlob([body]).size;
+    if (!beaconAccepts(bytes)) return false;
+    sent.push({ url, bytes, body });
+    return true;
+  });
+  Object.defineProperty(navigator, "sendBeacon", {
+    value: beacon,
+    configurable: true,
+    writable: true,
+  });
+  return beacon;
 }
 
 beforeEach(() => {
-  sent = []
-  beaconAccepts = (bytes) => bytes < BEACON_QUOTA
+  sent = [];
+  beaconAccepts = (bytes) => bytes < BEACON_QUOTA;
 
   // Blob does not expose its text synchronously; carry it so the fake beacon
   // can measure the body the way the browser does.
   vi.stubGlobal(
-    'Blob',
-    class {
-      __text: string
-      type: string
+    "Blob",
+    class extends BrowserBlob {
+      __text: string;
+      type: string;
       constructor(parts: string[], opts?: { type?: string }) {
-        this.__text = parts.join('')
-        this.type = opts?.type ?? ''
-      }
-      get size() {
-        return this.__text.length
+        super(parts, opts);
+        this.__text = parts.join("");
+        this.type = opts?.type ?? "";
       }
     },
-  )
-  installBeacon()
+  );
+  installBeacon();
   vi.stubGlobal(
-    'fetch',
+    "fetch",
     vi.fn(async (url: string, init?: RequestInit) => {
-      sent.push({ url, bytes: String(init?.body ?? '').length, body: String(init?.body ?? '') })
-      return { ok: true, status: 202 } as Response
+      const body = String(init?.body ?? "");
+      sent.push({ url, bytes: new BrowserBlob([body]).size, body });
+      return { ok: true, status: 202 } as Response;
     }),
-  )
-  flush() // drain anything a previous test left buffered
-  sent = []
-})
+  );
+  flush(); // drain anything a previous test left buffered
+  sent = [];
+});
 
 afterEach(() => {
-  vi.unstubAllGlobals()
-  vi.restoreAllMocks()
-})
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
 
 /** One error-boundary report of roughly the size measured live (~6.3 KB). */
 function pushBoundaryError(i: number) {
-  const err = new Error(`boom ${i}`)
-  err.stack = 'x'.repeat(4000)
-  reportBoundaryError(err, 'y'.repeat(2000))
+  const err = new Error(`boom ${i}`);
+  err.stack = "x".repeat(4000);
+  reportBoundaryError(err, "y".repeat(2000));
 }
 
 /** Every event the transport actually carried, across all requests. */
 function deliveredErrorCount(): number {
-  return sent.reduce((n, s) => n + (JSON.parse(s.body).errors?.length ?? 0), 0)
+  return sent.reduce((n, s) => n + (JSON.parse(s.body).errors?.length ?? 0), 0);
 }
 
-describe('a refused send must not destroy the batch', () => {
-  it('delivers all ten errors even though one 63 KB beacon is refused', () => {
-    for (let i = 0; i < 10; i++) pushBoundaryError(i)
-    flush()
+describe("a refused send must not destroy the batch", () => {
+  it("delivers all ten errors even though one 63 KB beacon is refused", () => {
+    for (let i = 0; i < 10; i++) pushBoundaryError(i);
+    flush();
 
     expect(
       deliveredErrorCount(),
-      'the beacon refused the 63 KB body and flush() had already cleared the buffer, ' +
-        'so every error-boundary report from the incident was lost',
-    ).toBe(10)
-  })
+      "the beacon refused the 63 KB body and flush() had already cleared the buffer, " +
+        "so every error-boundary report from the incident was lost",
+    ).toBe(10);
+  });
 
-  it('keeps every request under the quota so the beacon can accept it', () => {
-    for (let i = 0; i < 25; i++) pushBoundaryError(i)
-    flush()
+  it("keeps every request under the quota so the beacon can accept it", () => {
+    for (let i = 0; i < 25; i++) pushBoundaryError(i);
+    flush();
 
-    expect(sent.length, 'nothing was transmitted at all').toBeGreaterThan(0)
+    expect(sent.length, "nothing was transmitted at all").toBeGreaterThan(0);
     for (const s of sent) {
-      expect(s.bytes, `a ${s.bytes}-byte request will be refused by the UA`).toBeLessThan(BEACON_QUOTA)
+      expect(
+        s.bytes,
+        `a ${s.bytes}-byte request will be refused by the UA`,
+      ).toBeLessThan(BEACON_QUOTA);
     }
-  })
+  });
 
-  it('re-buffers rather than drops when the transport refuses outright', () => {
+  it("re-buffers rather than drops when the transport refuses outright", () => {
     // A UA that refuses everything — nothing can go out on this flush.
-    beaconAccepts = () => false
+    beaconAccepts = () => false;
     vi.stubGlobal(
-      'fetch',
+      "fetch",
       vi.fn(async () => {
-        throw new Error('offline')
+        throw new Error("offline");
       }),
-    )
-    pushBoundaryError(1)
-    flush()
-    expect(sent.length).toBe(0)
+    );
+    pushBoundaryError(1);
+    flush();
+    expect(sent.length).toBe(0);
 
     // Transport recovers; the next flush must still have the event.
-    beaconAccepts = (bytes) => bytes < BEACON_QUOTA
-    flush()
+    beaconAccepts = (bytes) => bytes < BEACON_QUOTA;
+    flush();
     expect(
       deliveredErrorCount(),
-      'the event was discarded on the failed flush, so a transient outage ' +
-        'permanently loses the report',
-    ).toBe(1)
-  })
-})
+      "the event was discarded on the failed flush, so a transient outage " +
+        "permanently loses the report",
+    ).toBe(1);
+  });
+});
 
-describe('a single oversized event', () => {
-  it('is truncated, not dropped, when it alone exceeds the quota', () => {
-    const err = new Error('one enormous stack')
-    err.stack = 'z'.repeat(200_000)
-    reportBoundaryError(err, 'c'.repeat(100_000))
-    flush()
+describe("a single oversized event", () => {
+  it("transmits every multilingual error within the real UTF-8 quota", () => {
+    for (let i = 0; i < 9; i++) {
+      const error = new Error(`失敗 ${i}`);
+      error.stack = "例".repeat(4000);
+      reportBoundaryError(error, "件".repeat(2000));
+    }
+    flush();
+    expect(deliveredErrorCount()).toBe(9);
+    expect(sent.length).toBeGreaterThan(1);
+    for (const request of sent) {
+      expect(request.bytes).toBe(new BrowserBlob([request.body]).size);
+      expect(request.bytes).toBeLessThanOrEqual(60_000);
+    }
+  });
 
-    expect(deliveredErrorCount(), 'the single oversized event vanished').toBe(1)
-    for (const s of sent) expect(s.bytes).toBeLessThan(BEACON_QUOTA)
+  it.each([
+    "雪".repeat(100_000),
+    "😀".repeat(50_000),
+    "\u0000".repeat(100_000),
+  ])(
+    "bounds an oversized message and escaped fields before sending",
+    (message) => {
+      const error = new Error(message);
+      error.stack = "\u0000".repeat(100_000);
+      reportBoundaryError(error, "\u0000".repeat(100_000));
+      flush();
+      expect(deliveredErrorCount()).toBe(1);
+      for (const request of sent) {
+        expect(request.bytes).toBeLessThanOrEqual(60_000);
+        expect(
+          JSON.parse(request.body).errors[0].message.length,
+        ).toBeLessThanOrEqual(2000);
+      }
+      sent = [];
+      flush();
+      expect(sent).toHaveLength(0);
+    },
+  );
+
+  it("is truncated, not dropped, when it alone exceeds the quota", () => {
+    const err = new Error("one enormous stack");
+    err.stack = "z".repeat(200_000);
+    reportBoundaryError(err, "c".repeat(100_000));
+    flush();
+
+    expect(deliveredErrorCount(), "the single oversized event vanished").toBe(
+      1,
+    );
+    for (const s of sent) expect(s.bytes).toBeLessThan(BEACON_QUOTA);
     // The message identifies the error and must survive truncation intact.
-    expect(sent.map((s) => s.body).join('')).toContain('one enormous stack')
-  })
-})
+    expect(sent.map((s) => s.body).join("")).toContain("one enormous stack");
+  });
+});
 
-describe('the buffer is bounded', () => {
-  it('does not grow without limit when a component throws on every render', () => {
+describe("the buffer is bounded", () => {
+  it("does not grow without limit when a component throws on every render", () => {
     // 5000 events between flushes: a render loop, not a realistic batch.
-    for (let i = 0; i < 5000; i++) pushBoundaryError(i)
-    flush()
+    for (let i = 0; i < 5000; i++) pushBoundaryError(i);
+    flush();
 
     // Bounded retention means most are dropped — that is the intended
     // behaviour — but it must be bounded, and the drop must be *reported*
     // rather than silent, so the backend can tell truncation from quiet.
-    const bodies = sent.map((s) => s.body).join('')
-    expect(sent.length, 'an unbounded buffer produced a request storm').toBeLessThan(20)
+    const bodies = sent.map((s) => s.body).join("");
+    expect(
+      sent.length,
+      "an unbounded buffer produced a request storm",
+    ).toBeLessThan(20);
     expect(
       bodies,
-      'events were dropped with no record, so the backend cannot tell a ' +
-        'truncated report from a complete one',
-    ).toContain('dropped')
-  })
-})
+      "events were dropped with no record, so the backend cannot tell a " +
+        "truncated report from a complete one",
+    ).toContain("dropped");
+  });
+});
 
-describe('the page address', () => {
+describe("the page address", () => {
   // Invite, password-reset and SSO values ride in the URL fragment so that they
   // never reach a server. A vital or an early error recorded before the page
   // strips the fragment used to send `location.href`, fragment included.
   afterEach(() => {
-    window.history.replaceState({}, '', '/')
-  })
+    window.history.replaceState({}, "", "/");
+  });
 
-  it('is reported without its query string or fragment', () => {
-    window.history.replaceState({}, '', '/accept-invite?next=%2Fprivate#token=fake-invite-token')
+  it("is reported without its query string or fragment", () => {
+    window.history.replaceState(
+      {},
+      "",
+      "/accept-invite?next=%2Fprivate#token=fake-invite-token",
+    );
 
-    reportWebVital({ name: 'LCP', value: 1, rating: 'good', delta: 1 } as never)
-    reportBoundaryError(new Error('boom'), 'in <Page>')
-    flush()
+    reportWebVital({
+      name: "LCP",
+      value: 1,
+      rating: "good",
+      delta: 1,
+    } as never);
+    reportBoundaryError(new Error("boom"), "in <Page>");
+    flush();
 
-    const bodies = sent.map((s) => s.body).join('')
-    expect(bodies).not.toContain('fake-invite-token')
-    expect(bodies).not.toContain('next=')
-    const batch = JSON.parse(sent[0].body)
-    const expected = `${window.location.origin}/accept-invite`
-    expect(batch.vitals[0].url).toBe(expected)
-    expect(batch.errors.length).toBeGreaterThan(0)
-    for (const error of batch.errors) expect(error.url).toBe(expected)
-  })
+    const bodies = sent.map((s) => s.body).join("");
+    expect(bodies).not.toContain("fake-invite-token");
+    expect(bodies).not.toContain("next=");
+    const batch = JSON.parse(sent[0].body);
+    const expected = `${window.location.origin}/accept-invite`;
+    expect(batch.vitals[0].url).toBe(expected);
+    expect(batch.errors.length).toBeGreaterThan(0);
+    for (const error of batch.errors) expect(error.url).toBe(expected);
+  });
 
   it('is stripped in the "events dropped" record too', () => {
-    window.history.replaceState({}, '', '/reset-password/confirm#token=fake-reset-token')
-    for (let i = 0; i < 200; i++) reportBoundaryError(Object.assign(new Error(`e${i}`), { stack: '' }), '')
-    flush()
+    window.history.replaceState(
+      {},
+      "",
+      "/reset-password/confirm#token=fake-reset-token",
+    );
+    for (let i = 0; i < 200; i++)
+      reportBoundaryError(Object.assign(new Error(`e${i}`), { stack: "" }), "");
+    flush();
 
-    const bodies = sent.map((s) => s.body).join('')
-    expect(bodies).toContain('dropped')
-    expect(bodies).not.toContain('fake-reset-token')
-  })
-})
+    const bodies = sent.map((s) => s.body).join("");
+    expect(bodies).toContain("dropped");
+    expect(bodies).not.toContain("fake-reset-token");
+  });
+});
 
-describe('a request fits the server limit', () => {
+describe("a request fits the server limit", () => {
   // The backend refuses a batch with more than 50 errors or 50 vitals (422),
   // and a beacon cannot see the refusal: the whole batch would be lost.
-  it('never carries more than 50 errors or 50 vitals, overflow record included', () => {
+  it("never carries more than 50 errors or 50 vitals, overflow record included", () => {
     for (let i = 0; i < 200; i++) {
-      reportBoundaryError(Object.assign(new Error(`e${i}`), { stack: '' }), '')
-      reportWebVital({ name: 'LCP', value: i, rating: 'good', delta: 1 } as never)
+      reportBoundaryError(Object.assign(new Error(`e${i}`), { stack: "" }), "");
+      reportWebVital({
+        name: "LCP",
+        value: i,
+        rating: "good",
+        delta: 1,
+      } as never);
     }
-    flush()
+    flush();
 
-    expect(sent.length).toBeGreaterThan(0)
+    expect(sent.length).toBeGreaterThan(0);
     for (const request of sent) {
-      const batch = JSON.parse(request.body)
-      expect(batch.errors.length).toBeLessThanOrEqual(50)
-      expect(batch.vitals.length).toBeLessThanOrEqual(50)
+      const batch = JSON.parse(request.body);
+      expect(batch.errors.length).toBeLessThanOrEqual(50);
+      expect(batch.vitals.length).toBeLessThanOrEqual(50);
     }
-    expect(sent.map((s) => s.body).join('')).toContain('dropped')
-  })
-})
+    expect(sent.map((s) => s.body).join("")).toContain("dropped");
+  });
+});
 
-describe('vitals still work', () => {
-  it('sends a normal web-vital batch in a single request', () => {
-    reportWebVital({ name: 'LCP', value: 1234.5, rating: 'good', delta: 1234.5 } as never)
-    flush()
-    expect(sent.length).toBe(1)
-    expect(JSON.parse(sent[0].body).vitals[0].name).toBe('LCP')
-  })
+describe("vitals still work", () => {
+  it("sends a normal web-vital batch in a single request", () => {
+    reportWebVital({
+      name: "LCP",
+      value: 1234.5,
+      rating: "good",
+      delta: 1234.5,
+    } as never);
+    flush();
+    expect(sent.length).toBe(1);
+    expect(JSON.parse(sent[0].body).vitals[0].name).toBe("LCP");
+  });
 
-  it('flush is a no-op when nothing is buffered', () => {
-    flush()
-    expect(sent.length).toBe(0)
-  })
-})
+  it("flush is a no-op when nothing is buffered", () => {
+    flush();
+    expect(sent.length).toBe(0);
+  });
+});
 
-describe('the public read-only demo', () => {
+describe("the public read-only demo", () => {
   // The demo refuses every write (403 at the edge and in the app), this
   // report included, so a demo session's sends could only fail. main.tsx
   // registers the auth store's demo check; these tests register the same one.
   beforeAll(() => {
-    setTelemetrySuppressed(() => useAuthStore.getState().demoSession)
-  })
+    setTelemetrySuppressed(() => useAuthStore.getState().demoSession);
+  });
   afterAll(() => {
-    setTelemetrySuppressed(() => false)
-  })
+    setTelemetrySuppressed(() => false);
+  });
   afterEach(() => {
-    useAuthStore.setState({ demoSession: false })
-  })
+    useAuthStore.setState({ demoSession: false });
+  });
 
-  it('is wired up by the app entry point', () => {
+  it("is wired up by the app entry point", () => {
     expect(mainSource).toMatch(
       /^setTelemetrySuppressed\(\(\) => useAuthStore\.getState\(\)\.demoSession\)$/m,
-    )
-  })
+    );
+  });
 
-  it('sends nothing from a demo session', () => {
-    useAuthStore.setState({ demoSession: true })
-    pushBoundaryError(1)
-    reportWebVital({ name: 'LCP', value: 1234.5, rating: 'good', delta: 1234.5 } as never)
-    flush()
-    expect(sent.length, 'a demo session sent telemetry the demo refuses').toBe(0)
-  })
+  it("sends nothing from a demo session", () => {
+    useAuthStore.setState({ demoSession: true });
+    pushBoundaryError(1);
+    reportWebVital({
+      name: "LCP",
+      value: 1234.5,
+      rating: "good",
+      delta: 1234.5,
+    } as never);
+    flush();
+    expect(sent.length, "a demo session sent telemetry the demo refuses").toBe(
+      0,
+    );
+  });
 
-  it('drops the demo batch instead of holding it for later', () => {
-    useAuthStore.setState({ demoSession: true })
-    pushBoundaryError(1)
-    flush()
-    useAuthStore.setState({ demoSession: false })
-    flush()
-    expect(sent.length, 'events captured during the demo session were sent afterwards').toBe(0)
-  })
+  it("drops the demo batch instead of holding it for later", () => {
+    useAuthStore.setState({ demoSession: true });
+    pushBoundaryError(1);
+    flush();
+    useAuthStore.setState({ demoSession: false });
+    flush();
+    expect(
+      sent.length,
+      "events captured during the demo session were sent afterwards",
+    ).toBe(0);
+  });
 
-  it('still sends from an ordinary session', () => {
-    useAuthStore.setState({ demoSession: false })
-    pushBoundaryError(1)
-    flush()
-    expect(deliveredErrorCount()).toBe(1)
-  })
-})
+  it("still sends from an ordinary session", () => {
+    useAuthStore.setState({ demoSession: false });
+    pushBoundaryError(1);
+    flush();
+    expect(deliveredErrorCount()).toBe(1);
+  });
+});

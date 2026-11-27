@@ -288,7 +288,7 @@ export const durationBandFixture: DurationBandModel = durationBandPoints({
     x_type: 'time',
     series: [
       {
-        key: 'duration_p50',
+        key: 'duration_p50', // gitleaks:allow -- synthetic test credential, never production authority
         label: 'p50',
         points: [
           { x: '2026-03-04', y: 118, n: 260 },
@@ -307,7 +307,7 @@ export const durationBandFixture: DurationBandModel = durationBandPoints({
     x_type: 'time',
     series: [
       {
-        key: 'duration_p95',
+        key: 'duration_p95', // gitleaks:allow -- synthetic test credential, never production authority
         label: 'p95',
         points: [
           { x: '2026-03-04', y: 940, n: 260 },

@@ -437,7 +437,7 @@ async def write_agent_run_row(
 
     Writes one ``agent_runs`` row and mirrors a durable
     ``agent_run_recorded`` event to the Mongo pipeline event log. Stage-only
-    on the PG side (caller commits); the Mongo mirror is best-effort. The
+    on the PG side (caller commits). The mirror intent shares that transaction. The
     Investigator (:func:`record_agent_run`) and the Fixer both funnel through
     here so the ledger shape + audit mirror stay identical across agents.
     """
@@ -460,7 +460,8 @@ async def write_agent_run_row(
     db.add(entry)
     await db.flush()
 
-    # Durable Mongo mirror — same append-only stream the pipeline audit uses.
+    # Stage the mirror before the caller commits, so a rolled back ledger
+    # insertion cannot appear later as a successful materialized record.
     try:
         from app.services.pipeline_event_log import emit_event
 
@@ -468,6 +469,10 @@ async def write_agent_run_row(
             event_source_id,
             "agent_run_recorded",
             stage_name=stage_name,
+            db=db,
+            project_id=entry.project_id,
+            test_run_id=entry.run_id,
+            event_id=uuid.uuid5(entry.id, "agent-run-recorded"),
             detail={
                 "agent_run_id": str(entry.id),
                 "agent_id": entry.agent_id,

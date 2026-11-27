@@ -1,0 +1,50 @@
+groups:
+  - name: testlookup.durable_telemetry
+    interval: 30s
+    rules:
+      - record: testlookup:telemetry_expected_role
+        expr: vector(1)
+        labels:
+          job: testlookup-otel-collector
+          telemetry_profile: compose
+          telemetry_role: otel-collector
+
+      - record: testlookup:telemetry_expected_role
+        expr: vector(1)
+        labels:
+          job: testlookup-mcp-tools
+          telemetry_profile: compose
+          telemetry_role: mcp-tools
+
+      - alert: TestLookupTelemetryExporterQueueHigh
+        expr: |
+          (
+            otelcol_exporter_queue_size{job="testlookup-otel-collector"}
+            /
+            otelcol_exporter_queue_capacity{job="testlookup-otel-collector"}
+          ) > 0.8
+        for: 2m
+        labels:
+          severity: warning
+          alert_family: telemetry_export
+        annotations:
+          summary: "A durable telemetry exporter queue is nearing its limit"
+          description: "Check the {{ $labels.exporter }} destination, credentials and storage. The remaining buffer can fill during an outage. Runbook at docs/operations/durable-telemetry.md."
+
+      - alert: TestLookupTelemetryExportLoss
+        expr: |
+          max by (job, telemetry_profile, telemetry_role, instance) (
+            increase(otelcol_exporter_send_failed_log_records{job="testlookup-otel-collector"}[5m]) > 0
+            or increase(otelcol_exporter_send_failed_spans{job="testlookup-otel-collector"}[5m]) > 0
+            or increase(otelcol_exporter_enqueue_failed_log_records{job="testlookup-otel-collector"}[5m]) > 0
+            or increase(otelcol_exporter_enqueue_failed_spans{job="testlookup-otel-collector"}[5m]) > 0
+            or increase(otelcol_receiver_refused_log_records{job="testlookup-otel-collector"}[5m]) > 0
+            or increase(otelcol_receiver_refused_spans{job="testlookup-otel-collector"}[5m]) > 0
+          )
+        for: 1m
+        labels:
+          severity: warning
+          alert_family: telemetry_export
+        annotations:
+          summary: "A durable telemetry hop refused or lost data"
+          description: "Review Collector receiver refusals, enqueue failures, exporter retry exhaustion and available disk. Compare the last known searchable trace or log with the source. Runbook at docs/operations/durable-telemetry.md."

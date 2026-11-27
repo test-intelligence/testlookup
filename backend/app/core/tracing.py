@@ -6,22 +6,75 @@ Initialises a global TracerProvider with:
 - BatchSpanProcessor for low-overhead async export
 - Auto-instrumentation for FastAPI, SQLAlchemy, httpx, Redis
 
-- A span processor, ahead of every exporter, that takes the query string and
-  the path of a webhook URL out of the URL attributes (see ``add_url_redaction``)
+- Export-boundary sanitization of span attributes, events, status and metadata;
+  the original finished span is never modified by the exporter wrapper.
 
 Exports get_tracer() and get_current_trace_id() helpers for use across the codebase.
 """
+import atexit
 import logging
+import os
+import re
+import threading
+import time
 from collections.abc import Mapping
 from typing import Any, Optional
 from urllib.parse import urlsplit
 
 from app.core.request_path import redact_path_credentials
+from app.core.telemetry_identity import telemetry_identity
+from app.services.redaction_service import is_log_secret_name, redact_log_message
 
 logger = logging.getLogger(__name__)
 
 # Module-level guard so setup_tracing() is truly idempotent
 _initialised = False
+_provider: Any = None
+_provider_pid: int | None = None
+_shutdown_thread: threading.Thread | None = None
+_shutdown_requested: threading.Event | None = None
+_shutdown_deadline = 0.0
+_exit_registered = False
+
+
+def shutdown_tracing(timeout_millis: int = 1500) -> bool:
+    """Drain the owned provider within a finite process-exit budget.
+
+    SDK 1.45's force_flush can block in exporter IO despite its timeout
+    argument. Shutdown runs once on a daemon thread so an unavailable sink
+    cannot hold a recycling child or Beat process open indefinitely.
+    """
+    global _shutdown_deadline
+    if _provider is None or _provider_pid != os.getpid():
+        return True
+    if _shutdown_thread is None or _shutdown_requested is None:
+        return False
+    if not _shutdown_requested.is_set():
+        _shutdown_deadline = time.monotonic() + max(0, min(timeout_millis, 5000)) / 1000
+        _shutdown_requested.set()
+    _shutdown_thread.join(max(0, _shutdown_deadline - time.monotonic()))
+    drained = not _shutdown_thread.is_alive()
+    if not drained:
+        logger.warning("trace_shutdown_budget_exceeded")
+    return drained
+
+
+def _prepare_provider_shutdown(provider: Any) -> None:
+    """Start the waiter during setup, before Python enters its exit phase."""
+    global _provider, _provider_pid, _shutdown_thread, _shutdown_requested, _shutdown_deadline
+    requested = threading.Event()
+
+    def drain() -> None:
+        requested.wait()
+        try:
+            provider.shutdown()
+        except Exception as exc:  # noqa: BLE001 - preserve process shutdown
+            logger.warning("trace_shutdown_failed", extra={"error_type": type(exc).__name__})
+
+    thread = threading.Thread(target=drain, name="testlookup-trace-drain", daemon=True)
+    thread.start()
+    _provider, _provider_pid = provider, os.getpid()
+    _shutdown_thread, _shutdown_requested, _shutdown_deadline = thread, requested, 0.0
 
 
 def _otlp_trace_endpoint(endpoint: str) -> str:
@@ -76,13 +129,15 @@ def _redact_full_url(value: str) -> str:
     """
     parts = urlsplit(value)
     host = parts.hostname or ""
-    if not parts.scheme or not host:
+    if parts.scheme and not host:
+        return REDACTED
+    if not host:
         # Not something we can take apart: keep what precedes any query.
         head = value.split("?", 1)[0].split("#", 1)[0]
         return redact_path_credentials(head) + ("?" + REDACTED if "?" in value else "")
     if ":" in host:  # an IPv6 literal
         host = "[" + host + "]"
-    origin = parts.scheme + "://" + host + (":" + str(parts.port) if parts.port else "")
+    origin = (parts.scheme + "://" if parts.scheme else "//") + host + (":" + str(parts.port) if parts.port else "")
     if _is_webhook_host(parts.hostname):
         return origin + "/" + REDACTED
     return origin + redact_path_credentials(parts.path) + ("?" + REDACTED if parts.query else "")
@@ -165,13 +220,243 @@ def add_url_redaction(provider: Any) -> None:
 
 
 def _add_exporter(provider: Any, exporter: Any) -> None:
-    """Add a batching exporter, with the URL redaction in front of the first one."""
+    """Every configured exporter receives only sanitized span snapshots."""
     from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
     processors = getattr(getattr(provider, "_active_span_processor", None), "_span_processors", ())
     if not any(is_url_redaction(p) for p in processors):
         add_url_redaction(provider)
-    provider.add_span_processor(BatchSpanProcessor(exporter))
+    provider.add_span_processor(BatchSpanProcessor(redacting_span_exporter(exporter)))
+
+
+# Match references inside exception messages/stacks and custom diagnostic text,
+# not just attributes with a semantic-convention URL name. URL parsing removes
+# every query/fragment regardless of its parameter spelling or encoding.
+_TEXT_URL = re.compile(r"(?:[a-z][a-z0-9+.-]{0,31}:)?//[^\s\"'<>]+", re.IGNORECASE)
+_TEXT_SECRET = re.compile(
+    r"(?P<head>(?<![A-Za-z0-9])"
+    r"(?:password|passwd|passphrase|token|secret|api[_-]?key|credentials?|authorization|cookie|"
+    r"(?:private|signing|hmac|ssh|deploy|encryption|access)[_-]?key|smtp[_-]?pass)"
+    r"(?:\\*[\"'])?\s*[:=]\s*)",
+    re.IGNORECASE,
+)
+_TEXT_CREDENTIAL = re.compile(r"\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]+", re.IGNORECASE)
+_TEXT_OPAQUE_TOKEN = re.compile(
+    r"\b(?:eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+|(?:tl|qai|scim)_[A-Za-z0-9_-]{16,})\b"
+)
+# Raw payloads are not an operational trace contract, even if their content
+# does not happen to resemble a known credential pattern.
+_PAYLOAD_ATTRIBUTES = frozenset({
+    "http.request.body", "http.response.body", "http.request.body.content",
+    "http.response.body.content", "gen_ai.prompt", "gen_ai.completion",
+    "gen_ai.input.messages", "gen_ai.output.messages", "llm.prompt", "llm.completion",
+})
+_MAX_TRACE_TEXT_CHARS = 16_384
+
+
+def _redact_span_text(value: str) -> str:
+    # Bound the shared operational-text scrubbers' work. Omit an oversized
+    # field completely: truncating first could leave an unrecognized fragment
+    # of a credential, and giant exception text must not monopolize export.
+    if len(value) > _MAX_TRACE_TEXT_CHARS:
+        return "[REDACTED_OVERSIZED_TRACE_TEXT]"
+
+    def reference(match: re.Match[str]) -> str:
+        address = match.group()
+        # JSON encoding escapes the surrounding quote, not the URL itself.
+        # Preserve that delimiter's backslashes when replacing a URL so the
+        # following assignment scan can still locate the encoded value's end.
+        trailing = len(address) - len(address.rstrip("\\"))
+        suffix = address[-trailing:] if trailing else ""
+        try:
+            return _redact_full_url(address[:-trailing] if trailing else address) + suffix
+        except (ValueError, TypeError):
+            return REDACTED + suffix
+
+    value = _TEXT_URL.sub(reference, value)
+    value = _redact_secret_assignments(value)
+    value = _TEXT_CREDENTIAL.sub(lambda match: match[1] + " " + REDACTED, value)
+    value = _TEXT_OPAQUE_TOKEN.sub(REDACTED, value)
+    return redact_log_message(value)
+
+
+def _redact_secret_assignments(value: str) -> str:
+    """Replace credential values without decoding surrounding diagnostic text.
+
+    A quoted JSON value can itself be encoded into another JSON string. Its
+    delimiter then has 1, 3, 7, ... preceding backslashes. Quotes inside that
+    value have a different escape parity. Recognizing the delimiter locally
+    handles both forms and passwords containing escaped quotes/backslashes.
+    """
+    pieces = []
+    cursor = 0
+    while match := _TEXT_SECRET.search(value, cursor):
+        start = match.end()
+        pieces.append(value[cursor:start])
+        opening = re.match(r"(\\*)([\"'])", value[start:])
+        if opening:
+            slashes, quote = opening.groups()
+            search_at = start + opening.end()
+            end = len(value)
+            replacement = opening.group() + REDACTED
+            while (position := value.find(quote, search_at)) >= 0:
+                before = position
+                while before > start and value[before - 1] == "\\":
+                    before -= 1
+                if (position - before) % (2 * (len(slashes) + 1)) == len(slashes):
+                    end = position + 1
+                    replacement += slashes + quote
+                    break
+                search_at = position + 1
+            # Malformed/unclosed credentials lose the remaining value, rather
+            # than leaving part of a secret in a recoverable alternate form.
+            pieces.append(replacement)
+        else:
+            unquoted = re.match(r"[^\s,;}\]]*", value[start:])
+            assert unquoted is not None  # This expression always matches, including an empty value.
+            end = start + unquoted.end()
+            pieces.append(REDACTED)
+        cursor = end
+    pieces.append(value[cursor:])
+    return "".join(pieces)
+
+
+def _redact_trace_value(key: str, value: Any, *, depth: int = 0) -> Any:
+    normalized = key.lower().replace("-", "_")
+    if normalized == "url.query" and value:
+        return REDACTED
+    if (
+        normalized in _PAYLOAD_ATTRIBUTES
+        or is_log_secret_name(normalized.replace(".", "_"))
+        or is_log_secret_name(normalized.rsplit(".", 1)[-1])
+    ):
+        return value if value is None or isinstance(value, bool) else REDACTED
+    if isinstance(value, str):
+        return _redact_span_text(value)
+    if depth >= 10:
+        return REDACTED
+    if isinstance(value, Mapping):
+        return _redact_trace_attributes(value, depth=depth + 1)
+    if isinstance(value, (list, tuple)):
+        return tuple(_redact_trace_value(key, item, depth=depth + 1) for item in value)
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    # Never stringify an unsupported value after sanitization: its repr may
+    # contain exactly the sensitive input that the exporter must not receive.
+    return REDACTED
+
+
+def _redact_trace_attributes(attributes: Optional[Mapping[str, Any]], *, depth: int = 0) -> dict[str, Any]:
+    current = attributes or {}
+    try:
+        current = redact_span_attributes(current) or current
+    except (TypeError, ValueError):
+        current = {
+            key: value for key, value in current.items()
+            if key not in (*_FULL_URL_ATTRIBUTES, "url.query", "http.target", "url.path")
+        }
+    return {
+        _redact_span_text(key): _redact_trace_value(key, value, depth=depth)
+        for key, value in current.items() if isinstance(key, str)
+    }
+
+
+def _sanitized_span(span: Any) -> Any:
+    """Copy public SDK data into an export-only snapshot, including all copies.
+
+    Event/status objects remain untouched on the original ReadableSpan. This
+    boundary is shared by OTLP, console and test exporters, rather than relying
+    on mutating the SDK's private event/status storage from an on_end processor.
+    """
+    from opentelemetry.attributes import BoundedAttributes
+    from opentelemetry.sdk.resources import Resource
+    from opentelemetry.sdk.trace import Event, ReadableSpan
+    from opentelemetry.sdk.util.instrumentation import InstrumentationScope
+    from opentelemetry.trace import Link, SpanContext, Status, TraceState
+
+    def attributes(original):
+        copied = BoundedAttributes(
+            attributes=_redact_trace_attributes(original), maxlen=None, immutable=True,
+        )
+        copied.dropped = getattr(original, "dropped", 0)
+        return copied
+
+    def context(original):
+        if original is None:
+            return None
+        return SpanContext(
+            trace_id=original.trace_id, span_id=original.span_id,
+            is_remote=original.is_remote, trace_flags=original.trace_flags,
+            trace_state=TraceState([
+                (key, _redact_trace_value(key, value))
+                for key, value in original.trace_state.items()
+            ]),
+        )
+
+    scope = span.instrumentation_scope
+    safe_scope = None if scope is None else InstrumentationScope(
+        name=_redact_span_text(scope.name),
+        version=_redact_span_text(scope.version) if scope.version else scope.version,
+        schema_url=_redact_span_text(scope.schema_url) if scope.schema_url else scope.schema_url,
+        attributes=attributes(scope.attributes),
+    )
+    dropped = (span.dropped_attributes, span.dropped_events, span.dropped_links)
+
+    class _SanitizedSpan(ReadableSpan):
+        # Preserve SDK loss accounting while building ordinary immutable input
+        # containers, without reading or changing any SDK private storage.
+        @property
+        def dropped_attributes(self):
+            return dropped[0]
+
+        @property
+        def dropped_events(self):
+            return dropped[1]
+
+        @property
+        def dropped_links(self):
+            return dropped[2]
+
+    return _SanitizedSpan(
+        name=_redact_span_text(span.name), context=context(span.context), parent=context(span.parent),
+        kind=span.kind, start_time=span.start_time, end_time=span.end_time,
+        attributes=attributes(span.attributes),
+        events=tuple(Event(
+            name=_redact_span_text(event.name), timestamp=event.timestamp,
+            attributes=attributes(event.attributes),
+            limit=None,
+        ) for event in span.events),
+        links=tuple(Link(context(link.context), attributes(link.attributes)) for link in span.links),
+        status=Status(span.status.status_code, _redact_span_text(span.status.description) if span.status.description else None),
+        resource=Resource(
+            attributes(span.resource.attributes),
+            _redact_span_text(span.resource.schema_url) if span.resource.schema_url else span.resource.schema_url,
+        ),
+        instrumentation_scope=safe_scope,
+    )
+
+
+def redacting_span_exporter(exporter: Any) -> Any:
+    """Wrap an exporter with the complete privacy boundary; fail closed per span."""
+    from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
+
+    class _RedactingExporter(SpanExporter):
+        def export(self, spans):
+            safe = []
+            for span in spans:
+                try:
+                    safe.append(_sanitized_span(span))
+                except Exception as exc:  # noqa: BLE001 -- never export raw on failure
+                    logger.warning("trace span omitted: sanitization failed (%s)", type(exc).__name__)
+            return exporter.export(tuple(safe)) if safe else SpanExportResult.FAILURE
+
+        def shutdown(self):
+            return exporter.shutdown()
+
+        def force_flush(self, timeout_millis=30000):
+            return exporter.force_flush(timeout_millis=timeout_millis)
+
+    return _RedactingExporter()
 
 
 def setup_tracing(
@@ -179,7 +464,9 @@ def setup_tracing(
     service_version: str,
     environment: str,
     otlp_endpoint: Optional[str] = None,
-) -> None:
+    *,
+    service_role: str = "api",
+) -> bool:
     """
     Configure and register the global OpenTelemetry TracerProvider.
 
@@ -193,9 +480,9 @@ def setup_tracing(
                          logged (re-audit N22 — the stdout fallback printed
                          ~90k log lines per 10 minutes on a real deployment).
     """
-    global _initialised
+    global _initialised, _exit_registered
     if _initialised:
-        return
+        return _provider_pid == os.getpid()
 
     try:
         from opentelemetry import trace
@@ -204,19 +491,25 @@ def setup_tracing(
         from opentelemetry.sdk.trace.export import ConsoleSpanExporter
     except ImportError:
         logger.warning("opentelemetry-sdk not installed — tracing disabled")
-        return
+        return False
 
     try:
+        from app.core.config import settings
+
         resource = Resource.create(
             {
                 "service.name": service_name,
                 "service.version": service_version,
                 "deployment.environment": environment,
                 "service.namespace": "testlookup",
+                "testlookup.service.role": service_role,
+                **telemetry_identity(settings.BUILD_REVISION, settings.OBSERVABILITY_INSTALLATION),
             }
         )
 
-        provider = TracerProvider(resource=resource)
+        # Own exit handling: the SDK's default atexit drain can exceed the
+        # worker's grace period when a collector stops accepting traffic.
+        provider = TracerProvider(resource=resource, shutdown_on_exit=False)
 
         if otlp_endpoint:
             try:
@@ -225,9 +518,19 @@ def setup_tracing(
                 )
 
                 trace_endpoint = _otlp_trace_endpoint(otlp_endpoint)
-                exporter = OTLPSpanExporter(endpoint=trace_endpoint, timeout=10)
+                if urlsplit(trace_endpoint).hostname in {
+                    "otel-collector", "testlookup-otel.testlookup-telemetry.svc",
+                }:
+                    import requests
+
+                    session = requests.Session()
+                    session.trust_env = False
+                    session.max_redirects = 0
+                    exporter = OTLPSpanExporter(endpoint=trace_endpoint, timeout=10, session=session)
+                else:
+                    exporter = OTLPSpanExporter(endpoint=trace_endpoint, timeout=10)
                 _add_exporter(provider, exporter)
-                logger.info("OTEL tracing enabled → %s", trace_endpoint)
+                logger.info("OTEL tracing enabled")
             except ImportError:
                 if environment == "development":
                     logger.warning(
@@ -255,13 +558,18 @@ def setup_tracing(
             )
 
         trace.set_tracer_provider(provider)
+        _prepare_provider_shutdown(provider)
     except Exception as exc:  # noqa: BLE001 — tracing must not block app startup
         logger.warning("OTEL tracing initialization failed; tracing disabled: %s", exc)
-        return
+        return False
 
     _initialised = True
+    if not _exit_registered:
+        atexit.register(shutdown_tracing)
+        _exit_registered = True
 
     _apply_auto_instrumentors()
+    return True
 
 
 def _apply_auto_instrumentors() -> None:

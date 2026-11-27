@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import inspect
 import uuid
+from types import SimpleNamespace
 
 import pytest
 
@@ -20,7 +21,24 @@ pytest.importorskip("sqlalchemy")
 from sqlalchemy.dialects import postgresql  # noqa: E402
 
 from app.services import retention_service as svc  # noqa: E402
-from tests.test_retention_purge import NOW, PROJECT_ID, _FakeStorage, _purge_fixture  # noqa: E402
+from tests.test_retention_purge import NOW, PROJECT_ID, _FakeStorage, _purge_fixture as _source_purge_fixture  # noqa: E402
+
+
+def _purge_fixture(**kwargs):
+    db, mongo, storage, events = _source_purge_fixture(**kwargs)
+    db.get_bind = lambda: SimpleNamespace(dialect=SimpleNamespace(name="sqlite"))
+    db.outbox_delete_stmts = []
+    original = db.execute
+
+    async def execute(stmt):
+        if type(stmt).__name__ == "Delete" and stmt.table.name == "pipeline_event_outbox":
+            db.outbox_delete_stmts.append(stmt)
+            events.append(("pg_outbox_cancel", stmt.table.name))
+            return SimpleNamespace(rowcount=0)
+        return await original(stmt)
+
+    db.execute = execute
+    return db, mongo, storage, events
 
 
 def _archives():
@@ -80,6 +98,7 @@ async def test_the_preview_counts_the_archives_and_deletes_nothing():
     assert out["candidates"]["export_archives_expired"] == 2
     assert storage.deleted_objects == []
     assert not any(kind == "pg_delete" for kind, _ in events)
+    assert db.outbox_delete_stmts == []
 
 
 async def test_execute_deletes_each_object_before_the_rows():
@@ -96,6 +115,10 @@ async def test_execute_deletes_each_object_before_the_rows():
     assert "archives_deleted" not in out["counts"]["postgres"], "objects, not rows: never summed as records"
     job_delete = next(s for s in db.delete_stmts if s.table.name == "deletion_jobs")
     assert "NOT IN" not in str(job_delete.compile(dialect=postgresql.dialect()))
+    assert db.outbox_delete_stmts, "source run deletion also stages replay cancellation"
+    assert events.index(("pg_outbox_cancel", "pipeline_event_outbox")) < next(
+        i for i, event in enumerate(events) if event[0] == "mongo_delete"
+    ) < events.index(("pg_delete", "test_runs")), "cancel replay, delete external evidence, then delete source rows"
 
 
 async def test_a_failed_object_delete_keeps_its_row_and_never_logs_the_key(monkeypatch):

@@ -1,0 +1,18 @@
+# Copy to a private site file and replace the example endpoints and scope.
+# Endpoint privacy is a site assertion for DNS names. Enforce DNS and egress.
+schema_version: 1
+profile: compose
+cluster: example-site
+namespace: testlookup
+monitoring_namespace: monitoring
+targets:
+  - instance: host-a
+    role: host-exporter
+    address: node-a.monitoring.internal:9100
+    server_name: node-a.monitoring.internal
+    private_endpoint: true
+  - instance: postgres-a
+    role: postgres-exporter
+    address: postgres-a.monitoring.internal:9187
+    server_name: postgres-a.monitoring.internal
+    private_endpoint: true

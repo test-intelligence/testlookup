@@ -2,6 +2,7 @@
 import time
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
+from uuid import uuid5
 from typing import Any, Optional
 
 from app.core.metrics import (
@@ -15,6 +16,9 @@ from app.core.metrics import (
     pipeline_stage_tokens_total,
 )
 from app.core.config import settings
+from app.core.metric_dimensions import (
+    ERROR_CATEGORIES, FALLBACK_REASONS, STAGE_NAMES, bounded_dimension,
+)
 from app.core.tracing import get_tracer
 from app.db.postgres import AsyncSessionLocal
 from app.models.postgres import AgentPipelineRun, AgentStageResult
@@ -333,60 +337,57 @@ class BaseAgent(ABC):
         duration_secs = round(
             time.perf_counter() - self._stage_start.get(pipeline_run_id, time.perf_counter()), 3
         )
-        await emit_event(
-            pipeline_run_id, event_type,
-            stage_name=runtime_stage_name(type(self).stage_name),
-            detail={
-                "duration_seconds": duration_secs,
-                "input_tokens": input_tokens,
-                "output_tokens": output_tokens,
-                "total_tokens": total_tokens,
-                "llm_calls_count": llm_calls_count,
-                "cost_usd": round(cost_usd, 6),
-                # How the number was arrived at: "priced" | "self_hosted" |
-                # "unpriced" | "caller". A $0.00 from a self-hosted provider
-                # and a $0.00 from an unpriced cloud model mean opposite
-                # things, and the reader must be able to tell them apart.
-                "cost_source": cost_source,
-                **({"confidence_score": confidence_score} if confidence_score is not None else {}),
-                **({"evidence_count": evidence_count} if evidence_count is not None else {}),
-                **({"error": error[:500]} if error else {}),
-                **({"error_category": error_category} if error_category else {}),
-                **({"fallback_reason": fallback_reason} if fallback_reason else {}),
-                **({"route_rationale": route_rationale} if route_rationale else {}),
-                **({"result_summary": {k: v for k, v in (result_data or {}).items() if not isinstance(v, (list, dict))}} if result_data else {}),
-            },
-        )
+        event_detail = {
+            "duration_seconds": duration_secs,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": total_tokens,
+            "llm_calls_count": llm_calls_count,
+            "cost_usd": round(cost_usd, 6),
+            # A zero cost from a self-hosted provider and an unpriced cloud
+            # model have different meanings.
+            "cost_source": cost_source,
+            **({"confidence_score": confidence_score} if confidence_score is not None else {}),
+            **({"evidence_count": evidence_count} if evidence_count is not None else {}),
+            **({"error": error[:500]} if error else {}),
+            **({"error_category": error_category} if error_category else {}),
+            **({"fallback_reason": fallback_reason} if fallback_reason else {}),
+            **({"route_rationale": route_rationale} if route_rationale else {}),
+            **({"result_summary": {k: v for k, v in (result_data or {}).items() if not isinstance(v, (list, dict))}} if result_data else {}),
+        }
 
         # Record Prometheus metrics
+        # A workflow may rename every step. Use its static agent capability
+        # for metrics; retain the runtime step ID in SQL, events and traces.
+        metric_stage_name = bounded_dimension(type(self).stage_name, STAGE_NAMES)
         duration = time.perf_counter() - self._stage_start.pop(pipeline_run_id, time.perf_counter())
         pipeline_stage_duration_seconds.labels(
-            stage_name=runtime_stage_name(type(self).stage_name), status=status
+            stage_name=metric_stage_name, status=status
         ).observe(duration)
         pipeline_stage_runs_total.labels(
-            stage_name=runtime_stage_name(type(self).stage_name), status=status
+            stage_name=metric_stage_name, status=status
         ).inc()
 
         # Phase 6: Token, cost, LLM call, fallback, and error metrics
         if input_tokens > 0:
             pipeline_stage_tokens_total.labels(
-                stage_name=runtime_stage_name(type(self).stage_name), direction="input"
+                stage_name=metric_stage_name, direction="input"
             ).inc(input_tokens)
         if output_tokens > 0:
             pipeline_stage_tokens_total.labels(
-                stage_name=runtime_stage_name(type(self).stage_name), direction="output"
+                stage_name=metric_stage_name, direction="output"
             ).inc(output_tokens)
         if cost_usd > 0:
-            pipeline_stage_cost_usd.labels(stage_name=runtime_stage_name(type(self).stage_name)).inc(cost_usd)
+            pipeline_stage_cost_usd.labels(stage_name=metric_stage_name).inc(cost_usd)
         if llm_calls_count > 0:
-            pipeline_stage_llm_calls_total.labels(stage_name=runtime_stage_name(type(self).stage_name)).inc(llm_calls_count)
+            pipeline_stage_llm_calls_total.labels(stage_name=metric_stage_name).inc(llm_calls_count)
         if fallback_reason:
             pipeline_fallback_total.labels(
-                stage_name=runtime_stage_name(type(self).stage_name), reason=fallback_reason[:50]
+                stage_name=metric_stage_name, reason=bounded_dimension(fallback_reason, FALLBACK_REASONS)
             ).inc()
         if error_category:
             pipeline_stage_errors_by_category.labels(
-                stage_name=runtime_stage_name(type(self).stage_name), error_category=error_category
+                stage_name=metric_stage_name, error_category=bounded_dimension(error_category, ERROR_CATEGORIES)
             ).inc()
 
         # Tier 1 item 2 — feed the LLM cost meter. Runs only when the caller
@@ -549,6 +550,14 @@ class BaseAgent(ABC):
                 decisions = self._stage_decisions.pop(pipeline_run_id, None)
                 if decisions:
                     stage.decision_log = decisions
+                await db.flush()
+                await emit_event(
+                    pipeline_run_id, event_type,
+                    stage_name=runtime_stage_name(type(self).stage_name),
+                    detail=event_detail,
+                    db=db,
+                    event_id=uuid5(stage.id, f"{event_type}:{stage_attempt}"),
+                )
                 await db.commit()
 
         # Settlement is intentionally a second transaction. If its commit

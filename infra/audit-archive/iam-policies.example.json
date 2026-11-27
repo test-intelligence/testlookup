@@ -1,0 +1,310 @@
+{
+  "instructions": "EXAMPLE ONLY. Replace every __PLACEHOLDER__, validate with the provider and deploy in an independent storage account. Identity policies attach to separate dedicated roles; bucket_guard is a bucket policy. Do not apply this file as one AWS policy.",
+  "archive_writer": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "InspectArchiveBucket",
+        "Effect": "Allow",
+        "Action": [
+          "s3:GetBucketVersioning",
+          "s3:GetBucketObjectLockConfiguration"
+        ],
+        "Resource": "arn:aws:s3:::__ARCHIVE_BUCKET__"
+      },
+      {
+        "Sid": "AppendConditionalEncryptedArchive",
+        "Effect": "Allow",
+        "Action": "s3:PutObject",
+        "Resource": "arn:aws:s3:::__ARCHIVE_BUCKET__/audit-custody/*",
+        "Condition": {
+          "Null": {
+            "s3:if-none-match": "false"
+          },
+          "StringEquals": {
+            "s3:x-amz-server-side-encryption": "aws:kms",
+            "s3:x-amz-server-side-encryption-aws-kms-key-id": "__ARCHIVE_KMS_KEY_ARN__",
+            "s3:object-lock-mode": "COMPLIANCE",
+            "s3:object-lock-legal-hold": "ON"
+          },
+          "NumericGreaterThanEquals": {
+            "s3:object-lock-remaining-retention-days": "__MIN_RETENTION_DAYS__"
+          },
+          "NumericLessThanEquals": {
+            "s3:object-lock-remaining-retention-days": "__MAX_RETENTION_DAYS__"
+          }
+        }
+      },
+      {
+        "Sid": "SetComplianceRetention",
+        "Effect": "Allow",
+        "Action": "s3:PutObjectRetention",
+        "Resource": "arn:aws:s3:::__ARCHIVE_BUCKET__/audit-custody/*",
+        "Condition": {
+          "StringEquals": {
+            "s3:object-lock-mode": "COMPLIANCE"
+          },
+          "NumericGreaterThanEquals": {
+            "s3:object-lock-remaining-retention-days": "__MIN_RETENTION_DAYS__"
+          },
+          "NumericLessThanEquals": {
+            "s3:object-lock-remaining-retention-days": "__MAX_RETENTION_DAYS__"
+          }
+        }
+      },
+      {
+        "Sid": "PlaceHoldOnly",
+        "Effect": "Allow",
+        "Action": "s3:PutObjectLegalHold",
+        "Resource": "arn:aws:s3:::__ARCHIVE_BUCKET__/audit-custody/*",
+        "Condition": {
+          "StringEquals": {
+            "s3:object-lock-legal-hold": "ON"
+          }
+        }
+      },
+      {
+        "Sid": "ReadProtectionMetadata",
+        "Effect": "Allow",
+        "Action": [
+          "s3:GetObjectRetention",
+          "s3:GetObjectLegalHold"
+        ],
+        "Resource": "arn:aws:s3:::__ARCHIVE_BUCKET__/audit-custody/*"
+      },
+      {
+        "Sid": "EncryptArchiveOnly",
+        "Effect": "Allow",
+        "Action": "kms:GenerateDataKey",
+        "Resource": "__ARCHIVE_KMS_KEY_ARN__",
+        "Condition": {
+          "StringEquals": {
+            "kms:ViaService": "s3.__AWS_REGION__.amazonaws.com"
+          }
+        }
+      }
+    ]
+  },
+  "audit_reader": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "ReadKnownArchiveVersion",
+        "Effect": "Allow",
+        "Action": [
+          "s3:GetObjectVersion",
+          "s3:GetObjectRetention",
+          "s3:GetObjectLegalHold"
+        ],
+        "Resource": "arn:aws:s3:::__ARCHIVE_BUCKET__/audit-custody/*"
+      },
+      {
+        "Sid": "DecryptArchiveOnly",
+        "Effect": "Allow",
+        "Action": "kms:Decrypt",
+        "Resource": "__ARCHIVE_KMS_KEY_ARN__",
+        "Condition": {
+          "StringEquals": {
+            "kms:ViaService": "s3.__AWS_REGION__.amazonaws.com"
+          }
+        }
+      }
+    ]
+  },
+  "retention_operator": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "ReadProtectionMetadata",
+        "Effect": "Allow",
+        "Action": [
+          "s3:GetObjectRetention",
+          "s3:GetObjectLegalHold"
+        ],
+        "Resource": "arn:aws:s3:::__ARCHIVE_BUCKET__/audit-custody/*"
+      },
+      {
+        "Sid": "ReviewHoldRelease",
+        "Effect": "Allow",
+        "Action": "s3:PutObjectLegalHold",
+        "Resource": "arn:aws:s3:::__ARCHIVE_BUCKET__/audit-custody/*"
+      },
+      {
+        "Sid": "DeleteExpiredUnheldVersion",
+        "Effect": "Allow",
+        "Action": "s3:DeleteObjectVersion",
+        "Resource": "arn:aws:s3:::__ARCHIVE_BUCKET__/audit-custody/*"
+      }
+    ]
+  },
+  "application_explicit_deny": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "NoApplicationArchiveAccess",
+        "Effect": "Deny",
+        "Action": "s3:*",
+        "Resource": [
+          "arn:aws:s3:::__ARCHIVE_BUCKET__",
+          "arn:aws:s3:::__ARCHIVE_BUCKET__/*"
+        ]
+      }
+    ]
+  },
+  "bucket_guard": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Sid": "DenyPlaintextTransport",
+        "Effect": "Deny",
+        "Principal": "*",
+        "Action": "s3:*",
+        "Resource": [
+          "arn:aws:s3:::__ARCHIVE_BUCKET__",
+          "arn:aws:s3:::__ARCHIVE_BUCKET__/*"
+        ],
+        "Condition": {
+          "Bool": {
+            "aws:SecureTransport": "false"
+          }
+        }
+      },
+      {
+        "Sid": "DenyApplicationPrincipal",
+        "Effect": "Deny",
+        "Principal": "*",
+        "Action": "s3:*",
+        "Resource": [
+          "arn:aws:s3:::__ARCHIVE_BUCKET__",
+          "arn:aws:s3:::__ARCHIVE_BUCKET__/*"
+        ],
+        "Condition": {
+          "ArnEquals": {
+            "aws:PrincipalArn": "__APPLICATION_ROLE_ARN__"
+          }
+        }
+      },
+      {
+        "Sid": "DenyMissingCreateOnlyCondition",
+        "Effect": "Deny",
+        "Principal": "*",
+        "Action": "s3:PutObject",
+        "Resource": "arn:aws:s3:::__ARCHIVE_BUCKET__/audit-custody/*",
+        "Condition": {
+          "Null": {
+            "s3:if-none-match": "true"
+          }
+        }
+      },
+      {
+        "Sid": "DenyWrongEncryption",
+        "Effect": "Deny",
+        "Principal": "*",
+        "Action": "s3:PutObject",
+        "Resource": "arn:aws:s3:::__ARCHIVE_BUCKET__/audit-custody/*",
+        "Condition": {
+          "StringNotEquals": {
+            "s3:x-amz-server-side-encryption": "aws:kms"
+          }
+        }
+      },
+      {
+        "Sid": "DenyWrongKey",
+        "Effect": "Deny",
+        "Principal": "*",
+        "Action": "s3:PutObject",
+        "Resource": "arn:aws:s3:::__ARCHIVE_BUCKET__/audit-custody/*",
+        "Condition": {
+          "StringNotEquals": {
+            "s3:x-amz-server-side-encryption-aws-kms-key-id": "__ARCHIVE_KMS_KEY_ARN__"
+          }
+        }
+      },
+      {
+        "Sid": "DenyNonComplianceRetention",
+        "Effect": "Deny",
+        "Principal": "*",
+        "Action": [
+          "s3:PutObject",
+          "s3:PutObjectRetention"
+        ],
+        "Resource": "arn:aws:s3:::__ARCHIVE_BUCKET__/audit-custody/*",
+        "Condition": {
+          "StringNotEquals": {
+            "s3:object-lock-mode": "COMPLIANCE"
+          }
+        }
+      },
+      {
+        "Sid": "DenyShortRetention",
+        "Effect": "Deny",
+        "Principal": "*",
+        "Action": [
+          "s3:PutObject",
+          "s3:PutObjectRetention"
+        ],
+        "Resource": "arn:aws:s3:::__ARCHIVE_BUCKET__/audit-custody/*",
+        "Condition": {
+          "NumericLessThan": {
+            "s3:object-lock-remaining-retention-days": "__MIN_RETENTION_DAYS__"
+          }
+        }
+      },
+      {
+        "Sid": "DenyLongRetention",
+        "Effect": "Deny",
+        "Principal": "*",
+        "Action": [
+          "s3:PutObject",
+          "s3:PutObjectRetention"
+        ],
+        "Resource": "arn:aws:s3:::__ARCHIVE_BUCKET__/audit-custody/*",
+        "Condition": {
+          "NumericGreaterThan": {
+            "s3:object-lock-remaining-retention-days": "__MAX_RETENTION_DAYS__"
+          }
+        }
+      },
+      {
+        "Sid": "DenyHoldRemovalExceptRetentionRole",
+        "Effect": "Deny",
+        "Principal": "*",
+        "Action": [
+          "s3:PutObject",
+          "s3:PutObjectLegalHold"
+        ],
+        "Resource": "arn:aws:s3:::__ARCHIVE_BUCKET__/audit-custody/*",
+        "Condition": {
+          "StringNotEquals": {
+            "s3:object-lock-legal-hold": "ON"
+          },
+          "ArnNotEquals": {
+            "aws:PrincipalArn": "__RETENTION_OPERATOR_ROLE_ARN__"
+          }
+        }
+      },
+      {
+        "Sid": "DenyDeleteMarkers",
+        "Effect": "Deny",
+        "Principal": "*",
+        "Action": "s3:DeleteObject",
+        "Resource": "arn:aws:s3:::__ARCHIVE_BUCKET__/audit-custody/*"
+      }
+    ]
+  },
+  "bucket_controls": {
+    "versioning": {
+      "Status": "Enabled"
+    },
+    "object_lock": {
+      "ObjectLockEnabled": "Enabled"
+    },
+    "public_access_block": {
+      "BlockPublicAcls": true,
+      "IgnorePublicAcls": true,
+      "BlockPublicPolicy": true,
+      "RestrictPublicBuckets": true
+    },
+    "note": "No lifecycle delete or bypass-governance capability. Provider COMPLIANCE retention and live legal holds gate version deletion; source legal-hold review and approval remain operator duties."
+  }
+}

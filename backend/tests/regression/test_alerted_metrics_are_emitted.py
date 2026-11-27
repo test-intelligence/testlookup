@@ -66,7 +66,7 @@ class TestCeleryTaskOutcome:
 
         import app.worker.celery_app  # noqa: F401  (registers the receivers)
 
-        task = _Task(f"app.worker.tasks.probe_{expected}")
+        task = _Task("celery.group")
         before = _counter(metrics.celery_tasks_total, task_name=task.name, status=expected)
         task_postrun.send(sender=None, task_id="t1", task=task, state=state)
         after = _counter(metrics.celery_tasks_total, task_name=task.name, status=expected)
@@ -83,12 +83,13 @@ class TestCeleryTaskOutcome:
 
         import app.worker.celery_app  # noqa: F401
 
-        task = _Task("app.worker.tasks.probe_revoked")
+        task = _Task("celery.group")
+        before = _counter(metrics.celery_tasks_total, task_name=task.name, status="revoked")
         task_postrun.send(sender=None, task_id="t2", task=task, state="REVOKED")
 
         assert _counter(
             metrics.celery_tasks_total, task_name=task.name, status="revoked"
-        ) == 1.0
+        ) == before + 1
 
     def test_instrumentation_never_raises(self):
         """A metrics failure must not fail the task it is measuring."""

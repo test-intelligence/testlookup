@@ -84,6 +84,7 @@ When disk pressure arrives, the levers are per-project retention (**Settings →
 
 ## Related
 
+- Size optional logs, traces and Prometheus using measured queue, storage and sampling behavior. [Telemetry capacity](../docs/operations/telemetry-capacity.md)
 - Day-2 operations — backup/restore and upgrades: [administration.md](administration.md#backup-restore--upgrades)
 - Deployment topologies (Compose vs k8s, overlays): [architecture/DEPLOYMENT.md](../architecture/DEPLOYMENT.md)
 - The ingestion-scale machinery behind the guardrails: [architecture/INGESTION_SCALE.md](../architecture/INGESTION_SCALE.md)

@@ -178,9 +178,23 @@ kubectl apply -k k8s/monitoring
 | File | Contents |
 |---|---|
 | `podmonitors.yaml` | `PodMonitor` `testlookup-backend` (port `http`, `/metrics` on 8000) and `testlookup-worker` (port `metrics`, 9100), each setting the `job` label the rules select on |
-| `prometheusrule.yaml` | `PrometheusRule` `testlookup-alerts`, generated from `infra/monitoring/prometheus-rules/testlookup-alerts.yml` by `scripts/render_prometheusrule.py`: application alerts (backend or worker down, error rate, slow requests, AI pipeline failures, LLM circuit breaker, DLQ, stale reviews, live-event archive failures), infrastructure alerts (DB pool, broker memory, queue backlog, task latency, disk, OOM kills), latency SLOs for key API routes, and the two backup alerts |
+| `prometheusrule.yaml` | `PrometheusRule` `testlookup-alerts`, generated from `infra/monitoring/prometheus-rules/testlookup-alerts.yml` by `scripts/render_prometheusrule.py`. It covers application errors and availability, infrastructure pressure, key API route latency and backups. |
 
-The backup alerts read kube-state-metrics, and the disk and OOM alerts read node-exporter; without those exporters the rules stay silent. If your Prometheus selects rules and monitors by label (kube-prometheus-stack uses `release: <name>`), add that label in `k8s/monitoring/kustomization.yaml` as its comment shows.
+The backup alerts read kube-state-metrics, and the disk and OOM alerts read node-exporter. If your Prometheus selects rules and monitors by label (kube-prometheus-stack uses `release: <name>`), add that label in your site monitoring overlay. Confirm that the Prometheus resource selects rules and PodMonitors in the application namespace.
+
+Include the telemetry inventory Rule along with the shared alert Rule. The monitoring guides cover role labels, namespace scope and queue progress. Use the cluster's Alertmanager and check delivery against your site configuration. [Telemetry contract](telemetry-contract.md), [Celery queue monitoring](celery-queue-monitoring.md), [alert delivery and watchdog routing](alert-routing.md).
+
+The optional `k8s/monitoring-objectives` overlay records availability, latency and coverage for a named installation. [API objectives](api-objectives.md).
+
+### Authenticate the API scrape
+
+Provision a Secret named `testlookup-metrics-auth` with key `token` in the application namespace through your secret manager. Include the `k8s/components/metrics-auth` component in your application overlay. It mounts the token read-only in the backend container. Select `k8s/monitoring-authenticated` as the monitoring resource in your site overlay. It uses `PodMonitor` bearer authorization with the same Secret key. The Operator needs permission to read that Secret in the PodMonitor namespace. [Prometheus Operator API](https://prometheus-operator.dev/docs/api-reference/api/).
+
+In the selected Prometheus, confirm discovery for each API and worker pod and verify `up{job="testlookup-backend"} == 1`. A direct API scrape from the private network should return 401 with missing or mismatched credentials and return samples with the mounted token. Worker port 9100 relies on the monitoring namespace NetworkPolicy. On platforms with an external scraper, supply a site-specific policy and TLS before crossing a trust boundary.
+
+The [durable telemetry adapters](durable-telemetry.md#kubernetes-and-managed-gateways) add client-authenticated OTLP export for API, workers and MCP to a site-operated gateway.
+
+Rotate the Secret, wait for the Operator to reconcile its scrape configuration, and roll the backend deployment so each API process loads the new token. A rolling transition can produce temporary 401s from pods using different token generations. Verify every API target returns samples after the rollout and the old credential receives 401. Keep token values out of rendered manifests, commands and verification records.
 
 ## Backups
 
@@ -194,6 +208,8 @@ components:
 It creates a daily CronJob (`testlookup-backup`, 02:17) that writes `pg_dump`, `mongodump` and the object-store contents with a checksummed manifest to the `testlookup-backups` PVC, keeps the newest `BACKUP_KEEP` archives (14), and a restore CronJob template that runs only after you set `RESTORE_CONFIRM=yes` on `testlookup-restore-request`. Valkey, ChromaDB and Ollama are excluded. Copy archives off the cluster on a schedule. For managed datastores, use the provider's snapshots instead and add egress rules if you still run the component against external stores.
 
 ## Verify the rollout
+
+Use the [release assurance verifier](release-assurance.md#verify-a-kubernetes-rollout) to record every application role's verified image identity against the release manifest.
 
 ```bash
 make k8s-rollout-async K8S_NAMESPACE=testlookup

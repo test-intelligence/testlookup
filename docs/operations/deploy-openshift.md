@@ -117,3 +117,4 @@ If no host can reach both the internet and the Artifactory, use the [offline bun
 - [Kubernetes guide](deploy-kubernetes.md): Secret and ConfigMap keys, migrations, network policies, monitoring
 - [Backup component](../../k8s/components/backup/README.md)
 - [Air-gapped install](../../user-guide/air-gapped-install.md)
+- [Durable telemetry and site gateway credentials](durable-telemetry.md#kubernetes-and-managed-gateways)

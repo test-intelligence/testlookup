@@ -1,0 +1,336 @@
+# Synthetic absence semantics; fixtures are outside the runtime rules glob.
+rule_files:
+- ../prometheus-rules/testlookup-alerts.yml
+evaluation_interval: 30s
+tests:
+- name: "missing inventory has a five-minute grace while watchdog is always firing"
+  interval: 30s
+  input_series: []
+  promql_expr_test:
+  - expr: "count(ALERTS{alertname=\"TestLookupTelemetryContractMissing\",alertstate=\"firing\"}) or vector(0)"
+    eval_time: 4m30s
+    exp_samples:
+    - labels: "{}"
+      value: 0
+  - expr: "count(ALERTS{alertname=\"TestLookupTelemetryContractMissing\",alertstate=\"firing\"}) or vector(0)"
+    eval_time: 5m
+    exp_samples:
+    - labels: "{}"
+      value: 1
+  - expr: "count(ALERTS{alertname=\"TestLookupWatchdog\",alertstate=\"firing\"}) or vector(0)"
+    eval_time: 0m
+    exp_samples:
+    - labels: "{}"
+      value: 1
+  - expr: "count(ALERTS{alertname=\"TestLookupWatchdog\",alertstate=\"firing\"}) or vector(0)"
+    eval_time: 12m
+    exp_samples:
+    - labels: "{}"
+      value: 1
+- name: "all replicas of a declared role down cross the grace then recover"
+  interval: 30s
+  input_series:
+  - series: "testlookup:telemetry_expected_role{cluster=\"fixture-a\",namespace=\"tenant-a\",telemetry_profile=\"kubernetes\",job=\"testlookup-backend\",telemetry_role=\"backend\"}"
+    values: "1x50"
+  - series: "up{cluster=\"fixture-a\",namespace=\"tenant-a\",telemetry_profile=\"kubernetes\",job=\"testlookup-backend\",telemetry_role=\"backend\",instance=\"api-a\"}"
+    values: "0x10 1x30"
+  - series: "up{cluster=\"fixture-a\",namespace=\"tenant-a\",telemetry_profile=\"kubernetes\",job=\"testlookup-backend\",telemetry_role=\"backend\",instance=\"api-b\"}"
+    values: "0x10 1x30"
+  promql_expr_test:
+  - expr: "count(ALERTS{alertname=\"TestLookupExpectedRoleUnavailable\",alertstate=\"firing\"}) or vector(0)"
+    eval_time: 4m30s
+    exp_samples:
+    - labels: "{}"
+      value: 0
+  - expr: "count(ALERTS{alertname=\"TestLookupExpectedRoleUnavailable\",alertstate=\"firing\"}) or vector(0)"
+    eval_time: 5m
+    exp_samples:
+    - labels: "{}"
+      value: 1
+  - expr: "count(ALERTS{alertname=\"TestLookupExpectedRoleUnavailable\",alertstate=\"firing\"}) or vector(0)"
+    eval_time: 5m30s
+    exp_samples:
+    - labels: "{}"
+      value: 0
+- name: "discovery deletion is detected after stale markers and recovers"
+  interval: 30s
+  input_series:
+  - series: "testlookup:telemetry_expected_role{cluster=\"fixture-a\",namespace=\"tenant-a\",telemetry_profile=\"kubernetes\",job=\"testlookup-backend\",telemetry_role=\"backend\"}"
+    values: "1x50"
+  - series: "up{cluster=\"fixture-a\",namespace=\"tenant-a\",telemetry_profile=\"kubernetes\",job=\"testlookup-backend\",telemetry_role=\"backend\",instance=\"api-a\"}"
+    values: "1x4 stale _x10 1x20"
+  promql_expr_test:
+  - expr: "count(ALERTS{alertname=\"TestLookupExpectedRoleUnavailable\",alertstate=\"firing\"}) or vector(0)"
+    eval_time: 7m
+    exp_samples:
+    - labels: "{}"
+      value: 0
+  - expr: "count(ALERTS{alertname=\"TestLookupExpectedRoleUnavailable\",alertstate=\"firing\"}) or vector(0)"
+    eval_time: 7m30s
+    exp_samples:
+    - labels: "{}"
+      value: 1
+  - expr: "count(ALERTS{alertname=\"TestLookupExpectedRoleUnavailable\",alertstate=\"firing\"}) or vector(0)"
+    eval_time: 8m
+    exp_samples:
+    - labels: "{}"
+      value: 0
+- name: "a healthy rolling replica prevents a role-loss alert"
+  interval: 30s
+  input_series:
+  - series: "testlookup:telemetry_expected_role{cluster=\"fixture-a\",namespace=\"tenant-a\",telemetry_profile=\"kubernetes\",job=\"testlookup-backend\",telemetry_role=\"backend\"}"
+    values: "1x50"
+  - series: "up{cluster=\"fixture-a\",namespace=\"tenant-a\",telemetry_profile=\"kubernetes\",job=\"testlookup-backend\",telemetry_role=\"backend\",instance=\"api-a\"}"
+    values: "1x4 stale"
+  - series: "up{cluster=\"fixture-a\",namespace=\"tenant-a\",telemetry_profile=\"kubernetes\",job=\"testlookup-backend\",telemetry_role=\"backend\",instance=\"api-replacement\"}"
+    values: "_x3 1x40"
+  promql_expr_test:
+  - expr: "count(ALERTS{alertname=\"TestLookupExpectedRoleUnavailable\",alertstate=\"firing\"}) or vector(0)"
+    eval_time: 5m
+    exp_samples:
+    - labels: "{}"
+      value: 0
+  - expr: "count(ALERTS{alertname=\"TestLookupExpectedRoleUnavailable\",alertstate=\"firing\"}) or vector(0)"
+    eval_time: 12m
+    exp_samples:
+    - labels: "{}"
+      value: 0
+- name: "another namespace cluster or worker role cannot satisfy a missing role"
+  interval: 30s
+  input_series:
+  - series: "testlookup:telemetry_expected_role{cluster=\"fixture-a\",namespace=\"tenant-a\",telemetry_profile=\"kubernetes\",job=\"testlookup-worker\",telemetry_role=\"worker-children\"}"
+    values: "1x50"
+  - series: "up{cluster=\"fixture-a\",namespace=\"tenant-b\",telemetry_profile=\"kubernetes\",job=\"testlookup-worker\",telemetry_role=\"worker-children\",instance=\"other-namespace\"}"
+    values: "1x50"
+  - series: "up{cluster=\"fixture-b\",namespace=\"tenant-a\",telemetry_profile=\"kubernetes\",job=\"testlookup-worker\",telemetry_role=\"worker-children\",instance=\"other-cluster\"}"
+    values: "1x50"
+  - series: "up{cluster=\"fixture-a\",namespace=\"tenant-a\",telemetry_profile=\"kubernetes\",job=\"testlookup-worker\",telemetry_role=\"worker-default\",instance=\"other-role\"}"
+    values: "1x50"
+  promql_expr_test:
+  - expr: "count by (cluster,namespace,telemetry_role) (ALERTS{alertname=\"TestLookupExpectedRoleUnavailable\",alertstate=\"firing\"})"
+    eval_time: 5m
+    exp_samples:
+    - labels: "{cluster=\"fixture-a\",namespace=\"tenant-a\",telemetry_role=\"worker-children\"}"
+      value: 1
+- name: "quiet healthy zero series and omitted optional roles are valid"
+  interval: 30s
+  input_series:
+  - series: "testlookup:telemetry_expected_role{cluster=\"fixture-a\",namespace=\"tenant-a\",telemetry_profile=\"kubernetes\",job=\"testlookup-backend\",telemetry_role=\"backend\"}"
+    values: "1x50"
+  - series: "up{cluster=\"fixture-a\",namespace=\"tenant-a\",telemetry_profile=\"kubernetes\",job=\"testlookup-backend\",telemetry_role=\"backend\",instance=\"api-a\"}"
+    values: "1x50"
+  - series: "testlookup_metric_collection_success{cluster=\"fixture-a\",namespace=\"tenant-a\",telemetry_profile=\"kubernetes\",job=\"testlookup-backend\",telemetry_role=\"backend\",instance=\"api-a\",collector=\"queues\"}"
+    values: "1x50"
+  - series: "testlookup_metric_collection_last_success_timestamp_seconds{cluster=\"fixture-a\",namespace=\"tenant-a\",telemetry_profile=\"kubernetes\",job=\"testlookup-backend\",telemetry_role=\"backend\",instance=\"api-a\",collector=\"queues\"}"
+    values: "0+30x50"
+  - series: "testlookup_metric_collection_success{cluster=\"fixture-a\",namespace=\"tenant-a\",telemetry_profile=\"kubernetes\",job=\"testlookup-backend\",telemetry_role=\"backend\",instance=\"api-a\",collector=\"agents\"}"
+    values: "1x50"
+  - series: "testlookup_metric_collection_last_success_timestamp_seconds{cluster=\"fixture-a\",namespace=\"tenant-a\",telemetry_profile=\"kubernetes\",job=\"testlookup-backend\",telemetry_role=\"backend\",instance=\"api-a\",collector=\"agents\"}"
+    values: "0+30x50"
+  - series: "testlookup_metric_collection_success{cluster=\"fixture-a\",namespace=\"tenant-a\",telemetry_profile=\"kubernetes\",job=\"testlookup-backend\",telemetry_role=\"backend\",instance=\"api-a\",collector=\"downstream\"}"
+    values: "1x50"
+  - series: "testlookup_metric_collection_last_success_timestamp_seconds{cluster=\"fixture-a\",namespace=\"tenant-a\",telemetry_profile=\"kubernetes\",job=\"testlookup-backend\",telemetry_role=\"backend\",instance=\"api-a\",collector=\"downstream\"}"
+    values: "0+30x50"
+  - series: "testlookup_metric_collection_success{cluster=\"fixture-a\",namespace=\"tenant-a\",telemetry_profile=\"kubernetes\",job=\"testlookup-backend\",telemetry_role=\"backend\",instance=\"api-a\",collector=\"redis\"}"
+    values: "1x50"
+  - series: "testlookup_metric_collection_last_success_timestamp_seconds{cluster=\"fixture-a\",namespace=\"tenant-a\",telemetry_profile=\"kubernetes\",job=\"testlookup-backend\",telemetry_role=\"backend\",instance=\"api-a\",collector=\"redis\"}"
+    values: "0+30x50"
+  - series: "testlookup_finalize_step_failures_total{cluster=\"fixture-a\",namespace=\"tenant-a\",telemetry_profile=\"kubernetes\",job=\"testlookup-backend\",telemetry_role=\"backend\",instance=\"api-a\",step=\"suite_sync\"}"
+    values: "0x50"
+  promql_expr_test:
+  - expr: "count(ALERTS{alertname=\"TestLookupExpectedRoleUnavailable\",alertstate=\"firing\"}) or vector(0)"
+    eval_time: 10m
+    exp_samples:
+    - labels: "{}"
+      value: 0
+  - expr: "count(ALERTS{alertname=\"TestLookupRequiredTelemetryMissing\",alertstate=\"firing\"}) or vector(0)"
+    eval_time: 10m
+    exp_samples:
+    - labels: "{}"
+      value: 0
+  - expr: "count(ALERTS{alertname=\"TestLookupTelemetryContractMissing\",alertstate=\"firing\"}) or vector(0)"
+    eval_time: 10m
+    exp_samples:
+    - labels: "{}"
+      value: 0
+  - expr: "count(ALERTS{alertname=\"TestLookupAlertmanagerDown\",alertstate=\"firing\"}) or vector(0)"
+    eval_time: 10m
+    exp_samples:
+    - labels: "{}"
+      value: 0
+  - expr: "count(ALERTS{alertname=\"TestLookupAlertmanagerNotificationsFailing\",alertstate=\"firing\"}) or vector(0)"
+    eval_time: 10m
+    exp_samples:
+    - labels: "{}"
+      value: 0
+  - expr: "count(ALERTS{alertname=\"TestLookupAlertmanagerConfigReloadFailed\",alertstate=\"firing\"}) or vector(0)"
+    eval_time: 10m
+    exp_samples:
+    - labels: "{}"
+      value: 0
+- name: "healthy replica cannot mask another target missing required collector or registry series"
+  interval: 30s
+  input_series:
+  - series: "testlookup:telemetry_expected_role{cluster=\"fixture-a\",namespace=\"tenant-a\",telemetry_profile=\"kubernetes\",job=\"testlookup-backend\",telemetry_role=\"backend\"}"
+    values: "1x50"
+  - series: "up{cluster=\"fixture-a\",namespace=\"tenant-a\",telemetry_profile=\"kubernetes\",job=\"testlookup-backend\",telemetry_role=\"backend\",instance=\"api-a\"}"
+    values: "1x50"
+  - series: "testlookup_metric_collection_success{cluster=\"fixture-a\",namespace=\"tenant-a\",telemetry_profile=\"kubernetes\",job=\"testlookup-backend\",telemetry_role=\"backend\",instance=\"api-a\",collector=\"queues\"}"
+    values: "1x50"
+  - series: "testlookup_metric_collection_last_success_timestamp_seconds{cluster=\"fixture-a\",namespace=\"tenant-a\",telemetry_profile=\"kubernetes\",job=\"testlookup-backend\",telemetry_role=\"backend\",instance=\"api-a\",collector=\"queues\"}"
+    values: "0+30x50"
+  - series: "testlookup_metric_collection_success{cluster=\"fixture-a\",namespace=\"tenant-a\",telemetry_profile=\"kubernetes\",job=\"testlookup-backend\",telemetry_role=\"backend\",instance=\"api-a\",collector=\"agents\"}"
+    values: "1x50"
+  - series: "testlookup_metric_collection_last_success_timestamp_seconds{cluster=\"fixture-a\",namespace=\"tenant-a\",telemetry_profile=\"kubernetes\",job=\"testlookup-backend\",telemetry_role=\"backend\",instance=\"api-a\",collector=\"agents\"}"
+    values: "0+30x50"
+  - series: "testlookup_metric_collection_success{cluster=\"fixture-a\",namespace=\"tenant-a\",telemetry_profile=\"kubernetes\",job=\"testlookup-backend\",telemetry_role=\"backend\",instance=\"api-a\",collector=\"downstream\"}"
+    values: "1x50"
+  - series: "testlookup_metric_collection_last_success_timestamp_seconds{cluster=\"fixture-a\",namespace=\"tenant-a\",telemetry_profile=\"kubernetes\",job=\"testlookup-backend\",telemetry_role=\"backend\",instance=\"api-a\",collector=\"downstream\"}"
+    values: "0+30x50"
+  - series: "testlookup_metric_collection_success{cluster=\"fixture-a\",namespace=\"tenant-a\",telemetry_profile=\"kubernetes\",job=\"testlookup-backend\",telemetry_role=\"backend\",instance=\"api-a\",collector=\"redis\"}"
+    values: "1x50"
+  - series: "testlookup_metric_collection_last_success_timestamp_seconds{cluster=\"fixture-a\",namespace=\"tenant-a\",telemetry_profile=\"kubernetes\",job=\"testlookup-backend\",telemetry_role=\"backend\",instance=\"api-a\",collector=\"redis\"}"
+    values: "0+30x50"
+  - series: "testlookup_finalize_step_failures_total{cluster=\"fixture-a\",namespace=\"tenant-a\",telemetry_profile=\"kubernetes\",job=\"testlookup-backend\",telemetry_role=\"backend\",instance=\"api-a\",step=\"suite_sync\"}"
+    values: "0x50"
+  - series: "up{cluster=\"fixture-a\",namespace=\"tenant-a\",telemetry_profile=\"kubernetes\",job=\"testlookup-backend\",telemetry_role=\"backend\",instance=\"api-b\"}"
+    values: "1x50"
+  - series: "testlookup_metric_collection_success{cluster=\"fixture-a\",namespace=\"tenant-a\",telemetry_profile=\"kubernetes\",job=\"testlookup-backend\",telemetry_role=\"backend\",instance=\"api-b\",collector=\"queues\"}"
+    values: "1x50"
+  - series: "testlookup_metric_collection_success{cluster=\"fixture-a\",namespace=\"tenant-a\",telemetry_profile=\"kubernetes\",job=\"testlookup-backend\",telemetry_role=\"backend\",instance=\"api-b\",collector=\"agents\"}"
+    values: "1x50"
+  - series: "testlookup_metric_collection_last_success_timestamp_seconds{cluster=\"fixture-a\",namespace=\"tenant-a\",telemetry_profile=\"kubernetes\",job=\"testlookup-backend\",telemetry_role=\"backend\",instance=\"api-b\",collector=\"agents\"}"
+    values: "0+30x50"
+  - series: "testlookup_metric_collection_success{cluster=\"fixture-a\",namespace=\"tenant-a\",telemetry_profile=\"kubernetes\",job=\"testlookup-backend\",telemetry_role=\"backend\",instance=\"api-b\",collector=\"downstream\"}"
+    values: "1x50"
+  - series: "testlookup_metric_collection_last_success_timestamp_seconds{cluster=\"fixture-a\",namespace=\"tenant-a\",telemetry_profile=\"kubernetes\",job=\"testlookup-backend\",telemetry_role=\"backend\",instance=\"api-b\",collector=\"downstream\"}"
+    values: "0+30x50"
+  - series: "testlookup_metric_collection_last_success_timestamp_seconds{cluster=\"fixture-a\",namespace=\"tenant-a\",telemetry_profile=\"kubernetes\",job=\"testlookup-backend\",telemetry_role=\"backend\",instance=\"api-b\",collector=\"redis\"}"
+    values: "0+30x50"
+  promql_expr_test:
+  - expr: "count(ALERTS{alertname=\"TestLookupRequiredTelemetryMissing\",alertstate=\"firing\"}) or vector(0)"
+    eval_time: 4m30s
+    exp_samples:
+    - labels: "{}"
+      value: 0
+  - expr: "count by (instance,collector,signal) (ALERTS{alertname=\"TestLookupRequiredTelemetryMissing\",alertstate=\"firing\"})"
+    eval_time: 5m
+    exp_samples:
+    - labels: "{instance=\"api-b\",collector=\"redis\",signal=\"collection_success\"}"
+      value: 1
+    - labels: "{instance=\"api-b\",collector=\"queues\",signal=\"collection_last_success\"}"
+      value: 1
+    - labels: "{instance=\"api-b\",signal=\"metric_registry\"}"
+      value: 1
+- name: "required series recover independently and a down target is not reported as missing telemetry"
+  interval: 30s
+  input_series:
+  - series: "testlookup:telemetry_expected_role{cluster=\"fixture-a\",namespace=\"tenant-a\",telemetry_profile=\"kubernetes\",job=\"testlookup-backend\",telemetry_role=\"backend\"}"
+    values: "1x50"
+  - series: "up{cluster=\"fixture-a\",namespace=\"tenant-a\",telemetry_profile=\"kubernetes\",job=\"testlookup-backend\",telemetry_role=\"backend\",instance=\"api-a\"}"
+    values: "1x50"
+  - series: "testlookup_metric_collection_success{cluster=\"fixture-a\",namespace=\"tenant-a\",telemetry_profile=\"kubernetes\",job=\"testlookup-backend\",telemetry_role=\"backend\",instance=\"api-a\",collector=\"queues\"}"
+    values: "1x50"
+  - series: "testlookup_metric_collection_last_success_timestamp_seconds{cluster=\"fixture-a\",namespace=\"tenant-a\",telemetry_profile=\"kubernetes\",job=\"testlookup-backend\",telemetry_role=\"backend\",instance=\"api-a\",collector=\"queues\"}"
+    values: "0+30x50"
+  - series: "testlookup_metric_collection_success{cluster=\"fixture-a\",namespace=\"tenant-a\",telemetry_profile=\"kubernetes\",job=\"testlookup-backend\",telemetry_role=\"backend\",instance=\"api-a\",collector=\"agents\"}"
+    values: "1x50"
+  - series: "testlookup_metric_collection_last_success_timestamp_seconds{cluster=\"fixture-a\",namespace=\"tenant-a\",telemetry_profile=\"kubernetes\",job=\"testlookup-backend\",telemetry_role=\"backend\",instance=\"api-a\",collector=\"agents\"}"
+    values: "0+30x50"
+  - series: "testlookup_metric_collection_success{cluster=\"fixture-a\",namespace=\"tenant-a\",telemetry_profile=\"kubernetes\",job=\"testlookup-backend\",telemetry_role=\"backend\",instance=\"api-a\",collector=\"downstream\"}"
+    values: "1x50"
+  - series: "testlookup_metric_collection_last_success_timestamp_seconds{cluster=\"fixture-a\",namespace=\"tenant-a\",telemetry_profile=\"kubernetes\",job=\"testlookup-backend\",telemetry_role=\"backend\",instance=\"api-a\",collector=\"downstream\"}"
+    values: "0+30x50"
+  - series: "testlookup_metric_collection_last_success_timestamp_seconds{cluster=\"fixture-a\",namespace=\"tenant-a\",telemetry_profile=\"kubernetes\",job=\"testlookup-backend\",telemetry_role=\"backend\",instance=\"api-a\",collector=\"redis\"}"
+    values: "0+30x50"
+  - series: "testlookup_finalize_step_failures_total{cluster=\"fixture-a\",namespace=\"tenant-a\",telemetry_profile=\"kubernetes\",job=\"testlookup-backend\",telemetry_role=\"backend\",instance=\"api-a\",step=\"suite_sync\"}"
+    values: "0x50"
+  - series: "testlookup_metric_collection_success{cluster=\"fixture-a\",namespace=\"tenant-a\",telemetry_profile=\"kubernetes\",job=\"testlookup-backend\",telemetry_role=\"backend\",instance=\"api-a\",collector=\"redis\"}"
+    values: "_x12 1x30"
+  - series: "up{cluster=\"fixture-a\",namespace=\"tenant-a\",telemetry_profile=\"kubernetes\",job=\"testlookup-backend\",telemetry_role=\"backend\",instance=\"api-down\"}"
+    values: "0x50"
+  promql_expr_test:
+  - expr: "count(ALERTS{alertname=\"TestLookupRequiredTelemetryMissing\",alertstate=\"firing\"}) or vector(0)"
+    eval_time: 5m
+    exp_samples:
+    - labels: "{}"
+      value: 1
+  - expr: "count(ALERTS{alertname=\"TestLookupRequiredTelemetryMissing\",alertstate=\"firing\"}) or vector(0)"
+    eval_time: 6m30s
+    exp_samples:
+    - labels: "{}"
+      value: 0
+- name: "worker core registry is required without demanding lazy task histograms"
+  interval: 30s
+  input_series:
+  - series: "testlookup:telemetry_expected_role{cluster=\"fixture-a\",namespace=\"tenant-a\",telemetry_profile=\"kubernetes\",job=\"testlookup-worker\",telemetry_role=\"worker-default\"}"
+    values: "1x50"
+  - series: "up{cluster=\"fixture-a\",namespace=\"tenant-a\",telemetry_profile=\"kubernetes\",job=\"testlookup-worker\",telemetry_role=\"worker-default\",instance=\"worker-a\"}"
+    values: "1x50"
+  - series: "testlookup_finalize_step_failures_total{cluster=\"fixture-a\",namespace=\"tenant-a\",telemetry_profile=\"kubernetes\",job=\"testlookup-worker\",telemetry_role=\"worker-default\",instance=\"worker-a\",step=\"suite_sync\"}"
+    values: "_x12 0x30"
+  promql_expr_test:
+  - expr: "count by (signal) (ALERTS{alertname=\"TestLookupRequiredTelemetryMissing\",alertstate=\"firing\"})"
+    eval_time: 5m
+    exp_samples:
+    - labels: "{signal=\"metric_registry\"}"
+      value: 1
+  - expr: "count(ALERTS{alertname=\"TestLookupRequiredTelemetryMissing\",alertstate=\"firing\"}) or vector(0)"
+    eval_time: 6m30s
+    exp_samples:
+    - labels: "{}"
+      value: 0
+- name: "configured optional Alertmanager scrape failure holds for two minutes"
+  interval: 30s
+  input_series:
+  - series: "up{job=\"alertmanager\",instance=\"alertmanager:9093\",telemetry_profile=\"compose\",telemetry_role=\"alertmanager\"}"
+    values: "0x4 1x30"
+  promql_expr_test:
+  - expr: "count(ALERTS{alertname=\"TestLookupAlertmanagerDown\",alertstate=\"firing\"}) or vector(0)"
+    eval_time: 1m30s
+    exp_samples:
+    - labels: "{}"
+      value: 0
+  - expr: "count(ALERTS{alertname=\"TestLookupAlertmanagerDown\",alertstate=\"firing\"}) or vector(0)"
+    eval_time: 2m
+    exp_samples:
+    - labels: "{}"
+      value: 1
+  - expr: "count(ALERTS{alertname=\"TestLookupAlertmanagerDown\",alertstate=\"firing\"}) or vector(0)"
+    eval_time: 2m30s
+    exp_samples:
+    - labels: "{}"
+      value: 0
+- name: "Alertmanager notification and configuration failures fire and recover"
+  interval: 30s
+  input_series:
+  - series: "alertmanager_notifications_failed_total{job=\"alertmanager\",instance=\"alertmanager:9093\",telemetry_profile=\"compose\",telemetry_role=\"alertmanager\",receiver=\"fixture-receiver\",integration=\"webhook\"}"
+    values: "0+1x10 10x30"
+  - series: "alertmanager_config_last_reload_successful{job=\"alertmanager\",instance=\"alertmanager:9093\",telemetry_profile=\"compose\",telemetry_role=\"alertmanager\"}"
+    values: "0x4 1x30"
+  promql_expr_test:
+  - expr: "count(ALERTS{alertname=\"TestLookupAlertmanagerNotificationsFailing\",alertstate=\"firing\"}) or vector(0)"
+    eval_time: 2m
+    exp_samples:
+    - labels: "{}"
+      value: 1
+  - expr: "count(ALERTS{alertname=\"TestLookupAlertmanagerNotificationsFailing\",alertstate=\"firing\"}) or vector(0)"
+    eval_time: 11m
+    exp_samples:
+    - labels: "{}"
+      value: 0
+  - expr: "count(ALERTS{alertname=\"TestLookupAlertmanagerConfigReloadFailed\",alertstate=\"firing\"}) or vector(0)"
+    eval_time: 30s
+    exp_samples:
+    - labels: "{}"
+      value: 0
+  - expr: "count(ALERTS{alertname=\"TestLookupAlertmanagerConfigReloadFailed\",alertstate=\"firing\"}) or vector(0)"
+    eval_time: 1m
+    exp_samples:
+    - labels: "{}"
+      value: 1
+  - expr: "count(ALERTS{alertname=\"TestLookupAlertmanagerConfigReloadFailed\",alertstate=\"firing\"}) or vector(0)"
+    eval_time: 2m30s
+    exp_samples:
+    - labels: "{}"
+      value: 0

@@ -79,11 +79,19 @@ def test_exact_sha_verifier_is_a_reusable_workflow_with_a_required_input():
 
 
 def test_exact_sha_verifier_queries_ci_for_the_requested_sha():
-    text = VERIFIER.read_text(encoding="utf-8")
-    assert "inputs.source_sha" in text, "verifier must use the caller's source SHA"
-    assert "head_sha" in text, "verifier must match CI results by head_sha, not branch or tag name"
-    assert "success" in text, "verifier must require a successful CI conclusion"
-    assert "verified-images-${{ inputs.source_sha }}" in text, (
+    steps = _yaml(VERIFIER)["jobs"]["require"]["steps"]
+    verify = next(step for step in steps if step.get("id") == "verify")
+    assert verify["env"]["SOURCE_SHA"] == "${{ inputs.source_sha }}"
+    run = verify["run"]
+    assert '[[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]' in run
+    assert "'.head_sha'" in run and '== "$SOURCE_SHA"' in run, (
+        "verifier must match CI results by head_sha, not branch or tag name"
+    )
+    assert "'.conclusion'" in run and '== "success"' in run
+    assert "'.event'" in run and '== "push"' in run
+    assert "'.head_branch'" in run and '== "main"' in run
+    assert "'.path'" in run and '== ".github/workflows/ci.yml"' in run
+    assert 'artifact_name="verified-images-$SOURCE_SHA"' in run, (
         "verified artifact name must be bound to the verified SHA"
     )
 
@@ -225,14 +233,30 @@ def test_main_image_manifest_resolves_version_file_before_publishing_images():
 
 
 def test_dev_migration_and_backend_rollout_use_the_same_immutable_digest():
-    text = CI.read_text(encoding="utf-8")
+    steps = _yaml(CI)["jobs"]["deploy-dev"]["steps"]
+    step_by_name = {step.get("name"): step for step in steps}
+    names = [step.get("name") for step in steps]
+    pin = step_by_name["Pin the verified image digests in kustomization"]
+    migrate = step_by_name["Migrate, then apply manifests"]["run"]
+    verify = step_by_name["Verify all application roles and running digests"]["run"]
     backend_ref = (
         "${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/backend@"
         "${{ needs.build-images.outputs.backend_digest }}"
     )
-    assert text.count(backend_ref) == 2
-    assert f"testlookup/backend={backend_ref}" in text
-    assert "run-k8s-migrations.sh testlookup-dev" in text
+    assert pin["env"]["BACKEND_DIGEST"] == "${{ needs.build-images.outputs.backend_digest }}"
+    assert (
+        "ghcr.io/test-intelligence/testlookup/backend="
+        "$REGISTRY/$IMAGE_PREFIX/backend@$BACKEND_DIGEST"
+    ) in pin["run"]
+    assert 'release_manifest.py validate --manifest verified-images/release-manifest.json --expected-source-sha "$GITHUB_SHA"' in pin["run"]
+    assert 'expected = f"{root}/{component}@{os.environ[component.upper() + \'_DIGEST\']}"' in pin["run"]
+    assert 'manifest["images"][component]["source_ref"] != expected' in pin["run"]
+    assert backend_ref in migrate
+    assert "run-k8s-migrations.sh testlookup-dev" in migrate
+    assert "verify_kubernetes_rollout.py" in verify
+    assert '--manifest verified-images/release-manifest.json --source-sha "$GITHUB_SHA"' in verify
+    assert names.index("Pin the verified image digests in kustomization") < names.index("Migrate, then apply manifests")
+    assert names.index("Migrate, then apply manifests") < names.index("Verify all application roles and running digests")
 
 
 def test_deploy_helper_preserves_the_complete_kustomize_resource_tree():

@@ -20,7 +20,7 @@ that view would receive. The view is checked for THIS caller in THIS
 project with the subscription rule: another project's view, a teammate's
 private view and a layout row all answer the same 422.
 
-Source: [backend/app/routers/digests.py:317](../../../backend/app/routers/digests.py#L317).
+Source: [backend/app/routers/digests.py:323](../../../backend/app/routers/digests.py#L323).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -310,7 +310,7 @@ Delete Subscription
 
 Delete (unsubscribe from) a digest subscription.
 
-Source: [backend/app/routers/digests.py:250](../../../backend/app/routers/digests.py#L250).
+Source: [backend/app/routers/digests.py:253](../../../backend/app/routers/digests.py#L253).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -574,7 +574,7 @@ Pause Subscription
 
 Pause digest delivery without deleting.
 
-Source: [backend/app/routers/digests.py:271](../../../backend/app/routers/digests.py#L271).
+Source: [backend/app/routers/digests.py:274](../../../backend/app/routers/digests.py#L274).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -661,7 +661,7 @@ Resume Subscription
 
 Resume a paused subscription.
 
-Source: [backend/app/routers/digests.py:293](../../../backend/app/routers/digests.py#L293).
+Source: [backend/app/routers/digests.py:296](../../../backend/app/routers/digests.py#L296).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 

@@ -1,0 +1,84 @@
+# Actual production expression, using the livemax sample emitted by each target.
+# The runtime multiprocess test proves the sample stays 1 for one saturated
+# child even when a sibling is idle (aggregate checked_out/capacity is 0.5).
+rule_files:
+- ../prometheus-rules/testlookup-alerts.yml
+evaluation_interval: 30s
+tests:
+- name: one exhausted API process fires after two minutes and recovers
+  interval: 30s
+  input_series:
+  - series: sqlalchemy_pool_utilization_ratio{cluster="lab",namespace="prod",job="testlookup-backend",instance="api-a",role="api"}
+    values: '0.5x1 1x5 0.5x4'
+  - series: sqlalchemy_pool_utilization_ratio{cluster="lab",namespace="prod",job="testlookup-backend",instance="api-b",role="api"}
+    values: '0x12'
+  - series: sqlalchemy_pool_checked_out{cluster="lab",namespace="prod",job="testlookup-backend",instance="api-a",role="api"}
+    values: '2x12'
+  - series: sqlalchemy_pool_capacity{cluster="lab",namespace="prod",job="testlookup-backend",instance="api-a",role="api"}
+    values: '4x12'
+  alert_rule_test:
+  - eval_time: 2m30s
+    alertname: TestLookupDBPoolExhausted
+    exp_alerts: []
+  - eval_time: 3m
+    alertname: TestLookupDBPoolExhausted
+    exp_alerts:
+    - exp_labels:
+        cluster: lab
+        namespace: prod
+        job: testlookup-backend
+        instance: api-a
+        role: api
+        severity: critical
+      exp_annotations:
+        summary: A database connection pool is > 90% utilized
+        description: At least one api process has used over 90% of its PostgreSQL pool capacity, including configured overflow. Investigate held connections and slow transactions; check the fleet connection budget before increasing pool limits.
+  - eval_time: 4m
+    alertname: TestLookupDBPoolExhausted
+    exp_alerts: []
+- name: worker exporter pressure is included alongside API pressure
+  interval: 30s
+  input_series:
+  - series: sqlalchemy_pool_utilization_ratio{cluster="lab",namespace="prod",job="testlookup-worker",instance="worker-children",role="worker"}
+    values: '1x8 0x3'
+  alert_rule_test:
+  - eval_time: 2m
+    alertname: TestLookupDBPoolExhausted
+    exp_alerts:
+    - exp_labels:
+        cluster: lab
+        namespace: prod
+        job: testlookup-worker
+        instance: worker-children
+        role: worker
+        severity: critical
+      exp_annotations:
+        summary: A database connection pool is > 90% utilized
+        description: At least one worker process has used over 90% of its PostgreSQL pool capacity, including configured overflow. Investigate held connections and slow transactions; check the fleet connection budget before increasing pool limits.
+  - eval_time: 4m30s
+    alertname: TestLookupDBPoolExhausted
+    exp_alerts: []
+- name: strict threshold, unbounded pools and unrelated jobs do not alert
+  interval: 30s
+  input_series:
+  - series: sqlalchemy_pool_utilization_ratio{job="testlookup-backend",instance="threshold",role="api"}
+    values: '0.9x12'
+  - series: sqlalchemy_pool_utilization_ratio{job="testlookup-backend",instance="unbounded",role="api"}
+    values: '0x12'
+  - series: sqlalchemy_pool_capacity{job="testlookup-backend",instance="unbounded",role="api"}
+    values: '0x12'
+  - series: sqlalchemy_pool_checked_out{job="testlookup-backend",instance="unbounded",role="api"}
+    values: '100x12'
+  - series: sqlalchemy_pool_utilization_ratio{job="other-api",instance="other",role="api"}
+    values: '1x12'
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: TestLookupDBPoolExhausted
+    exp_alerts: []
+- name: absent pool data does not falsely claim exhaustion
+  interval: 30s
+  input_series: []
+  alert_rule_test:
+  - eval_time: 5m
+    alertname: TestLookupDBPoolExhausted
+    exp_alerts: []

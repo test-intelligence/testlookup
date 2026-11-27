@@ -3483,6 +3483,7 @@ class AgentRunSummaryResponse(BaseModel):
 # ── Agent Workflow Timeline Schemas ─────────────────────────────────────────
 
 class PipelineTimelineEventResponse(BaseModel):
+    event_id: Optional[uuid.UUID] = None
     event_type: str
     stage_name: Optional[str] = None
     test_case_id: Optional[str] = None
@@ -3826,6 +3827,11 @@ class PipelineEventLogHealthResponse(BaseModel):
     dead_letter_count: int = 0
     dead_letter_limit: int = 0
     recent_dead_letters: List[Dict[str, Any]] = Field(default_factory=list)
+    backlog_count: int = 0
+    oldest_pending_age_seconds: float = 0
+    outbox_total_count: int = 0
+    capacity: int = 0
+    status_counts: Dict[str, int] = Field(default_factory=dict)
 
 
 # ── W15 AGT-01: the agent-action queue (enum-like fields are plain str; vocab in services/agent_action_types.py) ──
@@ -6285,6 +6291,10 @@ class UploadStatusResponse(BaseModel):
     progress: Optional[dict] = None
     result: Optional[dict] = None
     error: Optional[dict] = None
+    payload_state: Optional[Literal["reserved", "ready", "deleted"]] = None
+    accepted_at: Optional[datetime] = None
+    payload_ready_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
 
 
 class LiveSessionState(BaseModel):

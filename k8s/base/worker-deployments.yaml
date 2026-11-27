@@ -90,6 +90,9 @@ spec:
           image: ghcr.io/test-intelligence/testlookup/backend:v0.1.0
           imagePullPolicy: IfNotPresent
           command:
+            - python
+            - -m
+            - app.worker.worker_process
             - celery
             - -A
             - app.worker.celery_app
@@ -148,14 +151,15 @@ spec:
               cpu: 2000m
               memory: 2Gi
           livenessProbe:
-            # Liveness only proves the process is alive — a lightweight pgrep avoids
-            # the broker round-trip of `inspect ping`, which can exceed the timeout
-            # under load and kill a worker mid-task. Readiness keeps the ping check.
+            # Verify the current parent identity without a broker round trip.
+            # A shell-based pgrep can match its own probe command.
             exec:
               command:
-                - sh
-                - -c
-                - "pgrep -f 'celery.*worker' > /dev/null"
+                - python
+                - -m
+                - app.worker.worker_process
+                - probe
+                - --mode=alive
             initialDelaySeconds: 30
             periodSeconds: 60
             timeoutSeconds: 5
@@ -169,13 +173,15 @@ spec:
             # turns a busy worker into a deadlocked deploy: observed here, where
             # the new ReplicaSet never went Ready, the Deployment could not
             # scale the old one down, and an OOM-looping pod from the previous
-            # revision kept serving the queue. Liveness (pgrep, above) is still
+            # revision kept serving the queue. The local parent-identity liveness probe is still
             # what catches a dead worker.
             exec:
               command:
-                - test
-                - -f
-                - /tmp/celery-worker-ready
+                - python
+                - -m
+                - app.worker.worker_process
+                - probe
+                - --mode=ready
             initialDelaySeconds: 15
             periodSeconds: 30
             timeoutSeconds: 5
@@ -290,6 +296,9 @@ spec:
           image: ghcr.io/test-intelligence/testlookup/backend:v0.1.0
           imagePullPolicy: IfNotPresent
           command:
+            - python
+            - -m
+            - app.worker.worker_process
             - celery
             - -A
             - app.worker.celery_app
@@ -383,9 +392,11 @@ spec:
             # under load and kill a worker mid-task. Readiness keeps the ping check.
             exec:
               command:
-                - sh
-                - -c
-                - "pgrep -f 'celery.*worker' > /dev/null"
+                - python
+                - -m
+                - app.worker.worker_process
+                - probe
+                - --mode=alive
             initialDelaySeconds: 30
             periodSeconds: 60
             timeoutSeconds: 5
@@ -399,13 +410,15 @@ spec:
             # turns a busy worker into a deadlocked deploy: observed here, where
             # the new ReplicaSet never went Ready, the Deployment could not
             # scale the old one down, and an OOM-looping pod from the previous
-            # revision kept serving the queue. Liveness (pgrep, above) is still
+            # revision kept serving the queue. The local parent-identity liveness probe is still
             # what catches a dead worker.
             exec:
               command:
-                - test
-                - -f
-                - /tmp/celery-worker-ready
+                - python
+                - -m
+                - app.worker.worker_process
+                - probe
+                - --mode=ready
             initialDelaySeconds: 15
             periodSeconds: 30
             timeoutSeconds: 5
@@ -520,6 +533,9 @@ spec:
           image: ghcr.io/test-intelligence/testlookup/backend:v0.1.0
           imagePullPolicy: IfNotPresent
           command:
+            - python
+            - -m
+            - app.worker.worker_process
             - celery
             - -A
             - app.worker.celery_app
@@ -581,9 +597,11 @@ spec:
             # under load and kill a worker mid-task. Readiness keeps the ping check.
             exec:
               command:
-                - sh
-                - -c
-                - "pgrep -f 'celery.*worker' > /dev/null"
+                - python
+                - -m
+                - app.worker.worker_process
+                - probe
+                - --mode=alive
             initialDelaySeconds: 30
             periodSeconds: 60
             timeoutSeconds: 5
@@ -597,13 +615,15 @@ spec:
             # turns a busy worker into a deadlocked deploy: observed here, where
             # the new ReplicaSet never went Ready, the Deployment could not
             # scale the old one down, and an OOM-looping pod from the previous
-            # revision kept serving the queue. Liveness (pgrep, above) is still
+            # revision kept serving the queue. The local parent-identity liveness probe is still
             # what catches a dead worker.
             exec:
               command:
-                - test
-                - -f
-                - /tmp/celery-worker-ready
+                - python
+                - -m
+                - app.worker.worker_process
+                - probe
+                - --mode=ready
             initialDelaySeconds: 15
             periodSeconds: 30
             timeoutSeconds: 5
@@ -718,6 +738,9 @@ spec:
           image: ghcr.io/test-intelligence/testlookup/backend:v0.1.0
           imagePullPolicy: IfNotPresent
           command:
+            - python
+            - -m
+            - app.worker.worker_process
             - celery
             - -A
             - app.worker.celery_app
@@ -799,9 +822,11 @@ spec:
             # under load and kill a worker mid-task. Readiness keeps the ping check.
             exec:
               command:
-                - sh
-                - -c
-                - "pgrep -f 'celery.*worker' > /dev/null"
+                - python
+                - -m
+                - app.worker.worker_process
+                - probe
+                - --mode=alive
             initialDelaySeconds: 30
             periodSeconds: 60
             timeoutSeconds: 5
@@ -815,13 +840,15 @@ spec:
             # turns a busy worker into a deadlocked deploy: observed here, where
             # the new ReplicaSet never went Ready, the Deployment could not
             # scale the old one down, and an OOM-looping pod from the previous
-            # revision kept serving the queue. Liveness (pgrep, above) is still
+            # revision kept serving the queue. The local parent-identity liveness probe is still
             # what catches a dead worker.
             exec:
               command:
-                - test
-                - -f
-                - /tmp/celery-worker-ready
+                - python
+                - -m
+                - app.worker.worker_process
+                - probe
+                - --mode=ready
             initialDelaySeconds: 15
             periodSeconds: 30
             timeoutSeconds: 5

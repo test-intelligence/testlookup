@@ -1,0 +1,32 @@
+# The optional alerting profile makes Alertmanager required only when enabled.
+rule_files:
+  - ../prometheus-rules/testlookup-alerts.yml
+  - ../alertmanager/telemetry-contract.yml
+evaluation_interval: 30s
+tests:
+  - name: enabled alerting inventory survives deletion of its discovery job
+    interval: 30s
+    input_series:
+      - series: 'up{job="alertmanager",telemetry_profile="compose",telemetry_role="alertmanager",instance="alertmanager:9093"}'
+        values: '1x4 stale _x10 1x20'
+    promql_expr_test:
+      - expr: 'count(testlookup:telemetry_expected_role{telemetry_role="alertmanager"})'
+        eval_time: 1m
+        exp_samples:
+          - labels: '{}'
+            value: 1
+      - expr: 'count(ALERTS{alertname="TestLookupExpectedRoleUnavailable",telemetry_role="alertmanager",alertstate="firing"}) or vector(0)'
+        eval_time: 7m
+        exp_samples:
+          - labels: '{}'
+            value: 0
+      - expr: 'count(ALERTS{alertname="TestLookupExpectedRoleUnavailable",telemetry_role="alertmanager",alertstate="firing"}) or vector(0)'
+        eval_time: 7m30s
+        exp_samples:
+          - labels: '{}'
+            value: 1
+      - expr: 'count(ALERTS{alertname="TestLookupExpectedRoleUnavailable",telemetry_role="alertmanager",alertstate="firing"}) or vector(0)'
+        eval_time: 8m
+        exp_samples:
+          - labels: '{}'
+            value: 0

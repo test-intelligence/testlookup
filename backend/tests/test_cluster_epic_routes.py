@@ -26,7 +26,7 @@ from app.routers import defect_jira as route  # noqa: E402
 from app.services import cluster_epic_service as ces  # noqa: E402
 
 PROJECT = uuid.UUID("36a00000-0000-4000-8000-0000000000aa")
-KEY = "0123456789abcdef0123456789abcdef"
+KEY = "0123456789abcdef0123456789abcdef" # gitleaks:allow -- synthetic test credential, never production authority
 BASE = f"/api/v1/projects/{PROJECT}/systemic-clusters"
 
 
@@ -155,7 +155,7 @@ async def test_a_stored_epic_answers_200_created_false(calls):
     assert (call["jira_project_key"], call["summary"], call["confirm_not_filed"]) == (None, None, False)
 
 
-@pytest.mark.parametrize("bad", ["NOT-A-KEY", "0123456789ABCDEF0123456789ABCDEF", "0123456789abcdef"])
+@pytest.mark.parametrize("bad", ["NOT-A-KEY", "0123456789ABCDEF0123456789ABCDEF", "0123456789abcdef"]) # gitleaks:allow -- synthetic test credential, never production authority
 async def test_a_malformed_membership_key_is_refused_before_the_service(calls, bad):
     async with _client(_Session(), _user("ADMIN")) as client:
         post = await client.post(f"{BASE}/{bad}/epic", json={})

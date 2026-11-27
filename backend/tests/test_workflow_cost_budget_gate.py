@@ -187,6 +187,7 @@ async def test_partial_resume_preserves_original_budget_downgrade(monkeypatch):
         test_run_id=run_id,
         project_id=project_id,
         workflow_type="offline",
+        attempt=1,
         status="running",
         started_at=None,
         completed_at=None,
@@ -239,6 +240,9 @@ async def test_partial_resume_preserves_original_budget_downgrade(monkeypatch):
 
         async def execute(self, _statement):
             return next(self._results)
+
+        async def flush(self):
+            return None
 
     terminal_session = _Session(
         [_Result(), _Result(scalar=pipeline), _Result(scalars=stages), _Result()]

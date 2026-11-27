@@ -343,7 +343,7 @@ async def test_the_signing_keys_read_writes_nothing_and_creates_no_key(sqlite):
     assert not any(s.lstrip().upper().startswith(("INSERT", "UPDATE", "DELETE")) for s in sqlite.statements)
 
 
-@pytest.mark.parametrize("bad", ["k-XYZ", "k-0123456789abcde", "key_1", "k-0123456789ABCDEF"])
+@pytest.mark.parametrize("bad", ["k-XYZ", "k-0123456789abcde", "key_1", "k-0123456789ABCDEF"]) # gitleaks:allow -- synthetic test credential, never production authority
 async def test_a_pem_id_that_is_not_a_key_id_is_a_404_without_a_statement(sqlite, bad):
     async with _client(sqlite, _user(UserRole.VIEWER), []) as client:
         response = await client.get(f"/api/v1/compliance-packs/signing-keys/{bad}/pem")

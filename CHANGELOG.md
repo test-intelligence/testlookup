@@ -9,9 +9,26 @@ contain breaking changes; [UPGRADING.md](UPGRADING.md) lists them).
 
 ### Added
 
+- JSON and report uploads persist a PostgreSQL receipt before writing the queued payload or publishing a task. Clients can recover the same upload through `Idempotency-Key`, status polling, or an authorized retry of the retained receipt.
+- Delivery verification checks mounted rule inventories, targeted source security, rendered infrastructure and all Kubernetes application image identities. An optional disposable release gate verifies both worker roles, durable completion and correlated telemetry.
+- Optional API objectives report scoped availability, latency, error budgets and measurement coverage. Retained SQL cohorts expose downstream and AI completion, including missed deadlines, and a disposable benchmark measures telemetry capacity.
+- Pipeline events use a PostgreSQL outbox with stable IDs for MongoDB replay, shared delivery health, and project-scoped recovery. Audit archives support independent integrity verification, and an opt-in identity retention policy preserves SCIM authority events.
+- The durable telemetry profile adds queued OpenTelemetry export, persistent Loki logs and Jaeger traces, Grafana correlation, and queue loss alerts. Kubernetes client overlays support a site-operated mTLS gateway, and the offline Compose bundle can include the durable stack.
+- The optional Compose alerting overlay adds a private Alertmanager with authenticated HTTPS incident and watchdog receivers. Compose and Kubernetes monitoring inventories detect missing scrape roles and required metric series.
+- Operational metrics report SQLAlchemy pool pressure and acquisition timeouts for API and worker processes, plus Redis and Valkey memory for the application and broker. Optional Compose and Kubernetes profiles support file-backed authentication for API scrapes.
+- Operational metrics expose collector freshness and durable downstream-outbox failure/overdue state, including alerts that avoid counting the same SQL rows across API replicas.
+
 - Release verification: journey **TL-AUTH-003** (one account per browser profile, P1, disposable stack) checks the D-0019 fix on the live stack. In two tabs of one browser, a sign-in as a viewer moves the admin's tab onto the viewer with the note, a new tab opens as the viewer, and the viewer's sign-out signs the other tab out (`frontend/tests/release/session.spec.ts`, `e2e-runner/catalogue.yaml`).
 
 ### Changed
+
+- Operational metrics bound workflow stage, task and queue labels and remove per-project dimensions from case governance events. Detailed case and workflow state remains in the application. The durable Compose profile accepts an explicit API trace sampling ratio.
+- Weekly digest and nightly maintenance alerts follow durable delivery and execution state. They detect overdue work even when a worker never started the task or was replaced.
+- Celery queue depth reads all configured broker priority lists, including child work, and reports unknown counts when a list cannot be read.
+- Upload publication bounds Redis socket operations and uses a finite background pool. The CLI and browser preserve the receipt after ambiguous queue confirmation and poll the original upload.
+- Worker probes verify the running Celery parent's process identity. Startup clears readiness and stale multiprocess metrics before task imports, and graceful shutdown clears readiness as draining begins.
+- Trace exporters sanitize exception events and custom text as well as URL attributes. Browser error batches use UTF-8 byte limits; unexpected core API errors return a correlated request identifier. Worker task context and startup readiness markers are reset between executions.
+- Image publication and release authorization require trusted successful secret-scan evidence for the exact main commit. Main pushes scan the full tracked candidate tree as well as added history, so an unchanged secret from an earlier failed push still blocks publication. Webhook failure alerts detect failures at low traffic volumes.
 
 - Wording: the app, the in-app guide, the README and the user guide say "release" where they said "ship". Home's verdict banner reads "release cleared", "review before release" or "release blocked by unresolved failures"; Run intelligence reads "release cleared" or "release blocked"; the Releases page counts "Ready to release", says a GO release "is ready to release", and its "Shipping this week" panel is "Due this week". The escape rate counts defects filed after a release "went live". The README tagline is "Know why your software tests fail. Know when your release is ready." API fields keep their names (`ready_to_ship` is unchanged).
 - Releases: the "Offline bundle" workflow takes a release version (`gh workflow run offline-bundle.yml -f version=X.Y.Z`) and bundles the image digests that release promoted instead of rebuilding them, refusing if they are not CI's images of the tagged commit. Every bundle run also produces `SHA256SUMS` for `install.sh` and the files it downloads.

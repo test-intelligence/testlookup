@@ -75,6 +75,7 @@ Two more production-only behaviours:
 | `RATE_LIMIT_SHARED_STORAGE` | `auto` / `on` / `off` | `auto` | Where rate-limit counters live. `auto`: Redis (`REDIS_URL`) when `APP_ENV` is production or staging, so a limit holds across workers and pods; process memory in development. While Redis is unreachable the counters fall back to per-process memory. `off` keeps per-process counters everywhere. |
 | `LOGIN_ATTEMPTS_PER_USERNAME_PER_MINUTE` | int | `20` | Sign-in attempts accepted per typed account name per minute on `/api/v1/auth/login`, from any address; over it the answer is 429 with `Retry-After`. `0` turns it off. Development uses at least 200. |
 | `METRICS_TOKEN` | str | empty | When set, `/metrics` answers only a request with `Authorization: Bearer <token>` (401 otherwise). Empty leaves `/metrics` open, as before; keep it off the public network either way. |
+| `METRICS_TOKEN_FILE` | str | empty | Path to a mounted file containing one bearer token. Takes precedence over `METRICS_TOKEN`. An absent, unreadable or invalid configured file stops API startup when metrics are enabled. API processes read the file at startup. |
 | `API_DOCS_ENABLED` | bool | `true` | `false` turns off `/api-docs`, `/api-docs/redoc` and `/api-docs/openapi.json` (404). |
 | `HTTP_VERIFY_TLS` | bool | `true` | Certificate verification for outbound HTTPS from the shared HTTP client (Jira, Slack, Teams, GitHub, GitLab, webhooks, hosted LLM endpoints, knowledge connectors). `false` disables verification and logs a warning; only for isolated labs. Prefer `HTTP_CA_BUNDLE`. |
 | `HTTP_CA_BUNDLE` | str (optional) | unset | Path to a PEM bundle of extra trusted roots (corporate CA, TLS-intercepting proxy). Verification stays strict. Takes precedence over `HTTP_VERIFY_TLS`. See [Corporate CA and TLS interception](integrations.md#corporate-ca-and-tls-interception). |
@@ -433,9 +434,17 @@ Setup steps for each integration are in [Integrations](integrations.md). Values 
 
 | Setting | Type | Default | Description |
 |---|---|---|---|
-| `OTEL_ENABLED` | bool | `true` | OpenTelemetry tracing for the API. |
+| `OTEL_ENABLED` | bool | `true` | OpenTelemetry tracing switch. Worker and standalone Beat tracing also require an OTLP endpoint. |
+| `OBSERVABILITY_INSTALLATION` | str | empty | Stable installation identifier for opt-in journey indicators and [proposed API objectives](api-objectives.md). Use 1–63 ASCII letters, digits, dots, underscores or hyphens, beginning with a letter or digit. Choose a non-sensitive deployment name. |
 | `OTEL_SERVICE_NAME` | str | `testlookup` | Service name on spans. |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | str (optional) | unset | OTLP/HTTP collector, for example `http://otel-collector:4318`. Unset: spans go to stdout in development only; elsewhere nothing is exported and one warning is logged. |
+| `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` | str | unset | Full OTLP/HTTP URL ending in `/v1/logs` for selected API or worker events. Use HTTPS outside the private Compose or loopback hop. |
+| `OTEL_LOGS_ROLE` | literal | `api` | Use `worker` or `worker-children` for task outcomes. See the [durable telemetry contract](durable-telemetry.md). |
+| `TESTLOOKUP_OTLP_LOGS_ENDPOINT` | str | unset | Full OTLP/HTTP `/v1/logs` URL for selected MCP HTTP and tool events. |
+| `TESTLOOKUP_OTLP_TRACES_ENDPOINT` | str | unset | Full OTLP/HTTP `/v1/traces` URL for MCP tool spans. |
+| `TESTLOOKUP_OTLP_METRICS_ENDPOINT` | str | unset | Full OTLP/HTTP `/v1/metrics` URL for MCP completion counts and durations. |
+| `TESTLOOKUP_TELEMETRY_TRACE_SAMPLE_RATIO` | float, 0–1 | `1.0` | MCP root trace sampling ratio. A valid inbound `traceparent` supplies the parent sampling decision. |
+| `TESTLOOKUP_TELEMETRY_ENVIRONMENT` | str | `production` | MCP resource environment. Choose `development`, `staging` or `production`. |
 | `METRICS_ENABLED` | bool | `true` | Exposes Prometheus metrics at `/metrics` on the API. Worker metrics are separate (see `PROMETHEUS_MULTIPROC_DIR` below). |
 | `LOG_LEVEL` | str | `INFO` | `DEBUG`, `INFO`, `WARNING` or `ERROR`. |
 | `LOG_FORMAT` | `json` \| `text` | `json` | Structured JSON for log shippers; `text` for reading in a terminal. Logs can name people (proxy query strings; application lines written before the release that added personal-data erasure): see [Scrubbing a person from your log store](../../user-guide/compliance.md#scrubbing-a-person-from-your-log-store). |
