@@ -76,7 +76,7 @@ def test_holding_a_manager_role_does_not_let_a_lead_give_it():
 
 
 def test_admin_grants_every_role_except_agent():
-    for role in UserRole:
+    for role in list(UserRole):
         if role is not UserRole.AGENT:
             _enforce_grant_ceiling(_user(UserRole.ADMIN), role, uuid.uuid4())
     with pytest.raises(HTTPException) as exc:
@@ -111,7 +111,7 @@ def test_an_extra_release_role_brings_the_mfa_requirement():
 
 def test_a_viewer_floor_still_means_everyone():
     everyone = MfaPolicy(require_mfa=True, required_for_role="VIEWER")
-    for role in UserRole:
+    for role in list(UserRole):
         assert policy_requires_mfa(_user(role.value), everyone) is True, role
 
 

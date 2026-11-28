@@ -217,7 +217,7 @@ def test_every_dev_login_slug_has_defaults_and_agent_is_not_one():
     from app.routers.auth import _DEV_ROLE_DEFAULTS, _DEV_ROLE_MAP
 
     assert set(_DEV_ROLE_MAP.values()) == set(_DEV_ROLE_DEFAULTS)
-    assert set(_DEV_ROLE_MAP.values()) == {r for r in UserRole if r is not UserRole.AGENT}
+    assert set(_DEV_ROLE_MAP.values()) == {r for r in list(UserRole) if r is not UserRole.AGENT}
     for defaults in _DEV_ROLE_DEFAULTS.values():
         assert defaults["email"].endswith("@testlookup.dev")
 
@@ -228,7 +228,7 @@ def test_the_dev_seed_has_every_role_but_agent_and_one_multi_job_person():
 
     path = Path(__file__).resolve().parents[2] / "scripts" / "seed_dev_data.py"
     source = path.read_text(encoding="utf-8")
-    for role in UserRole:
+    for role in list(UserRole):
         if role is UserRole.AGENT:
             assert "UserRole.AGENT" not in source
         else:

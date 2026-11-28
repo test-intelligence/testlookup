@@ -156,7 +156,10 @@ def _auth(user):
 
 
 async def _send(client, method, template, body, project, user):
-    path = template.format(project_id=project.id, user_id=uuid.uuid4())
+    # Only the placeholders this path names: a random user id for a membership that does not exist (404 once
+    # past the guard), the sample project's id.
+    values = {"project_id": project.id, "user_id": uuid.uuid4()}
+    path = template.format(**{name: value for name, value in values.items() if "{" + name + "}" in template})
     kwargs = {"headers": _auth(user)}
     if body is not None:
         kwargs["json"] = body
@@ -168,7 +171,7 @@ async def test_every_role_gets_the_matrix_answer_from_the_running_app(client, db
     admitted = set(MATRIX[f"{method} {template}"])
     project = await _project(db)
     wrong = []
-    for role in UserRole:
+    for role in list(UserRole):
         user = await _person(db, project, role)
         response = await _send(client, method, template, body, project, user)
         expected = {404, 422} if role.value in admitted else {403}
@@ -199,7 +202,7 @@ async def test_an_extra_job_role_gives_no_rank_at_runtime(client, db):
 
 async def test_me_permissions_answers_every_role(client, db):
     project = await _project(db)
-    for role in UserRole:
+    for role in list(UserRole):
         user = await _person(db, project, role)
         response = await client.get(f"/api/v1/me/permissions?project_id={project.id}", headers=_auth(user))
         assert response.status_code == 200, (role, response.text[:200])
