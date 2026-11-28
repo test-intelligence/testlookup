@@ -32,8 +32,8 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.permissions import rank_index
 from app.core.deps import (
-    _ROLE_ORDER,
     _normalize_user_role,
     get_accessible_project_ids,
     get_current_active_user,
@@ -63,10 +63,10 @@ logger = structlog.get_logger("routers.webhooks_outbound")
 def _sees_full_target_url(user: User) -> bool:
     """QA_LEAD and above by instance role: the roles that manage subscriptions."""
     try:
-        idx = _ROLE_ORDER.index(_normalize_user_role(user.role))
+        idx = rank_index(_normalize_user_role(user.role))
     except ValueError:
         return False
-    return idx >= _ROLE_ORDER.index(UserRole.QA_LEAD)
+    return idx >= rank_index(UserRole.QA_LEAD)
 
 
 def _mask_target_url(target_url: str) -> str:

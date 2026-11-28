@@ -17,6 +17,7 @@ import type {
   TestCaseTransitionAction,
 } from '@/types/test-management'
 import { STATUS_MOVE_LABELS, moveTitle } from './caseStatusModel'
+import { roleAtLeast } from '@/lib/roles'
 
 /** The status changes the bulk endpoint accepts (mirrors the backend's BULK_TRANSITIONS), in the select's order. */
 export const BULK_TRANSITIONS = [
@@ -80,17 +81,10 @@ export interface BulkChoice {
   suiteName?: string
 }
 
-const ROLE_ORDER = ['VIEWER', 'TESTER', 'QA_ENGINEER', 'QA_LEAD', 'ADMIN'] as const
-
-function normalizedRole(role: string | null | undefined): (typeof ROLE_ORDER)[number] {
-  const raw = String(role ?? 'VIEWER').trim()
-  const name = raw.startsWith('UserRole.') ? raw.slice('UserRole.'.length) : raw
-  return (ROLE_ORDER as readonly string[]).includes(name) ? (name as (typeof ROLE_ORDER)[number]) : 'VIEWER'
-}
-
-/** Whether this role may Deprecate / Archive / Reinstate: QA leads and administrators only (the AMENDMENT). */
+/** Whether this role may Deprecate / Archive / Reinstate: QA leads and administrators only (the AMENDMENT).
+ *  The shared rank helper: a job role (RELEASE_MANAGER, …) ranks as VIEWER, as on the server. */
 export function canRetireRole(role: string | null | undefined): boolean {
-  return ROLE_ORDER.indexOf(normalizedRole(role)) >= ROLE_ORDER.indexOf('QA_LEAD')
+  return roleAtLeast(role, 'QA_LEAD')
 }
 
 /** The Action select's options. */

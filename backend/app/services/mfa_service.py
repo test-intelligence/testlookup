@@ -59,7 +59,8 @@ from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.deps import _normalize_user_role, _ROLE_ORDER
+from app.core.deps import _normalize_user_role
+from app.core.permissions import rank_index, user_roles
 from app.core.security import AuthenticationAssurance, hash_token
 from app.models.postgres import (
     AppSetting,
@@ -406,11 +407,16 @@ class MfaPolicy:
     lockout_enabled: bool = True
     lockout_threshold: int = 10
     lockout_duration_minutes: int = 15
+    # Enterprise roles E00-S05: roles that need MFA whatever the floor -- held as
+    # the primary role or an extra one. Applies only under a floor (no floor is
+    # already everyone). Enum order, never AGENT.
+    required_roles: tuple[str, ...] = ()
 
     def as_dict(self) -> dict:
         return {
             "require_mfa": self.require_mfa,
             "required_for_role": self.required_for_role,
+            "required_roles": list(self.required_roles),
             "lockout_enabled": self.lockout_enabled,
             "lockout_threshold": self.lockout_threshold,
             "lockout_duration_minutes": self.lockout_duration_minutes,
@@ -447,6 +453,7 @@ def policy_from_dict(raw: Optional[dict]) -> MfaPolicy:
     return MfaPolicy(
         require_mfa=bool(raw.get("require_mfa", DEFAULT_POLICY.require_mfa)),
         required_for_role=role,
+        required_roles=clean_required_roles(raw.get("required_roles")),
         lockout_enabled=bool(raw.get("lockout_enabled", DEFAULT_POLICY.lockout_enabled)),
         lockout_threshold=_coerce_int(
             raw.get("lockout_threshold"), DEFAULT_POLICY.lockout_threshold, 3, 100
@@ -480,6 +487,30 @@ async def save_policy(
     return policy
 
 
+def clean_required_roles(values) -> tuple[str, ...]:
+    """``required_roles`` as stored: known roles but AGENT, enum order, no repeats; anything else dropped."""
+    if not values or isinstance(values, (str, bytes)) or not hasattr(values, "__iter__"):
+        return ()
+    wanted: set[UserRole] = set()
+    for value in values:
+        try:
+            role = _normalize_user_role(value)
+        except (ValueError, AttributeError):
+            continue
+        if role != UserRole.AGENT:
+            wanted.add(role)
+    return tuple(role.value for role in UserRole if role in wanted)
+
+
+#: Job roles that sign and decide releases count as QA_LEAD for the MFA floor
+#: (enterprise roles D-9); every other role counts as its rank.
+_MFA_RANK_AS_QA_LEAD = frozenset({UserRole.RELEASE_MANAGER, UserRole.PRODUCT_MANAGER})
+
+
+def _mfa_rank(role: UserRole) -> int:
+    return rank_index(UserRole.QA_LEAD) if role in _MFA_RANK_AS_QA_LEAD else rank_index(role)
+
+
 def policy_requires_mfa(user: User, policy: MfaPolicy) -> bool:
     """Does the workspace policy require this user to hold a second factor?"""
     if not policy.require_mfa:
@@ -487,8 +518,11 @@ def policy_requires_mfa(user: User, policy: MfaPolicy) -> bool:
     if policy.required_for_role is None:
         return True
     try:
-        floor = _ROLE_ORDER.index(UserRole(policy.required_for_role))
-        actual = _ROLE_ORDER.index(_normalize_user_role(user.role))
+        held = user_roles(user)
+        if any(role.value in policy.required_roles for role in held):
+            return True
+        floor = rank_index(UserRole(policy.required_for_role))
+        actual = max(_mfa_rank(role) for role in held)
     except (ValueError, KeyError):
         # An unrecognised role on either side is not a licence to skip the
         # requirement — a role we cannot place in the hierarchy is treated as

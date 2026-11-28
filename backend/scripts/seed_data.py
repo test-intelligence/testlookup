@@ -68,6 +68,8 @@ USERS = [
     {"email": "admin@testlookup.example.com",   "username": "admin",    "full_name": "Admin User",      "password": _seed_password("admin"),    "role": "ADMIN"},
     {"email": "lead@testlookup.example.com",    "username": "qa_lead",  "full_name": "QA Lead",          "password": _seed_password("qa_lead"),  "role": "QA_LEAD"},
     {"email": "sara@testlookup.example.com",    "username": "eng_sara", "full_name": "Sara Engineer",    "password": _seed_password("eng_sara"), "role": "QA_ENGINEER"},
+    # Enterprise roles D-8: the TESTER rank too, for demo parity with seed_dev_data.py.
+    {"email": "tester@testlookup.example.com",  "username": "tester",   "full_name": "Tom Tester",       "password": _seed_password("tester"),   "role": "TESTER"},
     {"email": "viewer@testlookup.example.com",  "username": "viewer",   "full_name": "Viewer Read-only", "password": _seed_password("viewer"),   "role": "VIEWER"},
 ]
 

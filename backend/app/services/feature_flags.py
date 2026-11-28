@@ -171,8 +171,11 @@ def _evaluate(
     if enabled_roles:
         if user is None:
             return False
-        user_role = _normalize_role(user.role)
-        if user_role not in {str(r) for r in enabled_roles}:
+        # Enterprise roles D-16: an extra job role (``users.additional_roles``) counts like the primary role.
+        from app.core.permissions import job_roles_in
+
+        held = {_normalize_role(user.role), *(r.value for r in job_roles_in(getattr(user, "additional_roles", None)))}
+        if not held & {str(r) for r in enabled_roles}:
             return False
 
     # Rollout percentage — deterministic by user or project to avoid

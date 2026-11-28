@@ -109,6 +109,7 @@ absent from the table above, which is how it went unnoticed.
 | **JWT** | Per-user session, short-lived (configurable expiry) | Signed with `JWT_SECRET_KEY`, refresh tokens in Postgres (hashes only); in the browser, `localStorage` (see below) |
 | **API keys** | Per-user or per-project, long-lived | SHA-256 hash stored in Postgres, raw key shown once at creation |
 | **Role hierarchy** | VIEWER < TESTER < QA_ENGINEER < QA_LEAD < ADMIN | Stored as `String(20)` on `users` and `project_members` |
+| **Job roles** | RELEASE_MANAGER, PROJECT_MANAGER, PRODUCT_MANAGER, DEVELOPER, AGENT | Not ranks: each counts as VIEWER on a guard that names no permission (fail closed) and holds an explicit permission set (`backend/app/core/permissions.py`); extra job roles in `additional_roles`; on a project write the instance and project permissions intersect |
 | **Project scope** | Every data query is filtered by project membership | `require_project_access()` dependency, `get_accessible_project_ids()` returns None for ADMIN (no filter) |
 | **Dual auth** | Endpoints accept either JWT or API key | `get_current_user_or_api_key()` tries JWT first, then API key |
 | **MFA** | Optional per user, enforceable by policy | TOTP (RFC 6238) seed per user with one-time recovery codes; enrolling, disabling and reissuing codes are audited |

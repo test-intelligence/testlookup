@@ -91,6 +91,13 @@ USERS = [
     {"email": "engineer@testlookup.dev", "username": "qa_engineer", "full_name": "QA Engineer",      "password": secrets.token_urlsafe(20), "role": UserRole.QA_ENGINEER},
     {"email": "tester@testlookup.dev",   "username": "tester",      "full_name": "Tester",           "password": secrets.token_urlsafe(20), "role": UserRole.TESTER},
     {"email": "viewer@testlookup.dev",   "username": "viewer",      "full_name": "Read-Only Viewer", "password": secrets.token_urlsafe(20), "role": UserRole.VIEWER},
+    # Enterprise roles E00-S06: the four job roles (AGENT is registered, never seeded as a person). The
+    # developer also holds RELEASE_MANAGER as an extra role, so multi-job access is exercised in dev.
+    {"email": "release.manager@testlookup.dev", "username": "release_manager", "full_name": "Release Manager", "password": secrets.token_urlsafe(20), "role": UserRole.RELEASE_MANAGER},
+    {"email": "project.manager@testlookup.dev", "username": "project_manager", "full_name": "Project Manager", "password": secrets.token_urlsafe(20), "role": UserRole.PROJECT_MANAGER},
+    {"email": "product.manager@testlookup.dev", "username": "product_manager", "full_name": "Product Manager", "password": secrets.token_urlsafe(20), "role": UserRole.PRODUCT_MANAGER},
+    {"email": "developer@testlookup.dev",       "username": "developer",       "full_name": "Developer",       "password": secrets.token_urlsafe(20), "role": UserRole.DEVELOPER,
+     "additional_roles": [UserRole.RELEASE_MANAGER.value]},
 ]
 
 PROJECTS = [
@@ -433,6 +440,7 @@ async def _seed_users(db: AsyncSession) -> dict[UserRole, User]:
             full_name=u["full_name"],
             hashed_password=get_password_hash(u["password"]),
             role=u["role"],
+            additional_roles=u.get("additional_roles") or None,
             is_active=True,
             must_change_password=False,
         )
@@ -466,7 +474,10 @@ async def _seed_projects(db: AsyncSession, users: dict[UserRole, User]) -> list[
             # .value, never str(): str() of the enum is 'UserRole.QA_LEAD' on Python 3.11+,
             # which no membership check matches -- a seeded QA lead got 403 triaging their
             # own Inbox (the UX redesign's browser E2E pass; migration 0198 repairs rows).
-            db.add(ProjectMember(id=uuid.uuid4(), project_id=project.id, user_id=user.id, role=role_key.value))
+            db.add(ProjectMember(
+                id=uuid.uuid4(), project_id=project.id, user_id=user.id, role=role_key.value,
+                additional_roles=getattr(user, "additional_roles", None) or None,
+            ))
         print(f"  {p['name']} ({p['slug']})")
     await db.flush()
     return projects
@@ -1197,7 +1208,7 @@ async def main(reset: bool = False, wipe_only: bool = False) -> None:
     print(f"  {'Role':<16} {'Email':<28}")
     print(f"  {'-'*16} {'-'*28}")
     for u in USERS:
-        print(f"  {str(u['role']):<16} {u['email']:<28}")
+        print(f"  {u['role'].value:<16} {u['email']:<28}")
     print()
     print("  Log in via the Quick Login buttons at http://localhost:3000")
     print("  (DEV_AUTO_LOGIN_ENABLED=true in .env allows role-based login")

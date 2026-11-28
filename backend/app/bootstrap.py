@@ -107,6 +107,7 @@ from app.routers import (
     test_management,
     timeline_notes,
     insights,
+    me_permissions,
     run_cadences,
     users,
     value_metric_assumptions,
@@ -254,6 +255,7 @@ PROTECTED_ROUTERS: Sequence[APIRouter] = (
     subject_erasure_requests.router,
     users.router,
     users.projects_router,
+    me_permissions.router,          # Enterprise roles E00-S04: GET /api/v1/me/permissions
     api_keys.router,
     value_metrics.router,
     value_metric_assumptions.router,  # PMF US-12.1: per-project hours-saved assumptions

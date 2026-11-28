@@ -197,5 +197,6 @@ def test_the_role_order_check_is_not_an_inline_admin_test():
 
     source = inspect.getsource(timeline_note_service)
     assert "UserRole.ADMIN" not in source and "== \"ADMIN\"" not in source
-    assert "_ROLE_ORDER.index" in source
+    # Enterprise roles E00-S01: the rank comparison goes through the one rank helper (a job role ranks as VIEWER).
+    assert "rank_index(" in source and "_ROLE_ORDER.index" not in source
     assert UserRole.QA_LEAD.value == "QA_LEAD"

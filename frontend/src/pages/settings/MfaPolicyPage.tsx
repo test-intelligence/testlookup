@@ -7,6 +7,9 @@ import { PANEL_TITLE_CLASS } from '@/components/ui/PanelHeader'
 import { usePermissions } from '@/hooks/usePermissions'
 import { updateMfaPolicy, useMfaPolicy } from '@/hooks/useMfaPolicy'
 import { MFA_ROLES, type MfaPolicy, type MfaPolicyUpdate, type MfaRole } from '@/types/mfa'
+import type { JobRole } from '@/types/permissions'
+import { ExtraRolesPicker } from '@/components/roles/ExtraRolesPicker'
+import { jobRolesIn } from '@/lib/roles'
 import { describeMfaError } from '@/utils/mfaErrors'
 import { helpTopicParam } from '@/components/help/helpTopics'
 
@@ -26,6 +29,7 @@ const EVERYONE = ''
 interface Draft {
   require_mfa: boolean
   required_for_role: MfaRole | ''
+  required_roles: JobRole[]
   lockout_enabled: boolean
   lockout_threshold: string
   lockout_duration_minutes: string
@@ -35,6 +39,7 @@ function toDraft(policy: MfaPolicy): Draft {
   return {
     require_mfa: policy.require_mfa,
     required_for_role: policy.required_for_role ?? EVERYONE,
+    required_roles: jobRolesIn(policy.required_roles),
     lockout_enabled: policy.lockout_enabled,
     lockout_threshold: String(policy.lockout_threshold),
     lockout_duration_minutes: String(policy.lockout_duration_minutes),
@@ -96,6 +101,10 @@ export default function MfaPolicyPage() {
       payload.clear_required_for_role = true
     } else {
       payload.required_for_role = d.required_for_role
+    }
+    // Enterprise roles E00-S05: sent only when changed, so an unchanged policy keeps the body it always had.
+    if (d.required_roles.join(',') !== jobRolesIn(policy?.required_roles).join(',')) {
+      payload.required_roles = d.required_roles
     }
 
     setSaving(true)
@@ -205,8 +214,19 @@ export default function MfaPolicyPage() {
                   ))}
                 </select>
                 <p className="mt-1 text-xs text-[var(--color-text-muted)]">
-                  Roles are ranked Viewer → Tester → QA Engineer → QA Lead → Admin.
+                  Roles are ranked Viewer → Tester → QA Engineer → QA Lead → Admin. Release Managers and Product
+                  Managers sign off releases, so they count as QA Lead here.
                 </p>
+              </div>
+              <div data-mfa-required-roles="">
+                <ExtraRolesPicker
+                  idPrefix="mfa-required-role"
+                  legend="Also require it from"
+                  value={draft.required_roles}
+                  onChange={(next) => patch({ required_roles: next })}
+                  disabled={!draft.require_mfa || draft.required_for_role === EVERYONE}
+                  hint="These roles need a second factor whatever the level above, held as their role or as an extra role."
+                />
               </div>
             </section>
 

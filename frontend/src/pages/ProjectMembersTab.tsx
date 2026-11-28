@@ -19,14 +19,38 @@ import { useSlotCloser } from '@/hooks/useSlotCloser'
 import { copyTextToClipboard } from '@/utils/clipboard'
 import { formatDay } from '@/utils/formatters'
 import type { Project } from '@/types/projects'
+import { ADMIN_ONLY_GRANTS, type JobRole } from '@/types/permissions'
+import { ExtraRolesPicker } from '@/components/roles/ExtraRolesPicker'
+import { jobRolesIn } from '@/lib/roles'
+import { PERSON_ROLE_OPTIONS, ROLE_INFO } from '@/content/roles'
 
-const ROLES: UserRole[] = ['VIEWER', 'TESTER', 'QA_ENGINEER', 'QA_LEAD', 'ADMIN']
+/** Project roles a person may hold (enterprise roles E00): the five ranks, then the four job roles. */
+const ROLES: UserRole[] = PERSON_ROLE_OPTIONS.map((option) => option.value)
+const NEUTRAL_ROLE = 'bg-[var(--color-bg-hover)] text-[var(--color-text)]'
 const ROLE_COLORS: Record<UserRole, string> = {
   VIEWER: 'bg-[var(--color-bg-hover)] text-[var(--color-text-secondary)]',
   TESTER: 'bg-[var(--color-bg-secondary)] text-[var(--color-text-secondary)]',
   QA_ENGINEER: 'bg-[var(--status-passed-bg)]/50 text-[var(--status-passed)]',
   QA_LEAD: 'bg-[var(--status-broken-bg)]/50 text-[var(--status-broken)]',
   ADMIN: 'bg-[var(--status-failed-bg)]/50 text-[var(--status-failed)]',
+  // Job roles: neutral tokens, never status hues.
+  RELEASE_MANAGER: NEUTRAL_ROLE,
+  PROJECT_MANAGER: NEUTRAL_ROLE,
+  PRODUCT_MANAGER: NEUTRAL_ROLE,
+  DEVELOPER: NEUTRAL_ROLE,
+  AGENT: 'bg-[var(--color-bg-secondary)] text-[var(--color-text-muted)]',
+}
+
+/** The project roles this person may hand out: an administrator all; anyone else not the manager roles (D-17).
+ *  A role the member already holds stays in the list, so their row still shows it. */
+function grantableRoles(isAdmin: boolean, current?: string): UserRole[] {
+  if (isAdmin) return ROLES
+  return ROLES.filter((r) => !(ADMIN_ONLY_GRANTS as readonly string[]).includes(r) || r === current)
+}
+
+function extrasText(extras: readonly string[] | undefined): string {
+  const held = jobRolesIn(extras)
+  return held.length ? `+ ${held.map((r) => ROLE_INFO[r].label).join(', ')}` : ''
 }
 
 export function ProjectMembersTab({ isAdmin, canManageUsers }: { isAdmin: boolean; canManageUsers: boolean }) {
@@ -158,11 +182,42 @@ export function ProjectMembersTab({ isAdmin, canManageUsers }: { isAdmin: boolea
     try {
       const updated = await userManagementService.updateProjectMemberRole(selectedProjectId, userId, role)
       mutateMembers(
-        prev => (prev ?? []).map(m => m.user_id === userId ? { ...m, role: updated.role } : m),
+        prev => (prev ?? []).map(m => m.user_id === userId
+          ? { ...m, role: updated.role, additional_roles: updated.additional_roles ?? m.additional_roles }
+          : m),
         { revalidate: false },
       )
       toast.success('Role updated')
     } catch { toast.error('Failed to update role') }
+  }
+
+  // Enterprise roles D-16: a member's extra job roles in this project, edited in a row under theirs.
+  const [editingExtrasFor, setEditingExtrasFor] = useState<string | null>(null)
+  const [draftExtras, setDraftExtras] = useState<JobRole[]>([])
+
+  function startEditingExtras(member: ProjectMember) {
+    setEditingExtrasFor(member.user_id)
+    setDraftExtras(jobRolesIn(member.additional_roles))
+  }
+
+  async function saveExtras(member: ProjectMember) {
+    if (!selectedProjectId) return
+    try {
+      const updated = await userManagementService.updateProjectMemberRole(
+        selectedProjectId, member.user_id, member.role, draftExtras.filter((r) => r !== member.role),
+      )
+      mutateMembers(
+        prev => (prev ?? []).map(m => m.user_id === member.user_id
+          ? { ...m, role: updated.role, additional_roles: updated.additional_roles ?? [] }
+          : m),
+        { revalidate: false },
+      )
+      setEditingExtrasFor(null)
+      toast.success('Extra roles updated')
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+      toast.error(msg || 'Failed to update extra roles')
+    }
   }
 
   const selectedProject = selectedProjectObj
@@ -210,6 +265,7 @@ export function ProjectMembersTab({ isAdmin, canManageUsers }: { isAdmin: boolea
           projectId={selectedProjectId}
           projectName={selectedProject?.name ?? ''}
           memberUserIds={memberUserIds}
+          isAdmin={isAdmin}
           onClose={() => closeAdd('add')}
           onAdded={member => { mutateMembers(prev => [...(prev ?? []), member], { revalidate: false }); closeAdd('add') }}
         />
@@ -382,10 +438,44 @@ export function ProjectMembersTab({ isAdmin, canManageUsers }: { isAdmin: boolea
                         onChange={e => handleRoleChange(m.user_id, e.target.value as UserRole)}
                         className="text-xs rounded px-2 py-1 border border-transparent bg-[var(--color-bg-hover)] text-[var(--color-text-secondary)] focus:outline-none"
                       >
-                        {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
+                        {grantableRoles(isAdmin, m.role).map(r => <option key={r} value={r} title={ROLE_INFO[r].description}>{r}</option>)}
                       </select>
                     ) : (
                       <span className={`text-xs px-2 py-0.5 rounded font-medium ${ROLE_COLORS[m.role] || 'bg-[var(--color-bg-hover)] text-[var(--color-text-secondary)]'}`}>{m.role}</span>
+                    )}
+                    {extrasText(m.additional_roles) && (
+                      <div data-extra-roles-line="" className="mt-0.5 max-w-[180px] truncate text-2xs text-[var(--color-text-muted)]"
+                        title={extrasText(m.additional_roles)}>
+                        {extrasText(m.additional_roles)}
+                      </div>
+                    )}
+                    {canManageUsers && m.role !== 'AGENT' && editingExtrasFor !== m.user_id && (
+                      <button
+                        type="button"
+                        data-edit-extra-roles=""
+                        onClick={() => startEditingExtras(m)}
+                        className="mt-0.5 block text-2xs text-[var(--color-text-muted)] hover:text-[var(--color-text)] underline"
+                      >
+                        Extra roles
+                      </button>
+                    )}
+                    {editingExtrasFor === m.user_id && (
+                      <div className="mt-2 w-[320px] space-y-2" data-extra-roles-editor="">
+                        <ExtraRolesPicker
+                          idPrefix={`member-extra-${m.user_id}`}
+                          value={draftExtras}
+                          onChange={setDraftExtras}
+                          primary={m.role}
+                          exclude={isAdmin ? [] : ADMIN_ONLY_GRANTS}
+                          hint="Only in this project. What they may change here is the lower of this and their account roles."
+                        />
+                        <div className="flex gap-2">
+                          <button type="button" onClick={() => void saveExtras(m)}
+                            className="text-xs px-2 py-1 rounded bg-[var(--color-bg-hover)] text-[var(--color-text)]">Save</button>
+                          <button type="button" onClick={() => setEditingExtrasFor(null)}
+                            className="text-xs px-2 py-1 text-[var(--color-text-muted)]">Cancel</button>
+                        </div>
+                      </div>
                     )}
                   </td>
                   <td className="px-4 py-3 text-[var(--color-text-muted)] text-xs">
@@ -431,6 +521,8 @@ interface AddProjectMemberModalProps {
   projectName: string
   /** Users already in the project: the search leaves them out. */
   memberUserIds: Set<string>
+  /** An administrator is offered every role; anyone else not the manager roles (D-17). */
+  isAdmin?: boolean
   onClose: () => void
   onAdded: (member: ProjectMember) => void
   /** W27b: the tab's Add Member slot (dirty tracking + the discard question). */
@@ -438,7 +530,7 @@ interface AddProjectMemberModalProps {
 }
 
 /** Add Member, in the page under the tab's top row (W27b; it was a modal dialog). */
-function AddProjectMemberModal({ projectId, projectName, memberUserIds, onClose, onAdded, slot }: AddProjectMemberModalProps) {
+function AddProjectMemberModal({ projectId, projectName, memberUserIds, isAdmin = false, onClose, onAdded, slot }: AddProjectMemberModalProps) {
   const [userId, setUserId] = useState('')
   // ADM-03: the picker searches the SERVER (username, email, full name), so a
   // user beyond the first page is found by typing; it used to load one page of
@@ -459,13 +551,17 @@ function AddProjectMemberModal({ projectId, projectName, memberUserIds, onClose,
   )
   const moreThanShown = found?.total != null && found.total > (found.items?.length ?? 0)
   const [role, setRole] = useState<UserRole>('TESTER')
+  const [extras, setExtras] = useState<JobRole[]>([])
   const [saving, setSaving] = useState(false)
 
   async function handleAdd() {
     if (!userId) { toast.error('Select a user'); return }
     setSaving(true)
     try {
-      const member = await userManagementService.addProjectMember(projectId, userId, role)
+      const chosenExtras = extras.filter((r) => r !== role)
+      const member = chosenExtras.length
+        ? await userManagementService.addProjectMember(projectId, userId, role, chosenExtras)
+        : await userManagementService.addProjectMember(projectId, userId, role)
       toast.success('Member added successfully')
       onAdded(member)
     } catch (err: unknown) {
@@ -549,9 +645,14 @@ function AddProjectMemberModal({ projectId, projectName, memberUserIds, onClose,
               onChange={e => setRole(e.target.value as UserRole)}
               className="w-full bg-[var(--color-bg-secondary)] border border-[var(--color-border-light)] rounded-lg px-3 py-2 text-sm text-[var(--color-text)] focus:outline-none focus:border-[var(--color-border)]"
             >
-              {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
+              {grantableRoles(isAdmin).map(r => <option key={r} value={r} title={ROLE_INFO[r].description}>{r}</option>)}
             </select>
           </div>
+        </div>
+        <div className="mt-3">
+          <ExtraRolesPicker idPrefix="member-add-extra" value={extras} onChange={setExtras} primary={role}
+            exclude={isAdmin ? [] : ADMIN_ONLY_GRANTS}
+            hint="Only in this project. What they may change here is the lower of this and their account roles." />
         </div>
     </InlineFormSection>
   )

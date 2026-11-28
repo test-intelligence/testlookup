@@ -12,6 +12,10 @@
  *  - Projects with none: "No projects yet" / "Create your first project to start ingesting test reports" (a QA lead,
  *    the lowest role the page admits).
  *
+ * Enterprise roles E00-S06: the backend-unreachable banner is checked as every role a person can hold (the five
+ * ranks and the four job roles; AGENT signs in only with keys, never to the app), and the VIEWER sentences as each
+ * job role too — a job role ranks as VIEWER until a page names a permission, so it reads exactly what a viewer reads.
+ *
  * Harness: `tests/lib/rollout.ts` (fail closed, pinned clock). `/health/details` is served at the platform root,
  * outside the harness's `/api` router, so each test answers it here with `page.route` (otherwise the dev server's
  * page shell answers it and the banner stays quiet).
@@ -21,11 +25,43 @@ import { respond, type ApiHandlers } from '../lib/production-pages'
 import { assertHermetic, networkQuiet, openRollout } from '../lib/rollout'
 import { LAYOUT, OVERVIEW_ON, USER } from '../visual/production/fixtures'
 import { chatDeleteWorld, suitesInPageWorld } from '../visual/production/fixtures-in-page-b'
-import { VIEWER } from '../visual/production/fixtures-defects'
+import { TESTER, VIEWER } from '../visual/production/fixtures-defects'
+import { ADMIN, QA_ENGINEER } from '../visual/production/fixtures-releases'
 
 test.use({ viewport: { width: 1440, height: 900 }, timezoneId: 'UTC', locale: 'en-US', reducedMotion: 'reduce' })
 
 const h1 = (name: string) => (p: Page) => p.getByRole('heading', { level: 1, name, exact: true })
+
+const jobUser = (role: string, n: number, additional_roles: string[] = []) => ({
+  ...VIEWER,
+  id: `00000000-0000-4000-8000-0000000000c${n}`,
+  username: role.toLowerCase(),
+  full_name: role.replace('_', ' '),
+  role,
+  additional_roles,
+})
+
+/** The job roles, and a developer who is also a release manager (extra roles add no rank). */
+const JOB_READERS: Array<[string, typeof VIEWER]> = [
+  ['RELEASE_MANAGER', jobUser('RELEASE_MANAGER', 1)],
+  ['PROJECT_MANAGER', jobUser('PROJECT_MANAGER', 2)],
+  ['PRODUCT_MANAGER', jobUser('PRODUCT_MANAGER', 3)],
+  ['DEVELOPER', jobUser('DEVELOPER', 4)],
+  ['DEVELOPER+RELEASE_MANAGER', jobUser('DEVELOPER', 5, ['RELEASE_MANAGER'])],
+]
+
+/** Every role a person can hold: the five ranks, then the job roles. */
+const EVERY_PERSON_ROLE: Array<[string, typeof VIEWER]> = [
+  ['VIEWER', VIEWER],
+  ['TESTER', TESTER],
+  ['QA_ENGINEER', QA_ENGINEER],
+  ['QA_LEAD', USER],
+  ['ADMIN', ADMIN],
+  ...JOB_READERS,
+]
+
+/** VIEWER and every job role: the same sentences. */
+const VIEWER_READERS: Array<[string, typeof VIEWER]> = [['VIEWER', VIEWER], ...JOB_READERS]
 
 /** Answer the shell's health poll (`GET /health/details`): a status and body, or a network failure. */
 async function answerHealth(page: Page, answer: { status: number; body?: unknown } | 'unreachable') {
@@ -45,17 +81,19 @@ const health = (checks: Record<string, { status: string }>) => ({
 })
 
 test.describe('the health banner, on every page', () => {
-  test('the health poll fails: "Can\'t reach the TestLookup backend." and why the page may be empty', async ({ page }) => {
-    await answerHealth(page, 'unreachable')
-    const { api, errors } = await openRollout(page, '/overview', { handlers: OVERVIEW_ON, ready: h1('Dashboard'), user: VIEWER })
-    const banner = page.getByTestId('health-unreachable-banner')
-    await expect(banner).toHaveText(
-      "Can't reach the TestLookup backend. Health status is unknown, not healthy — pages may show stale data or none at all. Retrying automatically.",
-    )
-    await expect(banner).toHaveAttribute('role', 'alert')
-    await networkQuiet(page, api)
-    assertHermetic(api, errors)
-  })
+  for (const [role, user] of EVERY_PERSON_ROLE) {
+    test(`the health poll fails: "Can't reach the TestLookup backend." and why the page may be empty — ${role}`, async ({ page }) => {
+      await answerHealth(page, 'unreachable')
+      const { api, errors } = await openRollout(page, '/overview', { handlers: OVERVIEW_ON, ready: h1('Dashboard'), user })
+      const banner = page.getByTestId('health-unreachable-banner')
+      await expect(banner).toHaveText(
+        "Can't reach the TestLookup backend. Health status is unknown, not healthy — pages may show stale data or none at all. Retrying automatically.",
+      )
+      await expect(banner).toHaveAttribute('role', 'alert')
+      await networkQuiet(page, api)
+      assertHermetic(api, errors)
+    })
+  }
 
   test('a critical store is down: the store by name, and no promise of a fallback', async ({ page }) => {
     await answerHealth(page, { status: 200, body: health({ postgres: { status: 'error' }, mongo: { status: 'ok' }, redis: { status: 'ok' } }) })
@@ -79,19 +117,21 @@ test.describe('the health banner, on every page', () => {
   })
 })
 
-test('Suites, its list read refused: "Could not load suites" and what to do', async ({ page }) => {
-  const handlers: ApiHandlers = [
-    ['/api/v1/suites', () => respond(500, { detail: 'ci-suites-read-failed-test-only' })],
-    ...suitesInPageWorld().handlers,
-  ]
-  // Ready on any "Could not load …" line, so a reworded title fails on the words below, not on the load.
-  const loadError = (p: Page) => p.getByText(/^Could not load\b/)
-  const { api, errors } = await openRollout(page, '/suites', { handlers, ready: loadError, user: VIEWER })
-  await expect(loadError(page), 'Suites: the failed read\'s title').toHaveText('Could not load suites')
-  await expect(page.getByText('Check the backend logs or try again.', { exact: true })).toBeVisible()
-  await networkQuiet(page, api)
-  assertHermetic(api, errors)
-})
+for (const [role, user] of VIEWER_READERS) {
+  test(`Suites, its list read refused: "Could not load suites" and what to do — ${role}`, async ({ page }) => {
+    const handlers: ApiHandlers = [
+      ['/api/v1/suites', () => respond(500, { detail: 'ci-suites-read-failed-test-only' })],
+      ...suitesInPageWorld().handlers,
+    ]
+    // Ready on any "Could not load …" line, so a reworded title fails on the words below, not on the load.
+    const loadError = (p: Page) => p.getByText(/^Could not load\b/)
+    const { api, errors } = await openRollout(page, '/suites', { handlers, ready: loadError, user })
+    await expect(loadError(page), 'Suites: the failed read\'s title').toHaveText('Could not load suites')
+    await expect(page.getByText('Check the backend logs or try again.', { exact: true })).toBeVisible()
+    await networkQuiet(page, api)
+    assertHermetic(api, errors)
+  })
+}
 
 test.describe('Ask AI, as a VIEWER', () => {
   const chatWorld = (mode: 'llm' | 'ml' | 'rules', sessions: unknown[] = []): ApiHandlers => [
@@ -101,13 +141,15 @@ test.describe('Ask AI, as a VIEWER', () => {
   ]
   const ready = (p: Page) => p.getByRole('heading', { name: 'Ask about Checkout' })
 
-  test('no conversation yet: "No conversations in this project yet"', async ({ page }) => {
-    const { api, errors } = await openRollout(page, '/chat', { handlers: chatWorld('llm'), ready, user: VIEWER, flags: { ask_ai_chat: true } })
-    await expect(page.getByText('No conversations in this project yet', { exact: true })).toBeVisible()
-    await expect(page.getByTestId('chat-session')).toHaveCount(0)
-    await networkQuiet(page, api)
-    assertHermetic(api, errors)
-  })
+  for (const [role, user] of VIEWER_READERS) {
+    test(`no conversation yet: "No conversations in this project yet" — ${role}`, async ({ page }) => {
+      const { api, errors } = await openRollout(page, '/chat', { handlers: chatWorld('llm'), ready, user, flags: { ask_ai_chat: true } })
+      await expect(page.getByText('No conversations in this project yet', { exact: true })).toBeVisible()
+      await expect(page.getByTestId('chat-session')).toHaveCount(0)
+      await networkQuiet(page, api)
+      assertHermetic(api, errors)
+    })
+  }
 
   for (const [mode, name] of [['ml', 'ML'], ['rules', 'Rules']] as const) {
     test(`${name} mode: the direct URL says chat is unavailable and how to switch`, async ({ page }) => {

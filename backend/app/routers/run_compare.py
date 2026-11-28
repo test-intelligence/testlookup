@@ -16,8 +16,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.permissions import rank_index
 from app.core.deps import (
-    _ROLE_ORDER,
     _normalize_user_role,
     get_current_active_user,
     get_db,
@@ -207,10 +207,10 @@ async def compare_latest_suite_runs(
 def _may_generate_report(user: User) -> bool:
     """QA_ENGINEER and above, by global role, like every other LLM-triggering route."""
     try:
-        idx = _ROLE_ORDER.index(_normalize_user_role(user.role))
+        idx = rank_index(_normalize_user_role(user.role))
     except ValueError:
         return False
-    return idx >= _ROLE_ORDER.index(UserRole.QA_ENGINEER)
+    return idx >= rank_index(UserRole.QA_ENGINEER)
 
 
 async def _resolve_ai_report(

@@ -160,3 +160,35 @@ async def test_require_instance_admin_still_refuses_a_bound_key():
 
     unbound = _bind_api_key_project(_user(), None)
     assert await guard(current_user=unbound) is unbound
+
+
+# ── Enterprise roles E00: a job role's key meets the same key rules ──────────
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("owner_role", [UserRole.RELEASE_MANAGER, UserRole.PRODUCT_MANAGER])
+async def test_a_job_roles_bound_key_is_refused_on_a_qa_lead_floor_unless_the_route_opts_in(owner_role):
+    """Key rules follow the route's floor, not the role that passed it: a release manager's
+    project-bound key gets past ``release.write`` only on a route that opts bound keys in."""
+    from app.core.permissions import Permission
+    from app.core.deps import require_permission
+
+    user = _bound_key_user(owner_role)
+    permission = Permission.RELEASE_WRITE if owner_role is UserRole.RELEASE_MANAGER else Permission.RISK_ACCEPT
+    with pytest.raises(HTTPException) as exc:
+        await require_permission(permission)(current_user=user)
+    assert exc.value.detail == PROJECT_KEY_NOT_INSTANCE_ADMIN_DETAIL
+    opted_in = require_role(UserRole.QA_LEAD, allow_project_key=True, permission=permission)
+    assert await opted_in(current_user=user) is user
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("min_role", _BELOW_QA_LEAD)
+async def test_a_job_roles_bound_key_is_a_viewer_below_qa_lead(min_role):
+    user = _bound_key_user(UserRole.DEVELOPER)
+    if min_role is UserRole.VIEWER:
+        assert await require_role(min_role)(current_user=user) is user
+    else:
+        with pytest.raises(HTTPException) as exc:
+            await require_role(min_role)(current_user=user)
+        assert exc.value.detail == f"Requires at least {min_role.value} role"

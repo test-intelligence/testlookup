@@ -29,8 +29,9 @@ def _ceiling(monkeypatch):
 
 def test_the_highest_mapped_role_wins_and_names_the_matches():
     out = sso_service.preview_role_from_groups(["qa", "qa-leads", "unknown"], MAPPING, UserRole.VIEWER)
+    # Enterprise roles E00-S05: the preview also names extra job roles the groups add (none in MAPPING).
     assert out == {"role": "QA_LEAD", "matched_groups": ["qa", "qa-leads"], "source": "mapping",
-                   "ceiling": "ADMIN", "clamped": False}
+                   "ceiling": "ADMIN", "clamped": False, "additional_roles": [], "additional_matched_groups": {}}
 
 
 def test_no_match_or_an_unknown_mapped_role_falls_back_to_the_default():

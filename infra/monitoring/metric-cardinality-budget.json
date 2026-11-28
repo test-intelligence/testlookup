@@ -18,9 +18,9 @@
         "to": "LIFECYCLE_STATES",
         "actor_role": "ACTOR_ROLES"
       },
-      "max_children": 600,
+      "max_children": 1100,
       "max_samples_per_child": 2,
-      "max_series_per_process": 1200
+      "max_series_per_process": 2200
     },
     {
       "instrument": "test_case_promotions_total",
@@ -166,7 +166,7 @@
       "max_series_per_process": 64
     }
   ],
-  "conservative_series_per_process": 21574,
+  "conservative_series_per_process": 22574,
   "retired_families": [
     "testlookup_test_cases_by_state",
     "testlookup_automation_cases_orphaned",

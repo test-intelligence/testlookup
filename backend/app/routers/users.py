@@ -14,6 +14,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.deps import get_current_active_user, require_project_access, require_role
 from app.core.security import get_password_hash
 from app.db.postgres import get_db
+from app.core.permissions import (
+    ADMIN_ONLY_GRANTS,
+    assigned_roles,
+    can_grant,
+    clean_additional_roles,
+    effective_grants,
+    job_roles_in,
+    missing_for_grant,
+    normalize_role,
+    user_roles,
+)
 from app.models.postgres import Project, ProjectMember, SettingsAuditLog, User, UserInvitation, UserRole
 from app.models.schemas import (
     AddProjectMemberRequest,
@@ -56,54 +67,157 @@ projects_router = APIRouter(prefix="/api/v1/projects", tags=["User Management"])
 
 
 def _normalize_user_role(value: UserRole | str) -> UserRole:
-    """Convert a stored role string to a UserRole enum.
-
-    After migration 0045, the ``UserRole.`` prefix guard is a safety net only.
-    """
-    if isinstance(value, UserRole):
-        return value
-    raw_value = str(value).strip()
-    if raw_value.startswith("UserRole."):
-        raw_value = raw_value.split(".", 1)[1]
-    return UserRole(raw_value)
+    """Convert a stored role string to a UserRole enum (``permissions.normalize_role``)."""
+    return normalize_role(value)
 
 
-_ROLE_ORDER: list[UserRole] = [
-    UserRole.VIEWER,
-    UserRole.TESTER,
-    UserRole.QA_ENGINEER,
-    UserRole.QA_LEAD,
-    UserRole.ADMIN,
-]
-
-
-def _role_rank(role: UserRole | str) -> int:
+def _refuse_agent_role(role: UserRole | str | None) -> None:
+    """AGENT is assigned only through agent registration (enterprise roles E01), never to a person here."""
+    if role is None:
+        return
     try:
-        return _ROLE_ORDER.index(_normalize_user_role(role))
+        is_agent = normalize_role(role) == UserRole.AGENT
     except ValueError:
-        return -1
+        return  # the request schema refuses an unknown role first
+    if is_agent:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="The AGENT role is given to AI agents through agent registration, not to people",
+        )
 
 
-def _enforce_grant_ceiling(current_user: User, granted_role: UserRole, target_user_id: uuid.UUID) -> None:
-    """Reject project-role grants that exceed the caller's authority.
+def _clean_extras(values, primary: UserRole | str | None) -> list[str]:
+    """Extra job roles as stored (``permissions.clean_additional_roles``); 400 for anything else."""
+    try:
+        return clean_additional_roles(values, primary=primary)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
+def _refuse_extras_for_agent(primary: UserRole | str, extras: list[str]) -> None:
+    if extras and normalize_role(primary) == UserRole.AGENT:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="An agent holds no extra roles")
+
+
+def _stored_extras(value) -> list[str]:
+    return [role.value for role in job_roles_in(value)]
+
+
+async def _granter_project_roles(
+    db: AsyncSession, current_user: User, project_id: uuid.UUID
+) -> Optional[tuple[UserRole, ...]]:
+    """The caller's roles in ``project_id`` (None when not a member): what caps what they may hand out there.
+
+    Asked only after ``_enforce_grant_ceiling`` has said the caller is not an ADMIN (an ADMIN grants anything).
+    """
+    row = (await db.execute(
+        select(ProjectMember.role, ProjectMember.additional_roles).where(
+            ProjectMember.user_id == current_user.id, ProjectMember.project_id == project_id,
+        )
+    )).one_or_none()
+    if row is None:
+        return None
+    try:
+        return assigned_roles(row[0], row[1])
+    except ValueError:
+        return (UserRole.VIEWER,)
+
+
+_MAX_NAMED_PERMISSIONS = 5
+
+
+def _enforce_grant_ceiling(
+    current_user: User,
+    granted_role: UserRole,
+    target_user_id: uuid.UUID,
+    *,
+    additional_roles: tuple[str, ...] | list[str] = (),
+    granter_project_roles: Optional[tuple[UserRole, ...]] = None,
+) -> bool:
+    """Reject project-role grants that exceed the caller's authority. ``True`` when the caller is an ADMIN.
 
     A global ADMIN may grant any project role. Anyone else (QA_LEAD managing
-    members) may not grant a project role above their own global role, and may
-    not change their own membership role at all — both close the project-scoped
-    privilege-escalation path where a QA_LEAD mints a project-ADMIN (incl. self).
+    members) may grant only a role -- primary or extra -- whose permissions they
+    hold themselves (``permissions.can_grant``: for two ladder roles, "not above
+    your own rank", as before), and may not change their own membership role at
+    all -- both close the project-scoped privilege-escalation path where a
+    QA_LEAD mints a project-ADMIN (incl. self). AGENT is granted only through
+    agent registration.
+
+    ``granter_project_roles`` (the caller's membership in the project) caps the
+    check the way it caps their writes: what they may do there is their
+    instance permissions INTERSECTED with their project permissions (D-2).
+    The refusal names the permissions the caller lacks. Returns ``True`` for an
+    ADMIN (nothing more to check: callers then skip the project lookup) and
+    ``False`` for anyone it let through on their permissions.
     """
+    _refuse_agent_role(granted_role)
     if _normalize_user_role(current_user.role) == UserRole.ADMIN:
-        return
+        return True
     if target_user_id == current_user.id:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="You cannot change your own project role",
         )
-    if _role_rank(granted_role) > _role_rank(current_user.role):
+    missing: dict[str, list[str]] = {}
+    admin_only: list[str] = []
+    try:
+        granter_roles = user_roles(current_user)
+        grants = (
+            effective_grants(granter_roles, granter_project_roles, is_write=True)
+            if granter_project_roles is not None else None
+        )
+        for role in (granted_role, *additional_roles):
+            if can_grant(granter_roles, role, grants=grants):
+                continue
+            if normalize_role(role) in ADMIN_ONLY_GRANTS:
+                admin_only.append(normalize_role(role).value)  # D-17: whatever the granter holds
+            else:
+                missing[normalize_role(role).value] = missing_for_grant(granter_roles, role, grants=grants)
+    except ValueError:
+        missing = {"": []}
+    if admin_only and not missing:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="You cannot grant a project role higher than your own",
+            detail=f"Only an administrator can give the {', '.join(admin_only)} role",
         )
+    if missing:
+        named = []
+        for role, perms in missing.items():
+            if not role or not perms:
+                continue
+            shown = ", ".join(perms[:_MAX_NAMED_PERMISSIONS])
+            more = len(perms) - _MAX_NAMED_PERMISSIONS
+            named.append(f"{role} needs {shown}" + (f" and {more} more" if more > 0 else ""))
+        named.extend(f"{role} is given only by an administrator" for role in admin_only)
+        detail = "You cannot grant a project role higher than your own"
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=detail + (f" ({'; '.join(named)})" if named else ""),
+        )
+    return False
+
+
+async def _enforce_member_grant(
+    db: AsyncSession,
+    current_user: User,
+    project_id: uuid.UUID,
+    granted_role: UserRole,
+    target_user_id: uuid.UUID,
+    *,
+    additional_roles: tuple[str, ...] | list[str] = (),
+) -> Optional[tuple[UserRole, ...]]:
+    """The grant ceiling for a membership: first on the caller's instance roles, then capped by their roles in
+    ``project_id``. Returns those project roles (``None`` for an ADMIN or a non-member) for a later check."""
+    if _enforce_grant_ceiling(current_user, granted_role, target_user_id, additional_roles=additional_roles):
+        return None
+    project_roles = await _granter_project_roles(db, current_user, project_id)
+    if project_roles is not None:
+        _enforce_grant_ceiling(
+            current_user, granted_role, target_user_id,
+            additional_roles=additional_roles, granter_project_roles=project_roles,
+        )
+    return project_roles
 
 
 def _build_project_member_response(member: ProjectMember, user: User) -> ProjectMemberResponse:
@@ -112,6 +226,7 @@ def _build_project_member_response(member: ProjectMember, user: User) -> Project
         user_id=member.user_id,
         project_id=member.project_id,
         role=_normalize_user_role(member.role),
+        additional_roles=list(job_roles_in(getattr(member, "additional_roles", None))),
         created_at=member.created_at,
         email=user.email,
         username=user.username,
@@ -216,11 +331,15 @@ async def update_user_role(
     refuse_erased(user)  # W31: an erased account is never changed or restored (409, string detail)
     if user.id == current_user.id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot change your own role")
+    _refuse_agent_role(payload.role)
     # Last-admin guard: refuse to strip ADMIN from the only other active admin.
     if _normalize_user_role(payload.role) != UserRole.ADMIN:
         await _assert_not_last_admin(db, user)
     old_role = str(user.role)
     user.role = payload.role
+    kept = _stored_extras(getattr(user, "additional_roles", None))
+    if kept:
+        user.additional_roles = clean_additional_roles(kept, primary=payload.role) or None
     await log_access_change(db, "role_changed", current_user, target_user_id=user_id,
                             before_value={"role": old_role}, after_value={"role": str(payload.role)})
     await db.commit()
@@ -314,11 +433,31 @@ async def update_user_profile(
     if payload.role is not None:
         if user.id == current_user.id:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot change your own role")
+        _refuse_agent_role(payload.role)
         if _normalize_user_role(payload.role) != UserRole.ADMIN:
             await _assert_not_last_admin(db, user)
         if str(user.role) != str(payload.role):
             access_changes.append(("role_changed", {"role": str(user.role)}, {"role": str(payload.role)}))
         user.role = payload.role
+
+    # Enterprise roles D-16: extra job roles. Only the primary role gives the rank; an extra role only adds
+    # permissions. Re-cleaned when the primary role changes (a primary role is never also an extra one).
+    # getattr: an older caller's payload (or a test double) may not carry the field at all -- omitted keeps them.
+    requested_extras = getattr(payload, "additional_roles", None)
+    if requested_extras is not None or payload.role is not None:
+        if requested_extras is not None and user.id == current_user.id:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot change your own role")
+        before_extras = _stored_extras(getattr(user, "additional_roles", None))
+        wanted = requested_extras if requested_extras is not None else before_extras
+        after_extras = _clean_extras(wanted, primary=user.role)
+        _refuse_extras_for_agent(user.role, after_extras)
+        if after_extras != before_extras:
+            access_changes.append((
+                "additional_roles_changed",
+                {"additional_roles": before_extras},
+                {"additional_roles": after_extras},
+            ))
+        user.additional_roles = after_extras or None
 
     if payload.is_active is not None:
         if user.id == current_user.id:
@@ -365,6 +504,8 @@ async def admin_create_user(
             detail="Email or username already registered",
         )
 
+    _refuse_agent_role(payload.role)
+    extras = _clean_extras(getattr(payload, "additional_roles", None), primary=payload.role)
     temp_password = secrets.token_urlsafe(12)
     logger.info("admin_creating_user", role=str(payload.role), by=str(current_user.id))
     user = User(
@@ -373,6 +514,7 @@ async def admin_create_user(
         full_name=payload.full_name,
         hashed_password=get_password_hash(temp_password),
         role=payload.role,
+        additional_roles=extras or None,
         must_change_password=True,
     )
     db.add(user)
@@ -385,6 +527,7 @@ async def admin_create_user(
         username=user.username,
         full_name=user.full_name,
         role=user.role,
+        additional_roles=list(job_roles_in(user.additional_roles)),
         is_active=user.is_active,
         created_at=user.created_at,
         temp_password=temp_password,
@@ -423,12 +566,15 @@ async def invite_user(
             detail="An active invitation already exists for this email. Resend or revoke it from Pending invitations.",
         )
 
+    _refuse_agent_role(payload.role)
+    extras = _clean_extras(getattr(payload, "additional_roles", None), primary=payload.role)
     memberships = await _validated_invite_memberships(db, payload)
 
     raw, token_hash = new_token()
     invitation = UserInvitation(
         email=email,
         role=payload.role,
+        additional_roles=extras or None,
         token=None,
         token_hash=token_hash,
         invited_by_id=current_user.id,
@@ -457,6 +603,7 @@ async def invite_user(
         id=invitation.id,
         email=invitation.email,
         role=invitation.role,
+        additional_roles=list(job_roles_in(getattr(invitation, "additional_roles", None))),
         expires_at=invitation.expires_at,
         invitation_link=link,
         email_sent=email_sent,
@@ -472,7 +619,12 @@ async def _validated_invite_memberships(db: AsyncSession, payload: InviteUserReq
         ).scalar_one_or_none()
         if project is None or not getattr(project, "is_active", True):
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
-        out[str(m.project_id)] = {"project_id": str(m.project_id), "role": _normalize_user_role(m.role).value}
+        _refuse_agent_role(m.role)
+        entry: dict[str, object] = {"project_id": str(m.project_id), "role": _normalize_user_role(m.role).value}
+        member_extras = _clean_extras(m.additional_roles, primary=m.role)
+        if member_extras:
+            entry["additional_roles"] = member_extras
+        out[str(m.project_id)] = entry
     return list(out.values())
 
 
@@ -511,6 +663,7 @@ async def _invitation_summaries(db: AsyncSession, invitations: list[UserInvitati
             id=inv.id,
             email=inv.email,
             role=_normalize_user_role(inv.role),
+            additional_roles=_stored_extras(getattr(inv, "additional_roles", None)),
             status=invitation_status(inv, now),
             expires_at=inv.expires_at,
             created_at=inv.created_at,
@@ -522,6 +675,7 @@ async def _invitation_summaries(db: AsyncSession, invitations: list[UserInvitati
                     project_id=m["project_id"],
                     project_name=projects.get(str(m["project_id"])),
                     role=str(m.get("role") or ""),
+                    additional_roles=_stored_extras(m.get("additional_roles")),
                 )
                 for m in (inv.project_memberships or [])
                 if isinstance(m, dict) and m.get("project_id")
@@ -588,6 +742,7 @@ async def resend_invitation(
         id=invitation.id,
         email=invitation.email,
         role=invitation.role,
+        additional_roles=list(job_roles_in(getattr(invitation, "additional_roles", None))),
         expires_at=invitation.expires_at,
         invitation_link=link,
         email_sent=email_sent,
@@ -659,6 +814,7 @@ async def get_user_memberships(
             "project_id": str(pm.project_id),
             "project_name": p.name,
             "role": _normalize_user_role(pm.role).value,
+            "additional_roles": _stored_extras(getattr(pm, "additional_roles", None)),
             "created_at": pm.created_at.isoformat() if pm.created_at else None,
         }
         for pm, p in rows
@@ -727,9 +883,11 @@ async def add_project_member(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     refuse_erased(user)  # W31: an erased account never regains a membership
 
-    # Privilege-escalation guard: a non-admin cannot grant a project role above
-    # their own, nor add themselves above their current standing.
-    _enforce_grant_ceiling(current_user, payload.role, payload.user_id)
+    # Privilege-escalation guard: a non-admin cannot grant a project role (or an
+    # extra role) above their own, nor add themselves above their current standing.
+    _refuse_agent_role(payload.role)
+    extras = _clean_extras(getattr(payload, "additional_roles", None), primary=payload.role)
+    await _enforce_member_grant(db, current_user, project_id, payload.role, payload.user_id, additional_roles=extras)
 
     # Check not already a member
     existing = await db.execute(
@@ -746,10 +904,16 @@ async def add_project_member(
 
     normalized_role = _normalize_user_role(payload.role)
     logger.info("adding_project_member", project_id=str(project_id), user_id=str(payload.user_id), role=normalized_role.value, by=str(current_user.id))
-    member = ProjectMember(user_id=payload.user_id, project_id=project_id, role=normalized_role.value)
+    member = ProjectMember(
+        user_id=payload.user_id, project_id=project_id, role=normalized_role.value,
+        additional_roles=extras or None,
+    )
     db.add(member)
+    added: dict = {"role": normalized_role.value}
+    if extras:
+        added["additional_roles"] = extras
     await log_access_change(db, "member_added", current_user, target_user_id=payload.user_id,
-                            project_id=project_id, after_value={"role": normalized_role.value})
+                            project_id=project_id, after_value=added)
     await db.commit()
     await db.refresh(member)
 
@@ -772,7 +936,8 @@ async def update_project_member_role(
     """Update a project member's role. Requires QA_LEAD or higher."""
     # Privilege-escalation guard: a non-admin cannot grant a project role above
     # their own, nor change their own membership role.
-    _enforce_grant_ceiling(current_user, payload.role, user_id)
+    _refuse_agent_role(payload.role)
+    granter_project_roles = await _enforce_member_grant(db, current_user, project_id, payload.role, user_id)
 
     result = await db.execute(
         select(ProjectMember, User)
@@ -785,6 +950,17 @@ async def update_project_member_role(
 
     member, user = row
     refuse_erased(user)  # W31 (an erased account's memberships are deleted; defence in depth)
+    # Extra roles: omitted keeps them (re-cleaned against the new primary role). Only a NEWLY added extra
+    # role passes the ceiling -- removing one lowers access and keeping one an admin gave is not a grant.
+    previous_extras = _stored_extras(getattr(member, "additional_roles", None))
+    requested_extras = getattr(payload, "additional_roles", None)
+    wanted_extras = requested_extras if requested_extras is not None else previous_extras
+    new_extras = _clean_extras(wanted_extras, primary=payload.role)
+    _enforce_grant_ceiling(
+        current_user, payload.role, user_id,
+        additional_roles=[r for r in new_extras if r not in previous_extras],
+        granter_project_roles=granter_project_roles,
+    )
     # Captured BEFORE the mutation: `member` is a live ORM object, so reading
     # `member.role` after the assignment would record the new value as the old
     # one and the audit row would show a change from X to X.
@@ -792,15 +968,21 @@ async def update_project_member_role(
     # The UserRole member (a str enum: its value is the stored text), as the
     # column is typed and as update_user_role assigns User.role above.
     member.role = _normalize_user_role(payload.role)
+    member.additional_roles = new_extras or None
     logger.info("updating_project_member_role", project_id=str(project_id), user_id=str(user_id),
                 before=previous_role, after=member.role, by=str(current_user.id))
     # A privilege change inside a project was not audited at all, while the
     # grant beside it was. An admin could escalate a member to a higher project
     # role and the access trail showed only the original, lower grant.
+    before_value: dict = {"role": previous_role}
+    after_value: dict = {"role": member.role}
+    if previous_extras or new_extras:
+        before_value["additional_roles"] = previous_extras
+        after_value["additional_roles"] = new_extras
     await log_access_change(db, "member_role_changed", current_user, target_user_id=user_id,
                             project_id=project_id,
-                            before_value={"role": previous_role},
-                            after_value={"role": member.role})
+                            before_value=before_value,
+                            after_value=after_value)
     await db.commit()
     await db.refresh(member)
 

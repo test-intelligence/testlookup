@@ -26,7 +26,8 @@ from typing import Any, Optional, Protocol, runtime_checkable
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.deps import _ROLE_ORDER, _normalize_user_role
+from app.core.deps import _normalize_user_role
+from app.core.permissions import rank_index
 from app.models.postgres import ProjectMember, User, UserRole
 from app.services.agent_action_types import (
     ACTION_ERROR_SENTENCES,
@@ -165,10 +166,10 @@ async def load_approver(
         raise _refuse_approver()
     try:
         role = _normalize_user_role(approver.role)
-        rank = _ROLE_ORDER.index(role)
+        rank = rank_index(role)
     except ValueError:
         raise _refuse_approver() from None
-    if rank < _ROLE_ORDER.index(required_role):
+    if rank < rank_index(required_role):
         raise _refuse_approver()
     instance_admin = role == UserRole.ADMIN
     if instance_admin:
@@ -184,10 +185,10 @@ async def load_approver(
     if member_role is None:
         raise _refuse_approver()
     try:
-        member_rank = _ROLE_ORDER.index(_normalize_user_role(member_role))
+        member_rank = rank_index(_normalize_user_role(member_role))
     except ValueError:
         raise _refuse_approver() from None
-    if member_rank < _ROLE_ORDER.index(required_role):
+    if member_rank < rank_index(required_role):
         raise _refuse_approver()
     return approver
 

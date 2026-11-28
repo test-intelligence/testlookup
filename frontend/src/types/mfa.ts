@@ -7,9 +7,12 @@
  */
 
 /** Roles are UPPERCASE on the wire (`postgres.UserRole` is a str enum of its own names). */
-export type MfaRole = 'VIEWER' | 'TESTER' | 'QA_ENGINEER' | 'QA_LEAD' | 'ADMIN'
+import { RANK_ROLES, type RankRole, type Role } from '@/types/permissions'
 
-export const MFA_ROLES: MfaRole[] = ['VIEWER', 'TESTER', 'QA_ENGINEER', 'QA_LEAD', 'ADMIN']
+/** The MFA floor is a rank (job roles are named in `required_roles` instead). */
+export type MfaRole = RankRole
+
+export const MFA_ROLES: MfaRole[] = [...RANK_ROLES]
 
 /** The second factors `/auth/mfa/verify` accepts. Always `["totp", "recovery_code"]` today. */
 export type MfaMethod = 'totp' | 'recovery_code'
@@ -159,6 +162,8 @@ export interface MfaPolicy {
   require_mfa: boolean
   /** null = the requirement applies to every role. */
   required_for_role: MfaRole | null
+  /** Enterprise roles E00-S05: roles that need MFA whatever the floor (primary or extra role). Older servers omit it. */
+  required_roles?: Role[]
   lockout_enabled: boolean
   lockout_threshold: number
   lockout_duration_minutes: number
@@ -167,6 +172,8 @@ export interface MfaPolicy {
 export interface MfaPolicyUpdate {
   require_mfa?: boolean
   required_for_role?: MfaRole | null
+  /** `[]` clears the list; omitted keeps it. AGENT is refused. */
+  required_roles?: Role[]
   lockout_enabled?: boolean
   /** Backend bounds: 3..100. */
   lockout_threshold?: number

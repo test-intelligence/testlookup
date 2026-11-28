@@ -19,6 +19,7 @@ from app.services.auth_session_tokens import issue_access_jwt
 from app.services.refresh_token_service import issue_refresh_token
 from app.db.postgres import get_db
 from app.core.token_revocation import RevocationUnavailable, revoke_all_user_tokens
+from app.core.permissions import EXTRA_ROLE_CHOICES, LADDER
 from app.models.postgres import (
     FederatedIdentity,
     IdentityEventType,
@@ -81,6 +82,10 @@ def _jit_refusal(user: User, is_new: bool) -> Optional[str]:
     if is_new and is_reserved_identity(username=user.username, email=user.email):
         return USERNAME_RESERVED_DETAIL
     return None
+
+#: Enterprise roles E00-S05: a group maps to a rank (the user's role) or a job role (an extra role).
+#: Never AGENT. ``default_role`` stays a rank.
+_MAPPABLE_ROLES: tuple[str, ...] = tuple(r.value for r in (*LADDER, *EXTRA_ROLE_CHOICES))
 
 router = APIRouter(prefix="/api/v1/sso", tags=["SSO / SAML"])
 
@@ -789,7 +794,7 @@ async def create_sso_config(
 
     # Validate role mapping values
     if payload.role_mapping:
-        valid_roles = {r.value for r in UserRole}
+        valid_roles = _MAPPABLE_ROLES
         for group_name, role_value in payload.role_mapping.items():
             if role_value not in valid_roles:
                 raise HTTPException(
@@ -889,7 +894,7 @@ async def update_sso_config(
 
     # Validate role mapping if being updated
     if "role_mapping" in update_data and update_data["role_mapping"]:
-        valid_roles = {r.value for r in UserRole}
+        valid_roles = _MAPPABLE_ROLES
         for group_name, role_value in update_data["role_mapping"].items():
             if role_value not in valid_roles:
                 raise HTTPException(
@@ -1001,10 +1006,10 @@ async def preview_sso_role(
     config = (await db.execute(select(SSOConfiguration).where(SSOConfiguration.id == config_id))).scalar_one_or_none()
     if not config:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="SSO configuration not found")
-    valid_roles = {r.value for r in UserRole}
+    valid_roles = {r.value for r in LADDER}
     mapping = payload.role_mapping if payload.role_mapping is not None else (config.role_mapping or {})
     for group_name, role_value in mapping.items():
-        if role_value not in valid_roles:
+        if role_value not in _MAPPABLE_ROLES:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Invalid role '{role_value}' in role_mapping for group '{group_name}'",

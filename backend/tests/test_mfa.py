@@ -1299,6 +1299,8 @@ class TestPolicy:
             "lockout_enabled": True,
             "lockout_threshold": 4,
             "lockout_duration_minutes": 15,
+            # Enterprise roles E00-S05: roles that need MFA whatever the floor (none set here).
+            "required_roles": [],
         }
 
         events = (

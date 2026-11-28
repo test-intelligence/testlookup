@@ -159,6 +159,33 @@ describe('MfaPolicyPage', () => {
     expect(mockUpdatePolicy.mock.calls[0][0]).not.toHaveProperty('clear_required_for_role')
   })
 
+  it('requires MFA from chosen job roles, sending the list only when it changes (enterprise roles E00-S05)', async () => {
+    mockGetPolicy.mockResolvedValue({ ...LIVE_DEFAULTS, require_mfa: true, required_for_role: 'ADMIN', required_roles: [] })
+    mockUpdatePolicy.mockResolvedValue({
+      ...LIVE_DEFAULTS, require_mfa: true, required_for_role: 'ADMIN', required_roles: ['DEVELOPER'],
+    })
+    renderPage()
+    const developer = await screen.findByLabelText('Developer')
+    expect(developer).toBeEnabled()
+    fireEvent.click(developer)
+    fireEvent.click(screen.getByRole('button', { name: /save policy/i }))
+    await waitFor(() =>
+      expect(mockUpdatePolicy).toHaveBeenCalledWith({
+        require_mfa: true,
+        lockout_enabled: true,
+        lockout_threshold: 10,
+        lockout_duration_minutes: 15,
+        required_for_role: 'ADMIN',
+        required_roles: ['DEVELOPER'],
+      }),
+    )
+  })
+
+  it('turns the job-role list off while MFA applies to everyone', async () => {
+    renderPage()
+    expect(await screen.findByLabelText('Release Manager')).toBeDisabled()
+  })
+
   it('saves lockout-only changes without any confirmation', async () => {
     mockUpdatePolicy.mockResolvedValue({ ...LIVE_DEFAULTS, lockout_threshold: 5 })
     renderPage()

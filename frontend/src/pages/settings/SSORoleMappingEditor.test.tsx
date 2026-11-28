@@ -55,6 +55,24 @@ describe('SSORoleMappingEditor (W20 ADM-08a)', () => {
     expect(preview).toHaveBeenCalledWith('cfg-1', { groups: ['qa-leads', 'other'], role_mapping: { 'qa-leads': 'QA_LEAD' }, default_role: 'VIEWER' })
   })
 
+  it('maps a group to a job role as an extra role; the default role stays a rank (enterprise roles E00-S05)', async () => {
+    preview.mockResolvedValue({
+      role: 'QA_LEAD', matched_groups: ['qa-leads'], source: 'mapping', ceiling: 'ADMIN', clamped: false,
+      additional_roles: ['RELEASE_MANAGER'], additional_matched_groups: { RELEASE_MANAGER: ['release'] },
+    })
+    render(<SSORoleMappingEditor config={CONFIG} onSaved={vi.fn()} />)
+    const rowRoles = Array.from((screen.getByLabelText('Role for group 1') as HTMLSelectElement).options).map((o) => o.value)
+    expect(rowRoles).toEqual([
+      'VIEWER', 'TESTER', 'QA_ENGINEER', 'QA_LEAD', 'ADMIN',
+      'RELEASE_MANAGER', 'PROJECT_MANAGER', 'PRODUCT_MANAGER', 'DEVELOPER',
+    ])
+    const defaults = Array.from((screen.getByLabelText('Default role') as HTMLSelectElement).options).map((o) => o.value)
+    expect(defaults).toEqual(['VIEWER', 'TESTER', 'QA_ENGINEER', 'QA_LEAD'])
+    fireEvent.change(screen.getByLabelText('Groups to preview'), { target: { value: 'qa-leads, release' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Preview' }))
+    expect(await screen.findByTestId('sso-role-preview-extras')).toHaveTextContent('+ Release Manager (from release)')
+  })
+
   it('refuses to save a group listed twice', () => {
     render(<SSORoleMappingEditor config={CONFIG} onSaved={vi.fn()} />)
     fireEvent.click(screen.getByRole('button', { name: /add group/i }))

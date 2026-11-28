@@ -6,7 +6,31 @@ What each settings page shows, field by field, is in the in-app guide: **Setting
 
 ## Roles and access
 
-Five roles, each including the abilities of those below it: `VIEWER` < `TESTER` < `QA_ENGINEER` < `QA_LEAD` < `ADMIN`. Project membership decides which projects a user sees; the role decides what they can do there.
+Each person has a **role** for the whole instance and, in every project they belong to, a **project role**. Project membership decides which projects a user sees; the roles decide what they can do there. There are ten roles.
+
+**Five ranks**, each including the abilities of those below it: `VIEWER` < `TESTER` < `QA_ENGINEER` < `QA_LEAD` < `ADMIN`.
+
+**Four job roles** for the rest of a release team, and one for AI agents:
+
+| Role | For |
+|---|---|
+| `RELEASE_MANAGER` | Owns each release end to end: readiness, sign-offs, the go / no-go call |
+| `PROJECT_MANAGER` | Owns the schedule: phase dates, plan assignees, risks, status reports |
+| `PRODUCT_MANAGER` | Owns requirements and acceptance: acceptance criteria, UAT, acceptance sign-off |
+| `DEVELOPER` | Fixes what breaks: triages their own failures, proposes quarantine, links fixes |
+| `AGENT` | A registered AI agent. Never given to a person |
+
+A job role ranks as `VIEWER`. Until the pages built for each job are released (release cockpit, delivery plan, feature readiness, developer inbox), someone whose only role is a job role reads what a viewer reads and changes nothing.
+
+**Extra roles.** A person can hold job roles on top of their role: a QA engineer who is also the release manager, a developer who is also a product manager. The role alone sets the rank; extra roles only add what those jobs may do. Administrators set them under **Users** (Edit, Add User, Invite User) for the whole instance, and under **Members & access** (**Extra roles** under a member) for one project.
+
+**The lower of the two decides.** In a project, what someone may change is what both their instance roles and their project roles allow. A QA lead who is a viewer in one project only reads there; a viewer given QA lead in a project still cannot change anything there. What they may read follows the project role.
+
+**Who may give which role.** Only administrators change instance roles and instance extra roles, and only administrators give the release manager, project manager and product manager roles, in any project: those people own sign-offs, schedules and acceptance. A QA lead may give any other project role, or project extra role, when they hold every permission it carries in that project: they can make someone a developer, tester, QA engineer or viewer there, but not an administrator. **Members & access** offers a QA lead only the roles they may give (a manager role a member already holds stays shown, and can be removed). The refusal names what is missing. Nobody changes their own role, and these pages never give `AGENT`.
+
+**SSO, SCIM and MFA.** An identity-provider group mapped to a job role adds it as an extra role; it never competes for the rank (see [Single sign-on](#single-sign-on-saml-and-scim)). Release and product managers sign off releases, so an MFA policy that applies from QA lead up covers them; **Also require it from** names job roles that need MFA whatever the level (see [Workspace policy](#workspace-policy-admin)).
+
+The pages below are offered by rank:
 
 - **The settings area** (the sidebar's **Admin**, `/settings` and every settings page except **Profile**, **My notifications** and **My API keys**) needs **`QA_LEAD` or `ADMIN`**.
 - **Administrator only, read and write**: **SSO & identity**, **Feature flags**, **MFA & lockout**, **Retention & purge** (the pages, which only an administrator is offered; through the API a QA lead can also read the MFA policy, and any project member a project's retention policy), **Project data** (import and reset; a QA lead with the project can export), changing user roles and project membership, generating streaming (project-bound) API keys.
@@ -48,7 +72,7 @@ Where these go for your deployment is in the [configuration reference](../docs/o
 
 Then, in **Settings → Security & access → SSO & identity** (administrators):
 
-1. **SSO Configuration**: enter the identity provider's **IdP Entity ID**, **IdP SSO URL** and **IdP Certificate (PEM)**; TestLookup's **SP Entity ID** and **SP ACS URL** (`<SAML_BASE_URL>/api/v1/sso/acs`; the SP metadata is at `/api/v1/sso/metadata`); an optional **Group Attribute**; the enforcement (**Optional (password login allowed)** or **SSO Required (admin fallback only)**); and the **default role** for new SSO users (Viewer, Tester, QA Engineer or QA Lead). Mapping identity-provider groups to roles (`role_mapping`) is set through the SSO configuration API (`/api/v1/sso/configs`).
+1. **SSO Configuration**: enter the identity provider's **IdP Entity ID**, **IdP SSO URL** and **IdP Certificate (PEM)**; TestLookup's **SP Entity ID** and **SP ACS URL** (`<SAML_BASE_URL>/api/v1/sso/acs`; the SP metadata is at `/api/v1/sso/metadata`); an optional **Group Attribute**; the enforcement (**Optional (password login allowed)** or **SSO Required (admin fallback only)**); and the **default role** for new SSO users (Viewer, Tester, QA Engineer or QA Lead). Mapping identity-provider groups to roles (`role_mapping`) is set through the SSO configuration API (`/api/v1/sso/configs`). A group mapped to a rank sets the user's role (the highest wins); a group mapped to a job role adds it as an extra role. When the mapping names a job role, each sign-in sets the user's extra roles to what their groups give; otherwise an administrator manages them. SCIM group mappings to a project work the same way: the highest rank is the project role, job-role groups add project extra roles, and leaving the group removes them.
 2. **Test Connection** checks the certificate and reaches the identity provider's SSO URL.
 3. **Activate**. Activating an **SSO Required** configuration asks for confirmation, because password sign-in then works only for administrators (and only while `SSO_ADMIN_FALLBACK_ENABLED` is on).
 4. For provisioning, **SCIM Tokens → Generate Token** (shown once) and give it to the identity provider with the SCIM base URL `<your API URL>/api/v1/scim/v2`.
@@ -106,7 +130,8 @@ Requires your password **and** a live second factor. If workspace policy require
 | Setting | Default | What it does |
 |---|---|---|
 | Require MFA to sign in | off | Master switch for the requirement. Enrollment is always *available* regardless. |
-| Applies to | everyone | MFA is required for the chosen role **and every role above it**, or for everyone. |
+| Applies to | everyone | MFA is required for the chosen role **and every role above it**, or for everyone. Release and product managers count as QA lead here. |
+| Also require it from | none | Job roles (release manager, project manager, product manager, developer) that need MFA whatever **Applies to** says, held as a role or an extra role. Off while the policy applies to everyone. |
 | Lock accounts after repeated failures | **on** | See below. |
 | Failed attempts before lockout | 10 | Consecutive failures before the account locks (3–100). |
 | Lockout duration | 15 min | How long the lock lasts (1–1440 minutes). |

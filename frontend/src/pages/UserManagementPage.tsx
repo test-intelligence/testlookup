@@ -48,8 +48,13 @@ import {
   personalDataLabel,
 } from '@/components/subjectRights/erasureModel'
 import type { Project } from '@/types/projects'
+import type { JobRole } from '@/types/permissions'
+import { ExtraRolesPicker } from '@/components/roles/ExtraRolesPicker'
+import { jobRolesIn } from '@/lib/roles'
+import { PERSON_ROLE_OPTIONS, ROLE_INFO, rolesSummary } from '@/content/roles'
 
-const ROLES: UserRole[] = ['VIEWER', 'TESTER', 'QA_ENGINEER', 'QA_LEAD', 'ADMIN']
+/** Roles a person may hold (enterprise roles E00): the five ranks, then the four job roles. Never AGENT. */
+const ROLES: UserRole[] = PERSON_ROLE_OPTIONS.map((option) => option.value)
 
 /** D-79: why a shared project account is off, and how it comes back (S-D-3). */
 const SHARED_ACCOUNT_OFF_HINT =
@@ -61,6 +66,24 @@ const ROLE_COLORS: Record<UserRole, string> = {
   QA_ENGINEER: 'bg-[var(--status-passed-bg)]/50 text-[var(--status-passed)]',
   QA_LEAD: 'bg-[var(--status-broken-bg)]/50 text-[var(--status-broken)]',
   ADMIN: 'bg-[var(--status-failed-bg)]/50 text-[var(--status-failed)]',
+  // Job roles and AGENT: neutral tokens, never status hues (a job is not a pass / fail state).
+  RELEASE_MANAGER: 'bg-[var(--color-bg-hover)] text-[var(--color-text)]',
+  PROJECT_MANAGER: 'bg-[var(--color-bg-hover)] text-[var(--color-text)]',
+  PRODUCT_MANAGER: 'bg-[var(--color-bg-hover)] text-[var(--color-text)]',
+  DEVELOPER: 'bg-[var(--color-bg-hover)] text-[var(--color-text)]',
+  AGENT: 'bg-[var(--color-bg-secondary)] text-[var(--color-text-muted)]',
+}
+
+/** "+ Release Manager, Developer" under a role, when the person holds extra roles. */
+function ExtraRolesLine({ extras }: { extras?: readonly string[] }) {
+  const held = jobRolesIn(extras)
+  if (held.length === 0) return null
+  const text = `+ ${held.map((r) => ROLE_INFO[r].label).join(', ')}`
+  return (
+    <div data-extra-roles-line="" className="mt-0.5 max-w-[150px] truncate text-2xs text-[var(--color-text-muted)]" title={text}>
+      {text}
+    </div>
+  )
 }
 
 /**
@@ -357,13 +380,14 @@ function UsersTab({ canManageUsers, isAdmin }: { canManageUsers: boolean; isAdmi
                       onChange={(e) => handleRoleChange(user.id, e.target.value as UserRole)}
                       className="bg-[var(--color-bg-hover)] border border-[var(--color-border-light)] text-[var(--color-text)] text-xs rounded px-2 py-1"
                     >
-                      {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
+                      {ROLES.map((r) => <option key={r} value={r} title={ROLE_INFO[r].description}>{r}</option>)}
                     </select>
                   ) : (
-                    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium ${ROLE_COLORS[user.role]}`}>
+                    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium ${ROLE_COLORS[user.role] ?? ROLE_COLORS.VIEWER}`}>
                       <Shield className="h-3 w-3" />{user.role}
                     </span>
                   )}
+                  {!erased && <ExtraRolesLine extras={user.additional_roles} />}
                 </td>
                 <td className="px-4 py-3">
                   {erased ? (
@@ -514,6 +538,8 @@ function EditUserModal({ user, onClose, slot }: { user: UserItem; onClose: () =>
   const [username, setUsername] = useState(user.username)
   const [fullName, setFullName] = useState(user.full_name ?? '')
   const [role, setRole] = useState<UserRole>(user.role)
+  const initialExtras = jobRolesIn(user.additional_roles)
+  const [extras, setExtras] = useState<JobRole[]>(initialExtras)
   const [isActive, setIsActive] = useState(user.is_active)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -546,6 +572,8 @@ function EditUserModal({ user, onClose, slot }: { user: UserItem; onClose: () =>
       if (username !== user.username) updates.username = username
       if (fullName !== (user.full_name ?? '')) updates.full_name = fullName || null
       if (role !== user.role) updates.role = role
+      const keptExtras = extras.filter((r) => r !== role)
+      if (keptExtras.join(',') !== initialExtras.join(',')) updates.additional_roles = keptExtras
       if (isActive !== user.is_active) updates.is_active = isActive
 
       if (Object.keys(updates).length > 0) {
@@ -663,7 +691,7 @@ function EditUserModal({ user, onClose, slot }: { user: UserItem; onClose: () =>
                 onChange={e => setRole(e.target.value as UserRole)}
                 className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 focus:outline-none focus:border-[var(--color-border)]"
               >
-                {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
+                {ROLES.map(r => <option key={r} value={r} title={ROLE_INFO[r].description}>{r}</option>)}
               </select>
             </div>
             <div>
@@ -678,6 +706,9 @@ function EditUserModal({ user, onClose, slot }: { user: UserItem; onClose: () =>
               </select>
             </div>
           </div>
+          {role !== 'AGENT' && (
+            <ExtraRolesPicker idPrefix={`edit-extra-${user.id}`} value={extras} onChange={setExtras} primary={role} />
+          )}
 
           {/* Project memberships */}
           <div className="border-t border-[var(--color-border)] pt-4">
@@ -745,6 +776,7 @@ function AddUserModal({ onClose, slot }: { onClose: () => void; slot?: InlineSlo
   const [username, setUsername] = useState('')
   const [fullName, setFullName] = useState('')
   const [role, setRole] = useState<UserRole>('QA_ENGINEER')
+  const [extras, setExtras] = useState<JobRole[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<{ id: string; username: string; temp_password: string } | null>(null)
@@ -768,7 +800,11 @@ function AddUserModal({ onClose, slot }: { onClose: () => void; slot?: InlineSlo
     setLoading(true)
     setError(null)
     try {
-      const res = await userManagementService.createUser(email, username, role, fullName || undefined)
+      // Extra roles only when chosen: the call (and the request body) stays what it was without them.
+      const chosenExtras = extras.filter((r) => r !== role)
+      const res = chosenExtras.length
+        ? await userManagementService.createUser(email, username, role, fullName || undefined, chosenExtras)
+        : await userManagementService.createUser(email, username, role, fullName || undefined)
       setResult({ id: res.id, username: res.username, temp_password: res.temp_password })
       refreshUsers()
       toast.success('User created')
@@ -908,10 +944,11 @@ function AddUserModal({ onClose, slot }: { onClose: () => void; slot?: InlineSlo
                 <label htmlFor="user-field-8" className="block text-sm text-[var(--color-text-muted)] mb-1">Role</label>
                 <select id="user-field-8" value={role} onChange={(e) => setRole(e.target.value as UserRole)}
                   className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 focus:outline-none focus:border-[var(--color-border)]">
-                  {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
+                  {ROLES.map((r) => <option key={r} value={r} title={ROLE_INFO[r].description}>{r}</option>)}
                 </select>
               </div>
             </div>
+            <ExtraRolesPicker idPrefix="add-extra" value={extras} onChange={setExtras} primary={role} />
             <FormError message={error} />
             <div className="flex justify-end gap-2 pt-2">
               <button type="button" onClick={onClose} className="text-sm text-[var(--color-text-muted)] hover:text-[var(--color-text)] px-4 py-2">Cancel</button>
@@ -932,6 +969,7 @@ function AddUserModal({ onClose, slot }: { onClose: () => void; slot?: InlineSlo
 function InviteUserModal({ onClose, slot }: { onClose: () => void; slot?: InlineSlot }) {
   const [email, setEmail] = useState('')
   const [role, setRole] = useState<UserRole>('QA_ENGINEER')
+  const [extras, setExtras] = useState<JobRole[]>([])
   const [projects, setProjects] = useState<Project[]>([])
   const [projectIds, setProjectIds] = useState<string[]>([])
   const [loading, setLoading] = useState(false)
@@ -955,11 +993,16 @@ function InviteUserModal({ onClose, slot }: { onClose: () => void; slot?: Inline
     setError(null)
     try {
       // W17b ADM-01: the invitee joins the chosen projects, with the invited role, when they accept.
-      const res = await userManagementService.inviteUser(
-        email,
-        role,
-        projectIds.map((project_id) => ({ project_id, role })),
-      )
+      // Enterprise roles D-16: and with the invited extra roles, globally and in each project.
+      const chosenExtras = extras.filter((r) => r !== role)
+      const res = chosenExtras.length
+        ? await userManagementService.inviteUser(
+          email,
+          role,
+          projectIds.map((project_id) => ({ project_id, role, additional_roles: chosenExtras })),
+          chosenExtras,
+        )
+        : await userManagementService.inviteUser(email, role, projectIds.map((project_id) => ({ project_id, role })))
       setResult(res)
       refreshUsers()
       void refreshInvitations()
@@ -1010,9 +1053,10 @@ function InviteUserModal({ onClose, slot }: { onClose: () => void; slot?: Inline
               <label htmlFor="user-field-10" className="block text-sm text-[var(--color-text-muted)] mb-1">Role</label>
               <select id="user-field-10" value={role} onChange={(e) => setRole(e.target.value as UserRole)}
                 className="w-full bg-[var(--color-bg-card)] border border-[var(--color-border)] text-[var(--color-text)] text-sm rounded px-3 py-2 focus:outline-none focus:border-[var(--color-border)]">
-                {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
+                {ROLES.map((r) => <option key={r} value={r} title={ROLE_INFO[r].description}>{r}</option>)}
               </select>
             </div>
+            <ExtraRolesPicker idPrefix="invite-extra" value={extras} onChange={setExtras} primary={role} />
             {projects.length > 0 && (
               <fieldset>
                 <legend className="block text-sm text-[var(--color-text-muted)] mb-1">Projects (optional)</legend>
@@ -1024,7 +1068,7 @@ function InviteUserModal({ onClose, slot }: { onClose: () => void; slot?: Inline
                     </label>
                   ))}
                 </div>
-                <p className="mt-1 text-xs text-[var(--color-text-faint)]">They join these projects as {role} when they accept.</p>
+                <p className="mt-1 text-xs text-[var(--color-text-faint)]">They join these projects as {rolesSummary(role, extras.filter((r) => r !== role))} when they accept.</p>
               </fieldset>
             )}
             <FormError message={error} />

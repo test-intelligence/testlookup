@@ -891,10 +891,10 @@ async def _map_people(db: AsyncSession, pre: _Preflight) -> dict[uuid.UUID, _Per
 def _role_rank(role: Any) -> int:
     """The shared role ranking (``app.core.deps._ROLE_ORDER``, the members router's ceiling rule): -1 when the
     value is not a role this deployment knows."""
-    from app.core.deps import _ROLE_ORDER, _normalize_user_role
+    from app.core.permissions import rank_index
 
     try:
-        return _ROLE_ORDER.index(_normalize_user_role(role))
+        return rank_index(role)
     except ValueError:
         return -1
 
@@ -1410,9 +1410,9 @@ def _reviewers(copy: Mapping[uuid.UUID, tuple[str, str, bool]]) -> set[uuid.UUID
 
 def _role_name(rank: int) -> str:
     """The role at ``rank`` of the shared ranking ("" for -1)."""
-    from app.core.deps import _ROLE_ORDER
+    from app.core.permissions import LADDER
 
-    return _ROLE_ORDER[rank].value if rank >= 0 else ""
+    return LADDER[rank].value if rank >= 0 else ""
 
 
 def _decide_reviews(ctx: _Context, pre: _Preflight, reviewers: set[uuid.UUID]) -> None:

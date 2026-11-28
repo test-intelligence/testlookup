@@ -26,8 +26,8 @@ from sqlalchemy import func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.permissions import rank_index
 from app.core.deps import (
-    _ROLE_ORDER,
     PROJECT_ADMIN_SCOPE,
     _api_key_bound_project,
     _normalize_user_role,
@@ -533,7 +533,7 @@ async def mark_failed(db: AsyncSession, job_id: uuid.UUID, *, code: str, now: da
 
 def _role_index(user: User) -> int:
     try:
-        return _ROLE_ORDER.index(_normalize_user_role(user.role))
+        return rank_index(_normalize_user_role(user.role))
     except ValueError:
         return -1
 
@@ -548,8 +548,8 @@ async def may_read_job(db: AsyncSession, job: ProjectDataJob, user: User) -> boo
         return False
     role = _role_index(user)
     if job.kind == KIND_IMPORT:
-        return role == _ROLE_ORDER.index(UserRole.ADMIN) and job.requested_by_id == user.id
-    if job.kind != KIND_EXPORT or role < _ROLE_ORDER.index(UserRole.QA_LEAD):
+        return role == rank_index(UserRole.ADMIN) and job.requested_by_id == user.id
+    if job.kind != KIND_EXPORT or role < rank_index(UserRole.QA_LEAD):
         return False
     accessible = await get_accessible_project_ids(db, user)
     if accessible is None:          # ADMIN: every project

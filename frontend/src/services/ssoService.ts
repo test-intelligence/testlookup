@@ -184,6 +184,9 @@ export interface SSORolePreview {
   source: 'mapping' | 'default';
   ceiling: string;
   clamped: boolean;
+  /** Enterprise roles E00-S05: extra job roles the groups add, and the groups that added each. Older servers omit them. */
+  additional_roles?: string[];
+  additional_matched_groups?: Record<string, string[]>;
 }
 
 export async function previewSSORole(

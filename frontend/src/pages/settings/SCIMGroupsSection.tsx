@@ -11,8 +11,10 @@ import { Plus, Trash2 } from 'lucide-react'
 import { listSCIMGroups, putSCIMGroupMappings, type SCIMGroupSummary } from '@/services/ssoService'
 import { projectsService } from '@/services/projectsService'
 import { extractErrorMessage } from '@/services/apiErrors'
+import { isJobRole, roleLabel } from '@/content/roles'
 
-const ROLE_LABEL: Record<string, string> = { VIEWER: 'Viewer', TESTER: 'Tester', QA_ENGINEER: 'QA Engineer', QA_LEAD: 'QA Lead' }
+/** Enterprise roles E00-S05: a group mapped to a job role adds it as an extra role in the project. */
+const roleOptionLabel = (role: string) => (isJobRole(role) ? `${roleLabel(role)} (extra role)` : roleLabel(role))
 type Row = { project_id: string; role: string }
 
 const errorOf = (err: unknown, fallback: string) =>
@@ -59,7 +61,7 @@ function GroupCard({ group, projects, roles, onSaved }: {
           </select>
           <select aria-label={`Role ${i + 1}`} value={r.role} className={`${field} !w-40 shrink-0`}
             onChange={(e) => setRows((rs) => rs.map((x, k) => (k === i ? { ...x, role: e.target.value } : x)))}>
-            {roles.map((role) => <option key={role} value={role}>{ROLE_LABEL[role] ?? role}</option>)}
+            {roles.map((role) => <option key={role} value={role}>{roleOptionLabel(role)}</option>)}
           </select>
           <button type="button" aria-label={`Remove grant ${i + 1}`} onClick={() => setRows((rs) => rs.filter((_, k) => k !== i))}
             className="p-1 text-[var(--color-text-muted)] hover:text-[var(--ui-danger)]">
