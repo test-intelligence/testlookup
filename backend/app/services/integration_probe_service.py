@@ -27,6 +27,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Optional
 
 from app.core.http_client import get_http_client, get_integration_http_client
+from app.services.prometheus_policy import prometheus_offline_reason
 from app.services.url_safety import egress_block_reason
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -499,9 +500,10 @@ async def probe_prometheus(config: dict | None = None) -> ProbeResult:
     """
     from app.services.prometheus_vocab import PROBE_SENTENCES
 
-    refused = _offline_hard_gate("prometheus")
-    if refused:
-        return refused
+    if prometheus_offline_reason() is not None:
+        return ProbeResult(
+            "prometheus", "skipped", message="AI_OFFLINE_MODE=true -- outbound prometheus calls are disabled"
+        )
     config = config or {}
     base_url = (config.get("prometheus_base_url") or "").strip().rstrip("/")
     token = config.get("prometheus_bearer_token")
