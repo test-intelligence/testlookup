@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# install.sh — one-command remote install for TestLookup (no git clone needed).
+# install.sh — authenticated release install for TestLookup (no git clone needed).
 #
-#   curl -fsSL https://raw.githubusercontent.com/test-intelligence/testlookup/main/install.sh | bash
+# Download this file from a versioned GitHub release and verify its immutable
+# release-asset digest and signed provenance before running it. README.md
+# documents that bootstrap sequence.
 #
 # It downloads the pinned-image release stack, verifies the release's signed
 # image manifest, generates a local .env with random secrets, and brings the
@@ -33,9 +35,9 @@
 #   TL_RELEASE_BASE=<url>    where release verification assets come from (default
 #                            https://github.com/test-intelligence/testlookup/releases/download)
 #
-# The checksum step protects the files this script downloads. It cannot check
-# this script itself: for that, download install.sh and SHA256SUMS from the
-# release page and compare them before running it.
+# The checksum step protects the files this script downloads. The documented
+# bootstrap separately authenticates this script's versioned release asset
+# before Bash interprets it.
 #
 # Everything runs from main(), called on the last line: a download cut short
 # by the network defines functions but runs nothing.
@@ -442,7 +444,7 @@ EOF
     echo "Demo projects load in the background once the database is ready:"
     echo "  $DC $COMPOSE_ARGS logs -f seed-init"
   else
-    echo "Want demo data? Re-run with: curl -fsSL <install.sh URL> | TL_PROFILE=demo bash"
+    echo "Want demo data? Re-run the authenticated release installer with TL_PROFILE=demo."
   fi
 }
 

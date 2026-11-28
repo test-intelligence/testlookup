@@ -34,6 +34,7 @@ on:
     paths:
       - "deploy/images.manifest.txt"
       - "scripts/release/**"
+      - "install.sh"
       - "docker-compose*.yml"
       - "k8s/**"
       - "openshiftsetup/**"
@@ -44,6 +45,7 @@ on:
     paths:
       - "deploy/images.manifest.txt"
       - "scripts/release/**"
+      - "install.sh"
       - "docker-compose*.yml"
       - "k8s/**"
       - "openshiftsetup/**"
@@ -250,17 +252,19 @@ jobs:
           test "$(sha256sum verified-images/release-manifest.json | cut -d' ' -f1)" = \
             "$(sha256sum dist/release-manifest.json | cut -d' ' -f1)"
 
-      # M-14: checksums of install.sh and every file it downloads, from the
-      # git blobs raw.githubusercontent.com serves for this ref.
-      - name: Installer checksums
+      # Publish the installer from the release tag itself, beside checksums of
+      # it and every file it downloads. The provenance step below signs this
+      # exact installer before it becomes a release asset.
+      - name: Installer artifact and checksums
         run: |
           set -euo pipefail
+          git show HEAD:install.sh > dist/install.sh
           for path in install.sh docker-compose.release.yml .env.example scripts/gen-dev-env.sh scripts/init-db.sql; do
             printf '%s  %s\n' "$(git show "HEAD:$path" | sha256sum | cut -d' ' -f1)" "$path"
           done > dist/SHA256SUMS
           cat dist/SHA256SUMS
 
-      # Signed SLSA build provenance for the four release files, recorded in
+      # Signed SLSA build provenance for the five release files, recorded in
       # Sigstore's public log and this repository's attestations. The bundle is
       # also kept as testlookup-offline-<version>.intoto.jsonl so it can be
       # attached to the GitHub release with the files it covers: OpenSSF
@@ -287,6 +291,7 @@ jobs:
           subject-path: |
             dist/testlookup-offline-${{ env.BUNDLE_VERSION }}.tar.gz
             dist/testlookup-offline-${{ env.BUNDLE_VERSION }}.tar.gz.sha256
+            dist/install.sh
             dist/SHA256SUMS
             dist/release-manifest.json
 
@@ -335,6 +340,7 @@ jobs:
           path: |
             dist/testlookup-offline-${{ env.BUNDLE_VERSION }}.tar.gz
             dist/testlookup-offline-${{ env.BUNDLE_VERSION }}.tar.gz.sha256
+            dist/install.sh
             dist/SHA256SUMS
             dist/release-manifest.json
             dist/*.intoto.jsonl

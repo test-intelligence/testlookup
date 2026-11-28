@@ -80,13 +80,78 @@ The lite stack omits Ollama, ChromaDB, Flower, the MCP server and the beat sched
 
 ## Release images without a clone
 
-`install.sh` installs TestLookup from published images, with nothing built from source. Published releases require Docker with Compose v2, Bash, and the [GitHub CLI](https://cli.github.com/) for provenance verification:
+`install.sh` installs TestLookup from published images, with nothing built from source. Published releases require Docker with Compose v2, Bash, and a [GitHub CLI](https://cli.github.com/) version that provides `gh api`, `gh release download`, and `gh release verify-asset` plus artifact provenance verification. Authenticate with `gh auth login`, or set `GH_TOKEN`; a fine-grained token needs Contents and Attestations read access to this repository. Download the installer from an eligible immutable release and authenticate both its release-asset digest and workflow provenance before execution:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/test-intelligence/testlookup/main/install.sh | bash
+(
+  set -euo pipefail
+  TL_REPOSITORY="test-intelligence/testlookup"
+  TL_RELEASE_FILTER='
+    .tag_name as $tag
+    | ([.assets[].name]) as $assets
+    | select(
+        .draft == false
+        and .prerelease == false
+        and .immutable == true
+        and ($tag | test("^v[0-9]+\\.[0-9]+\\.[0-9]+$"))
+        and (($assets | index("install.sh")) != null)
+        and (($assets | index("testlookup-offline-\($tag | ltrimstr("v")).intoto.jsonl")) != null)
+      )
+    | .tag_name
+  '
+  if [ -n "${TL_INSTALLER_VERSION:-}" ]; then
+    [[ "$TL_INSTALLER_VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+      printf 'error: TL_INSTALLER_VERSION must be a vX.Y.Z release tag.\n' >&2
+      exit 1
+    }
+    TL_SELECTED="$(gh api "repos/${TL_REPOSITORY}/releases/tags/${TL_INSTALLER_VERSION}" \
+      --jq "$TL_RELEASE_FILTER")" || {
+      printf 'error: could not inspect %s; run gh auth login or set GH_TOKEN.\n' "$TL_INSTALLER_VERSION" >&2
+      exit 1
+    }
+    [ "$TL_SELECTED" = "$TL_INSTALLER_VERSION" ] || {
+      printf 'error: %s is not an eligible immutable installer release with install.sh and its version-matched provenance bundle.\n' "$TL_INSTALLER_VERSION" >&2
+      exit 1
+    }
+  else
+    TL_CANDIDATES="$(gh api --paginate "repos/${TL_REPOSITORY}/releases?per_page=100" \
+      --jq ".[] | ${TL_RELEASE_FILTER}")" || {
+      printf 'error: could not inspect TestLookup releases; run gh auth login or set GH_TOKEN.\n' >&2
+      exit 1
+    }
+    TL_INSTALLER_VERSION="${TL_CANDIDATES%%$'\n'*}"
+    [ -n "$TL_INSTALLER_VERSION" ] || {
+      printf 'error: no eligible immutable TestLookup release includes install.sh and its version-matched provenance bundle; use a source clone until one is published.\n' >&2
+      exit 1
+    }
+  fi
+  TL_BUNDLE="testlookup-offline-${TL_INSTALLER_VERSION#v}.intoto.jsonl"
+  TL_BOOTSTRAP="$(mktemp -d)"
+  trap 'rm -rf "$TL_BOOTSTRAP"' EXIT
+  gh release download "$TL_INSTALLER_VERSION" --repo test-intelligence/testlookup \
+    --pattern install.sh --pattern "$TL_BUNDLE" --dir "$TL_BOOTSTRAP" || {
+      printf 'error: failed to download the authenticated installer assets for %s.\n' "$TL_INSTALLER_VERSION" >&2
+      exit 1
+    }
+  gh release verify-asset "$TL_INSTALLER_VERSION" "$TL_BOOTSTRAP/install.sh" \
+    --repo test-intelligence/testlookup || {
+      printf 'error: install.sh failed immutable release-asset verification for %s.\n' "$TL_INSTALLER_VERSION" >&2
+      exit 1
+    }
+  gh attestation verify "$TL_BOOTSTRAP/install.sh" \
+    --repo test-intelligence/testlookup \
+    --signer-workflow test-intelligence/testlookup/.github/workflows/offline-bundle.yml \
+    --source-ref refs/heads/main \
+    --bundle "$TL_BOOTSTRAP/$TL_BUNDLE" || {
+      printf 'error: install.sh failed trusted offline-bundle.yml/main provenance verification for %s.\n' "$TL_INSTALLER_VERSION" >&2
+      exit 1
+    }
+  TL_REF="$TL_INSTALLER_VERSION" TESTLOOKUP_VERSION="$TL_INSTALLER_VERSION" \
+    bash "$TL_BOOTSTRAP/install.sh"
+)
 ```
 
-It checks for Docker and Compose v2, downloads `docker-compose.release.yml`, `.env.example`, `scripts/gen-dev-env.sh` and `scripts/init-db.sql` into `./testlookup`, authenticates the release checksums and the complete application-and-infrastructure digest set, generates `.env` with `scripts/gen-dev-env.sh --release` (an existing `.env` is reused), and starts Compose with a generated `docker-compose.images.yml` digest override. Read the script before piping it to a shell if your policy requires it.
+The bootstrap ignores drafts, prereleases, mutable releases, and releases missing either exact installer asset. It checks `install.sh` against the selected immutable release's recorded digest and verifies that the same bytes were signed by `offline-bundle.yml` on `main`, then pins the install to that tag before Bash interprets the file. The installer then checks for Docker and Compose v2, downloads `docker-compose.release.yml`, `.env.example`, `scripts/gen-dev-env.sh` and `scripts/init-db.sql` into `./testlookup`, authenticates the release checksums and the complete application-and-infrastructure digest set, generates `.env` with `scripts/gen-dev-env.sh --release` (an existing `.env` is reused), and starts Compose with a generated `docker-compose.images.yml` digest override.
 
 `--release` fills every secret with a random value and keeps the secure defaults: `APP_ENV=production` and `DEV_AUTO_LOGIN_ENABLED=false`, so there is no passwordless login. It also writes a random `INITIAL_ADMIN_PASSWORD` into `.env`. On first start the `db-migrate` service runs `alembic upgrade head` and then `scripts/create_admin.py`, which creates the user `admin` with that password on a new database only (an existing admin is never modified) and requires a password change at the first sign-in.
 
@@ -104,9 +169,9 @@ The installer also explains that port 3000 is plain HTTP bound to `127.0.0.1` by
 | `TL_PROFILE` | none | Adds a Compose profile: `demo` (seed data) or `local-llm` (Ollama and ChromaDB) |
 | `TL_NO_UP` | `0` | `1` downloads and generates `.env` but does not start anything |
 
-Pass them before `bash`, for example `curl -fsSL .../install.sh | TL_PROFILE=demo bash`. For an evaluation, `TL_PROFILE=demo` is the documented default (README, [GETTING_STARTED.md](../../GETTING_STARTED.md)): without it the first dashboard is empty until you send a report. For a team instance, leave it out. The images are about 1 GB to download (0.95 GB for linux/amd64, measured on 11 November 2026).
+Pass installer options on the final `bash` command in the authenticated block above. For an evaluation, add `TL_PROFILE=demo`; without it the first dashboard is empty until you send a report. For a team instance, leave it out. The images are about 1 GB to download (0.95 GB for linux/amd64, measured on 11 November 2026).
 
-With nothing set, the installer installs the latest published release. To install a particular release, name its tag: `curl -fsSL .../install.sh | TL_REF=vX.Y.Z bash`. Either way it verifies the signed provenance of `SHA256SUMS` and `release-manifest.json`, compares the four downloaded files, checks every manifest digest against CI's signed provenance for the release commit, and writes `docker-compose.images.yml` before startup. It stops, with nothing installed or run, when any asset, signature, version binding, component, digest, or checksum is missing or mismatched. For `main`, or another branch or commit explicitly selected by the operator, it says the files and tag-addressed images are not verified. The release checks do not cover the copy of `install.sh` being executed: download it and the signed release assets first if your policy requires that additional bootstrap check.
+The block selects the newest eligible published release and pins both the verified installer and its downloads to that tag. To install a particular release, set `TL_INSTALLER_VERSION=vX.Y.Z` before the block; an invalid, mutable, draft, prerelease, or asset-less tag fails without silently selecting another release. The existing `v0.1.0` release predates `install.sh` and its matching provenance asset, so the default fails closed until a newer eligible release is published; use a source clone for that historical release. After both installer checks, the installer verifies `SHA256SUMS` and `release-manifest.json`, compares the four downloaded files, checks every manifest digest against CI's signed provenance for the release commit, and writes `docker-compose.images.yml` before startup. It stops, with nothing installed or run, when any asset, signature, version binding, component, digest, or checksum is missing or mismatched. For `main`, or another branch or commit explicitly selected by the operator after authenticating an eligible installer, it says the subsequently downloaded files and tag-addressed images are not verified.
 
 ### Image tags
 
@@ -152,11 +217,7 @@ Run `docker compose -f docker-compose.release.yml -f docker-compose.images.yml u
 
 ### Upgrading a release install
 
-Take a backup, then rerun the installer for the new release so it authenticates and replaces the digest override while preserving the existing `.env`:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/test-intelligence/testlookup/main/install.sh | TL_REF=vX.Y.Z bash
-```
+Take a backup, set `TL_INSTALLER_VERSION=vX.Y.Z`, then rerun the authenticated installer block above for the new release. It replaces the digest override while preserving the existing `.env`.
 
 The `db-migrate` service runs `alembic upgrade head` with the new backend digest, and the backend, workers and beat wait for it to complete. From a clone you can run the same sequence with checks and a smoke test: `make preflight TAG=vX.Y.Z` then `make upgrade TAG=vX.Y.Z`, with `TL_COMPOSE` set to the install's full Compose command (for example `TL_COMPOSE="docker compose -f docker-compose.release.yml -f docker-compose.images.yml -p testlookup"`, see `scripts/ops/lib.sh`).
 

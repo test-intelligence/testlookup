@@ -20,11 +20,7 @@
 
 - **Repository:** [test-intelligence/testlookup](https://github.com/test-intelligence/testlookup) (Apache-2.0)
 - **Website and docs:** [testlookup.app](https://testlookup.app) · [quick start](https://testlookup.app/docs/next/quickstart/) · [guided demo tours](https://testlookup.app/demo/) · [roadmap](https://testlookup.app/roadmap/)
-- **Try it** (Docker with Compose v2; about 1 GB of images, demo data included):
-
-  ```bash
-  curl -fsSL https://raw.githubusercontent.com/test-intelligence/testlookup/main/install.sh | TL_PROFILE=demo bash
-  ```
+- **Try it** (Docker with Compose v2; about 1 GB of images, demo data included): follow the repository's [authenticated release install](https://github.com/test-intelligence/testlookup#install-an-authenticated-release).
 
 <p align="center">
   <img src="https://raw.githubusercontent.com/test-intelligence/testlookup/main/docs/product/screenshots/readme-hero.png" alt="TestLookup: the pass rate for each of the last 14 days against the GO line, and the failing tests classified by kind" width="720">

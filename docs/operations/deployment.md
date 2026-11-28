@@ -29,7 +29,7 @@ The manifests in this repository describe supported topologies. They are not evi
 
 Rules of thumb:
 
-- Trying TestLookup: `make quickstart` from a clone, or the `install.sh` one-liner if you do not want a clone.
+- Trying TestLookup: `make quickstart` from a clone, or the authenticated release installer if you do not want a clone.
 - One team, one host: release images on Compose, with backups (`make backup`) on a schedule.
 - Several teams, or you need replicas and rolling upgrades: Kubernetes with managed PostgreSQL, MongoDB, Valkey/Redis and S3-compatible storage.
 - No internet at the install site: the [offline bundle](../../user-guide/air-gapped-install.md). Models are prepared separately with the [offline model pack](../../user-guide/offline-model-pack.md).

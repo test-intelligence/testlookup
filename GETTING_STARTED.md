@@ -13,13 +13,78 @@ This walkthrough takes you from nothing to your own test results in TestLookup o
 
 Choose one option, not both.
 
-**Option A: one-command install (recommended for evaluation).** It runs the published images, builds nothing, and adds the demo projects:
+**Option A: authenticated release install (recommended for evaluation).** It requires a [GitHub CLI](https://cli.github.com/) version that provides `gh api`, `gh release download`, and `gh release verify-asset` plus artifact provenance verification; authenticate with `gh auth login` or set `GH_TOKEN` (a fine-grained token needs Contents and Attestations read access). It verifies the versioned installer before running it, uses the published images, builds nothing, and adds the demo projects:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/test-intelligence/testlookup/main/install.sh | TL_PROFILE=demo bash
+(
+  set -euo pipefail
+  TL_REPOSITORY="test-intelligence/testlookup"
+  TL_RELEASE_FILTER='
+    .tag_name as $tag
+    | ([.assets[].name]) as $assets
+    | select(
+        .draft == false
+        and .prerelease == false
+        and .immutable == true
+        and ($tag | test("^v[0-9]+\\.[0-9]+\\.[0-9]+$"))
+        and (($assets | index("install.sh")) != null)
+        and (($assets | index("testlookup-offline-\($tag | ltrimstr("v")).intoto.jsonl")) != null)
+      )
+    | .tag_name
+  '
+  if [ -n "${TL_INSTALLER_VERSION:-}" ]; then
+    [[ "$TL_INSTALLER_VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+      printf 'error: TL_INSTALLER_VERSION must be a vX.Y.Z release tag.\n' >&2
+      exit 1
+    }
+    TL_SELECTED="$(gh api "repos/${TL_REPOSITORY}/releases/tags/${TL_INSTALLER_VERSION}" \
+      --jq "$TL_RELEASE_FILTER")" || {
+      printf 'error: could not inspect %s; run gh auth login or set GH_TOKEN.\n' "$TL_INSTALLER_VERSION" >&2
+      exit 1
+    }
+    [ "$TL_SELECTED" = "$TL_INSTALLER_VERSION" ] || {
+      printf 'error: %s is not an eligible immutable installer release with install.sh and its version-matched provenance bundle.\n' "$TL_INSTALLER_VERSION" >&2
+      exit 1
+    }
+  else
+    TL_CANDIDATES="$(gh api --paginate "repos/${TL_REPOSITORY}/releases?per_page=100" \
+      --jq ".[] | ${TL_RELEASE_FILTER}")" || {
+      printf 'error: could not inspect TestLookup releases; run gh auth login or set GH_TOKEN.\n' >&2
+      exit 1
+    }
+    TL_INSTALLER_VERSION="${TL_CANDIDATES%%$'\n'*}"
+    [ -n "$TL_INSTALLER_VERSION" ] || {
+      printf 'error: no eligible immutable TestLookup release includes install.sh and its version-matched provenance bundle; use a source clone until one is published.\n' >&2
+      exit 1
+    }
+  fi
+  TL_BUNDLE="testlookup-offline-${TL_INSTALLER_VERSION#v}.intoto.jsonl"
+  TL_BOOTSTRAP="$(mktemp -d)"
+  trap 'rm -rf "$TL_BOOTSTRAP"' EXIT
+  gh release download "$TL_INSTALLER_VERSION" --repo test-intelligence/testlookup \
+    --pattern install.sh --pattern "$TL_BUNDLE" --dir "$TL_BOOTSTRAP" || {
+      printf 'error: failed to download the authenticated installer assets for %s.\n' "$TL_INSTALLER_VERSION" >&2
+      exit 1
+    }
+  gh release verify-asset "$TL_INSTALLER_VERSION" "$TL_BOOTSTRAP/install.sh" \
+    --repo test-intelligence/testlookup || {
+      printf 'error: install.sh failed immutable release-asset verification for %s.\n' "$TL_INSTALLER_VERSION" >&2
+      exit 1
+    }
+  gh attestation verify "$TL_BOOTSTRAP/install.sh" \
+    --repo test-intelligence/testlookup \
+    --signer-workflow test-intelligence/testlookup/.github/workflows/offline-bundle.yml \
+    --source-ref refs/heads/main \
+    --bundle "$TL_BOOTSTRAP/$TL_BUNDLE" || {
+      printf 'error: install.sh failed trusted offline-bundle.yml/main provenance verification for %s.\n' "$TL_INSTALLER_VERSION" >&2
+      exit 1
+    }
+  TL_REF="$TL_INSTALLER_VERSION" TESTLOOKUP_VERSION="$TL_INSTALLER_VERSION" \
+    TL_PROFILE=demo bash "$TL_BOOTSTRAP/install.sh"
+)
 ```
 
-The installer downloads `docker-compose.release.yml` into `./testlookup`, authenticates the release's exact application-image digests, writes a production-mode `.env` with random secrets, and starts the images with `docker-compose.images.yml` layered on top. The images are about 1 GB to download (0.95 GB for linux/amd64, measured on 11 November 2026); on a 100 Mbit/s connection, expect about 5 minutes until the dashboard answers. The demo projects (three projects with history) load in the background after the database is ready: `docker compose -f docker-compose.release.yml -f docker-compose.images.yml logs -f seed-init`, run from `./testlookup`, shows progress. Leave out `TL_PROFILE=demo` for an empty instance. Other options are in the [Compose guide](docs/operations/deploy-compose.md#release-images-without-a-clone).
+The bootstrap skips mutable or asset-less releases, pins the installer and deployment files to the same eligible release, and fails rather than falling back when an explicit tag is ineligible. The installer downloads `docker-compose.release.yml` into `./testlookup`, authenticates the release's exact application-image digests, writes a production-mode `.env` with random secrets, and starts the images with `docker-compose.images.yml` layered on top. The images are about 1 GB to download (0.95 GB for linux/amd64, measured on 11 November 2026); on a 100 Mbit/s connection, expect about 5 minutes until the dashboard answers. The demo projects (three projects with history) load in the background after the database is ready: `docker compose -f docker-compose.release.yml -f docker-compose.images.yml logs -f seed-init`, run from `./testlookup`, shows progress. Leave out `TL_PROFILE=demo` on the final command for an empty instance. Set `TL_INSTALLER_VERSION=vX.Y.Z` before the block to choose an eligible release. The existing `v0.1.0` release predates this installer's required assets, so use Option B until a newer eligible release is published. Other options are in the [Compose guide](docs/operations/deploy-compose.md#release-images-without-a-clone).
 
 **Option B: build from a clone (development).**
 
