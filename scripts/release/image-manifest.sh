@@ -62,6 +62,36 @@ manifest_ref_name() {
   printf '%s\n' "${tagged%:*}"
 }
 
+# Stable release-manifest key for an infrastructure ref.  The current image
+# inventory has unique repository basenames (postgres, valkey, mongo, ...), so
+# CI and deployment scripts can join the tag catalogue to its signed digest
+# without maintaining a second hardcoded image list.
+manifest_ref_component() {
+  local name
+  name="$(manifest_ref_name "$1")"
+  printf '%s\n' "${name##*/}"
+}
+
+# Expand Docker Hub short names for registry-copy tools, which intentionally
+# do not apply a workstation's interactive short-name resolution policy.
+# The tag/digest suffix is preserved verbatim, so this changes only the
+# spelling of the registry endpoint, never the authenticated image identity.
+manifest_registry_ref() {
+  local ref="$1" name first
+  name="${ref%@sha256:*}"
+  name="${name%:*}"
+  case "$name" in
+    */*)
+      first="${name%%/*}"
+      case "$first" in
+        *.*|*:*|localhost) printf '%s\n' "$ref" ;;
+        *) printf 'docker.io/%s\n' "$ref" ;;
+      esac
+      ;;
+    *) printf 'docker.io/library/%s\n' "$ref" ;;
+  esac
+}
+
 # docker save/load preserves repository tags but not the registry index digest.
 # A separate namespace prevents the temporary alias overwriting a vendor tag.
 manifest_archive_ref() {

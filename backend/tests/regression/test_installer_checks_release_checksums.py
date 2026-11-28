@@ -8,8 +8,8 @@ and ran one of them with no integrity check, although every release publishes
 The rule: when the ref being installed is a release tag (``vX.Y.Z`` in
 ``TL_REF`` or ``TESTLOOKUP_VERSION``), the installer authenticates that
 release's ``SHA256SUMS`` and immutable image manifest, compares every file it
-fetched, verifies each application-image digest, and generates a Compose
-override BEFORE it writes into the install directory or runs anything it
+fetched, verifies the complete application-and-infrastructure digest set, and
+generates a Compose override BEFORE it writes into the install directory or runs anything it
 downloaded. A mismatch or missing release asset stops the install. For an untagged ref
 (``TL_REF=main``, the unreleased tip, only when asked for) there is nothing to
 compare with, and it says so. With no ref and no version given, the installer
@@ -40,7 +40,29 @@ INSTALLER = ROOT / "install.sh"
 TAG = "v9.9.9"
 FILES = ("docker-compose.release.yml", ".env.example", "scripts/gen-dev-env.sh", "scripts/init-db.sql")
 SOURCE_SHA = "a" * 40
-DIGESTS = {"backend": "1" * 64, "frontend": "2" * 64, "mcp": "3" * 64}
+APP_COMPONENTS = ("backend", "frontend", "mcp")
+INFRA_NAMES = {
+    "postgres": "postgres:16-alpine",
+    "valkey": "valkey/valkey:8.1-alpine",
+    "mongo": "mongo:7",
+    "versitygw": "ghcr.io/versity/versitygw:v1.8.0",
+    "busybox": "busybox:1.36",
+    "ollama": "ollama/ollama:0.40.10",
+    "chroma": "chromadb/chroma:1.5.9",
+}
+COMPONENTS = APP_COMPONENTS + tuple(INFRA_NAMES)
+DIGESTS = {component: format(index, "x") * 64 for index, component in enumerate(COMPONENTS, start=1)}
+
+
+def _image(component: str) -> str:
+    name = (
+        f"ghcr.io/test-intelligence/testlookup/{component}"
+        if component in APP_COMPONENTS
+        else INFRA_NAMES[component]
+    )
+    return f"{name}@sha256:{DIGESTS[component]}"
+
+
 #: Stands in for the real generator: proves whether a downloaded script ran.
 FAKE_GENERATOR = '#!/usr/bin/env bash\ncd "$(dirname "$0")/.."\necho "MARKER=the-downloaded-script-ran" > .env\n'
 _TIMEOUT_S = 300  # a hang guard, not a speed bound: process start-up is slow on Windows
@@ -82,14 +104,12 @@ def _release(tmp_path: Path, ref: str, *, sums: bool = True, tamper: str | None 
         published.mkdir(parents=True)
         (published / "SHA256SUMS").write_bytes("".join(lines).encode())
         manifest = {
-            "schema_version": 1,
+            "schema_version": 2,
             "source_sha": SOURCE_SHA,
             "version": ref,
             "images": {
-                component: {
-                    "source_ref": f"ghcr.io/test-intelligence/testlookup/{component}@sha256:{DIGESTS[component]}"
-                }
-                for component in ("backend", "frontend", "mcp")
+                component: {"source_ref": _image(component)}
+                for component in COMPONENTS
             },
         }
         (published / "release-manifest.json").write_text(
@@ -150,7 +170,7 @@ def test_a_release_install_checks_every_file_then_runs(tmp_path):
     assert "docker compose -f docker-compose.release.yml -f docker-compose.images.yml" in result.stdout
 
 
-def test_a_release_uses_only_authenticated_digest_refs_for_every_application_service(tmp_path):
+def test_a_release_uses_only_authenticated_digest_refs_for_every_release_service(tmp_path):
     env = _release(tmp_path, TAG)
     env["TL_REF"] = TAG
     result = _install(tmp_path, env)
@@ -161,22 +181,28 @@ def test_a_release_uses_only_authenticated_digest_refs_for_every_application_ser
     expected_components = {}
     for service, definition in release["services"].items():
         image_ref = definition.get("image", "")
-        for component in ("backend", "frontend", "mcp"):
+        for component in APP_COMPONENTS:
             if f"/{component}:${{TESTLOOKUP_VERSION:-latest}}" in image_ref:
                 expected_components[service] = component
+    expected_components.update({
+        "postgres": "postgres",
+        "mongo": "mongo",
+        "redis": "valkey",
+        "minio": "versitygw",
+        "ollama": "ollama",
+        "chromadb": "chroma",
+    })
     assert set(override["services"]) == set(expected_components), (
-        "every tag-addressed application service in the release Compose file needs a digest override"
+        "every tag-addressed release service in the Compose file needs a digest override"
     )
     for service, component in expected_components.items():
-        assert override["services"][service]["image"] == (
-            f"ghcr.io/test-intelligence/testlookup/{component}@sha256:{DIGESTS[component]}"
-        )
+        assert override["services"][service]["image"] == _image(component)
     assert all("@sha256:" in service["image"] for service in override["services"].values())
 
     checks = (tmp_path / "gh.log").read_text(encoding="utf-8")
     assert "attestation verify" in checks
     assert "SHA256SUMS" in checks and "release-manifest.json" in checks
-    for component in ("backend", "frontend", "mcp"):
+    for component in APP_COMPONENTS:
         assert f"oci://ghcr.io/test-intelligence/testlookup/{component}@sha256:{DIGESTS[component]}" in checks
     assert f"--source-digest {SOURCE_SHA}" in checks
 
@@ -190,6 +216,22 @@ def test_a_manifest_without_trusted_provenance_stops_before_installing_or_runnin
     assert "image manifest does not have trusted TestLookup release provenance" in result.stderr
     assert not (tmp_path / "install" / ".env").exists()
     assert not (tmp_path / "install" / "scripts").exists()
+    assert not (tmp_path / "install" / "docker-compose.images.yml").exists()
+
+
+def test_an_incomplete_signed_image_set_stops_before_installing_or_running(tmp_path):
+    env = _release(tmp_path, TAG)
+    env["TL_REF"] = TAG
+    manifest_path = tmp_path / "served" / "releases" / TAG / "release-manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["images"].pop("postgres")
+    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+    result = _install(tmp_path, env)
+
+    assert result.returncode != 0
+    assert "exactly ten application and infrastructure image references" in result.stderr
+    assert not (tmp_path / "install" / ".env").exists()
     assert not (tmp_path / "install" / "docker-compose.images.yml").exists()
 
 
@@ -208,6 +250,9 @@ def test_a_custom_registry_keeps_the_authenticated_digests(tmp_path):
     )
     assert services["frontend"]["image"].endswith(f"/frontend@sha256:{DIGESTS['frontend']}")
     assert services["mcp"]["image"].endswith(f"/mcp@sha256:{DIGESTS['mcp']}")
+    for service, component in (("postgres", "postgres"), ("mongo", "mongo"), ("redis", "valkey"),
+                               ("minio", "versitygw"), ("ollama", "ollama"), ("chromadb", "chroma")):
+        assert services[service]["image"] == _image(component)
 
 
 def test_release_files_and_requested_image_release_must_match(tmp_path):

@@ -328,7 +328,7 @@ def check(repo_root: Path) -> list[str]:
         for name in sorted(app_names - remapped_apps):
             errors.append(f"{OPENSHIFT_KUSTOMIZATION}: does NOT remap app image {name!r}")
 
-    # ── 5. The OpenShift shell scripts must derive from the manifest ────────
+    # ── 5. OpenShift mirrors use the complete signed digest inventory ──────
     for rel in OPENSHIFT_SCRIPTS:
         path = repo_root / rel
         if not path.exists():
@@ -339,6 +339,36 @@ def check(repo_root: Path) -> list[str]:
             errors.append(
                 f"{rel}: does not source scripts/release/image-manifest.sh — its image list "
                 "would drift from deploy/images.manifest.txt"
+            )
+        expected_kind = "--kind all" if rel.endswith("deploy-openshift-artifactory.sh") else "--kind infrastructure"
+        inventory_token = "RELEASE_COMPONENTS" if rel.endswith("deploy-openshift-artifactory.sh") else "SIGNED_INFRA"
+        if "release_manifest.py" not in text or expected_kind not in text or inventory_token not in text:
+            errors.append(
+                f"{rel}: does not derive its complete image digest set from a validated release manifest"
+            )
+        if "gh attestation verify" not in text or "RELEASE_PROVENANCE_BUNDLE" not in text:
+            errors.append(
+                f"{rel}: does not authenticate the release manifest before mirroring"
+            )
+        if "--require-schema-version 2" not in text:
+            errors.append(
+                f"{rel}: does not reject an incomplete legacy manifest before release work"
+            )
+        if (
+            "--destination-prefix" not in text
+            or "skopeo copy --all --preserve-digests" not in text
+            or "skopeo inspect --raw" not in text
+        ):
+            errors.append(
+                f"{rel}: mirror must preserve complete manifest indexes and verify destination digests"
+            )
+        if rel.endswith("deploy-openshift-artifactory.sh") and (
+            "RELEASE_PULL_REFS" not in text
+            or 'MIGRATION_IMAGE="${RELEASE_PULL_REFS[backend]}"' not in text
+            or "kustomize edit set image" not in text
+        ):
+            errors.append(
+                f"{rel}: verified overlay and migration must use private destination digest refs"
             )
         # A hardcoded default list (INFRA_IMAGES="postgres:16-alpine …") is the
         # exact drift this guard exists to prevent. A ${...} default is fine.

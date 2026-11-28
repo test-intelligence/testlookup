@@ -81,7 +81,7 @@ def scan_release(
 
     failed = version.returncode != 0
     components: dict[str, dict[str, object]] = {}
-    for component in release_manifest.COMPONENTS:
+    for component in manifest["images"]:
         image_ref = manifest["images"][component]["source_ref"]
         vulnerability_path = output_dir / f"{component}.vulnerabilities.json"
         sbom_path = output_dir / f"{component}.cyclonedx.json"

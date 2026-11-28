@@ -33,7 +33,7 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts/release"))
-from release_manifest import validate_manifest  # noqa: E402
+from release_manifest import APPLICATION_COMPONENTS, validate_manifest  # noqa: E402
 
 MAX_ARCHIVE_BYTES = 8 * 1024 * 1024
 MAX_MANIFEST_BYTES = 256 * 1024
@@ -179,7 +179,7 @@ def _archive_manifest(raw, expected_sha):
 def _distinct(prior, candidate):
     return all(prior["images"][component]["source_ref"].rsplit("@", 1)[1]
                != candidate["images"][component]["source_ref"].rsplit("@", 1)[1]
-               for component in candidate["images"])
+               for component in APPLICATION_COMPONENTS)
 
 
 def _projection(value, keys):

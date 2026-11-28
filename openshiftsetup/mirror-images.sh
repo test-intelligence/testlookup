@@ -9,17 +9,18 @@
 # pre-seed the registry independently, or refresh infra images without a full
 # app rebuild.
 #
-# It mirrors INFRA images by default. Pass --with-app to ALSO pull + re-push
-# pre-built app images from a source registry (rarely needed — the deploy
-# script builds + pushes those itself).
+# It mirrors infrastructure images only. The deployment script mirrors the
+# complete signed release set, including application images, when it owns the
+# release deployment.
 #
 # Config: reads openshiftsetup/artifactory.env (same file as the deploy
-# script) or environment variables. Required: ARTIFACTORY_REGISTRY.
+# script) or environment variables. Required: ARTIFACTORY_REGISTRY and the
+# release-manifest.json and provenance bundle published with the selected release.
 #
 # Usage:
-#   ./openshiftsetup/mirror-images.sh                 # mirror infra images
-#   ./openshiftsetup/mirror-images.sh --dry-run       # print the plan only
-#   INFRA_IMAGES="postgres:16-alpine" ./openshiftsetup/mirror-images.sh
+#   ./openshiftsetup/mirror-images.sh --manifest release-manifest.json --provenance release.intoto.jsonl
+#   ./openshiftsetup/mirror-images.sh --manifest release-manifest.json --provenance release.intoto.jsonl --dry-run
+#   INFRA_IMAGES="postgres:16-alpine@sha256:..." ./openshiftsetup/mirror-images.sh --manifest release-manifest.json --provenance release.intoto.jsonl
 # ============================================================================
 set -euo pipefail
 
@@ -32,52 +33,114 @@ warn()  { echo -e "${YELLOW}[!]${NC} $1"; }
 error() { echo -e "${RED}[x]${NC} $1" >&2; exit 1; }
 
 DRY_RUN=false
-for a in "$@"; do
-  case "$a" in
+MANIFEST_ARG=""
+PROVENANCE_ARG=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
     --dry-run) DRY_RUN=true ;;
+    --manifest)
+      shift
+      [ "$#" -gt 0 ] || error "--manifest requires a path"
+      MANIFEST_ARG="$1"
+      ;;
+    --provenance)
+      shift
+      [ "$#" -gt 0 ] || error "--provenance requires a path"
+      PROVENANCE_ARG="$1"
+      ;;
     -h|--help) sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
-    *) error "Unknown flag: $a" ;;
+    *) error "Unknown flag: $1" ;;
   esac
+  shift
 done
 
 if [ -f "$CONFIG_FILE" ]; then set -a; . "$CONFIG_FILE"; set +a; fi
 [ -n "${ARTIFACTORY_REGISTRY:-}" ] || error "ARTIFACTORY_REGISTRY is required (config or env)."
 ARTIFACTORY_HOST="${ARTIFACTORY_REGISTRY%%/*}"
 
-# The infra image list is DERIVED from deploy/images.manifest.txt (the single
-# source of truth) rather than hardcoded here — a hardcoded copy is exactly how
-# this list drifted from the k8s manifests before. An explicit INFRA_IMAGES in
-# the environment still wins, for mirroring a subset.
-# `external` rows (MongoDB, SSPL-1.0) are included: the offline bundle does not
-# redistribute them, but this script runs on YOUR connected host and pulls them
-# from their upstream registry, which is how an operator mirrors a prerequisite.
+# The catalogue defines the expected names and the authenticated release
+# manifest binds each one to the digest CI resolved for this release. An
+# explicit INFRA_IMAGES may select a subset, but every selected ref must be an
+# exact digest ref from that complete signed inventory.
 # shellcheck source=../scripts/release/image-manifest.sh
 . "$REPO_ROOT/scripts/release/image-manifest.sh"
-INFRA_IMAGES="${INFRA_IMAGES:-$(manifest_refs k8s infra core,llm,external | tr '\n' ' ')}"
+RELEASE_MANIFEST="${MANIFEST_ARG:-${RELEASE_MANIFEST:-}}"
+RELEASE_PROVENANCE_BUNDLE="${PROVENANCE_ARG:-${RELEASE_PROVENANCE_BUNDLE:-}}"
+[ -n "$RELEASE_MANIFEST" ] || error "--manifest release-manifest.json is required."
+[ -f "$RELEASE_MANIFEST" ] || error "Release manifest not found: $RELEASE_MANIFEST"
+[ -n "$RELEASE_PROVENANCE_BUNDLE" ] || error "--provenance release.intoto.jsonl is required."
+[ -f "$RELEASE_PROVENANCE_BUNDLE" ] || error "Release provenance bundle not found: $RELEASE_PROVENANCE_BUNDLE"
+command -v gh >/dev/null 2>&1 || error "GitHub CLI (gh) is required to authenticate the release manifest."
+gh attestation verify "$RELEASE_MANIFEST" \
+  --repo test-intelligence/testlookup \
+  --signer-workflow test-intelligence/testlookup/.github/workflows/offline-bundle.yml \
+  --source-ref refs/heads/main \
+  --bundle "$RELEASE_PROVENANCE_BUNDLE" >/dev/null \
+  || error "Release manifest does not have trusted TestLookup release provenance."
+command -v python3 >/dev/null 2>&1 || error "python3 is required to validate the release manifest."
+python3 "$REPO_ROOT/scripts/release/release_manifest.py" validate \
+  --manifest "$RELEASE_MANIFEST" --require-schema-version 2 >/dev/null \
+  || error "Release manifest must be the complete authenticated schema-v2 image set."
+SIGNED_INFRA_ROWS="$(python3 "$REPO_ROOT/scripts/release/release_manifest.py" refs \
+  --manifest "$RELEASE_MANIFEST" --kind infrastructure)" \
+  || error "Could not read infrastructure digests from the release manifest."
+DESTINATION_INFRA_ROWS="$(python3 "$REPO_ROOT/scripts/release/release_manifest.py" refs \
+  --manifest "$RELEASE_MANIFEST" --kind infrastructure \
+  --destination-prefix "$ARTIFACTORY_REGISTRY")" \
+  || error "Could not materialize infrastructure digests for Artifactory."
+SIGNED_INFRA="$(printf '%s\n' "$SIGNED_INFRA_ROWS" | cut -f2-)"
+[ -n "$SIGNED_INFRA" ] || error "Release manifest does not contain the complete infrastructure digest set."
+CATALOG_INFRA="$(manifest_refs k8s infra core,llm,external)"
+for tagged_ref in $CATALOG_INFRA; do
+  matches="$(printf '%s\n' "$SIGNED_INFRA" | awk -v prefix="$tagged_ref@sha256:" 'index($0, prefix) == 1 { count += 1 } END { print count + 0 }')"
+  [ "$matches" -eq 1 ] || error "Release manifest does not contain one digest for catalogue image $tagged_ref."
+done
+INFRA_IMAGES="${INFRA_IMAGES:-$(printf '%s\n' "$SIGNED_INFRA" | tr '\n' ' ')}"
+declare -A DESTINATION_REFS
+while IFS=$'\t' read -r component ref; do
+  [ -n "$component" ] && DESTINATION_REFS["$component"]="$ref"
+done <<< "$DESTINATION_INFRA_ROWS"
+for ref in $INFRA_IMAGES; do
+  case "
+$SIGNED_INFRA
+" in
+    *"
+$ref
+"*) ;;
+    *) error "Infrastructure image is not an authenticated release digest: $ref" ;;
+  esac
+  component="$(manifest_ref_component "$ref")"
+  [ -n "${DESTINATION_REFS[$component]:-}" ] \
+    || error "No authenticated Artifactory destination was materialized for $component."
+done
 
-# --dry-run only prints the plan, so it must work on a host without docker
+# --dry-run only prints the plan, so it must work on a host without skopeo
 # (that is the whole point of asking for the plan first).
 if [ "$DRY_RUN" = false ]; then
-  command -v docker >/dev/null 2>&1 || error "docker is required."
-  docker info >/dev/null 2>&1 || error "Docker daemon not reachable."
+  command -v skopeo >/dev/null 2>&1 || error "skopeo is required for digest-preserving registry copies."
 fi
 
 if [ "$DRY_RUN" = false ] && [ -n "${ARTIFACTORY_USERNAME:-}" ] && [ -n "${ARTIFACTORY_PASSWORD:-}" ]; then
-  echo "$ARTIFACTORY_PASSWORD" | docker login "$ARTIFACTORY_HOST" -u "$ARTIFACTORY_USERNAME" --password-stdin \
-    || error "docker login to $ARTIFACTORY_HOST failed."
+  printf '%s\n' "$ARTIFACTORY_PASSWORD" \
+    | skopeo login "$ARTIFACTORY_HOST" --username "$ARTIFACTORY_USERNAME" --password-stdin \
+    || error "skopeo login to $ARTIFACTORY_HOST failed."
 fi
 
 log "Mirroring infra images into ${ARTIFACTORY_REGISTRY}"
 for ref in $INFRA_IMAGES; do
-  dest="${ARTIFACTORY_REGISTRY}/${ref}"
+  component="$(manifest_ref_component "$ref")"
+  source_ref="$(manifest_registry_ref "$ref")"
+  dest="${DESTINATION_REFS[$component]}"
   if [ "$DRY_RUN" = true ]; then
-    echo "  would: docker pull $ref && docker tag $ref $dest && docker push $dest"
+    echo "  would: skopeo copy --all --preserve-digests docker://$source_ref docker://$dest"
+    echo "         skopeo inspect --raw docker://$dest"
     continue
   fi
   log "  $ref  ->  $dest"
-  docker pull "$ref"
-  docker tag  "$ref" "$dest"
-  docker push "$dest"
+  skopeo copy --all --preserve-digests "docker://$source_ref" "docker://$dest" \
+    || error "Digest-preserving copy failed for $component."
+  skopeo inspect --raw "docker://$dest" >/dev/null \
+    || error "Signed digest for $component is missing from destination repository: $dest"
 done
 
 log "Done. ${ARTIFACTORY_REGISTRY} now holds the infra images the air-gapped cluster needs."

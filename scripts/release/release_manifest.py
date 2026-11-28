@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Create and verify the immutable image set for a TestLookup release.
 
-CI builds the three application images once and records their registry
-digests here; a deployment can later materialize that same set under a
-destination registry.  A tag is deliberately not accepted as an
-image identity: tags may be moved after verification while a digest cannot.
+CI builds the three application images, resolves every production
+infrastructure image, and records the complete registry-digest set here.  A
+deployment can later materialize that same set under a destination registry.
+A tag is deliberately not accepted as an image identity: tags may be moved
+after verification while a digest cannot.
 
 The module intentionally uses only the Python standard library so it can run
 in a GitHub Actions verification job before application dependencies exist.
@@ -13,9 +14,11 @@ Examples::
 
     python scripts/release/release_manifest.py create \
       --source-sha "$GITHUB_SHA" --version v1.2.3 \
-      --image backend=ghcr.io/acme/testlookup/backend@sha256:... \
-      --image frontend=ghcr.io/acme/testlookup/frontend@sha256:... \
-      --image mcp=ghcr.io/acme/testlookup/mcp@sha256:... \
+      --image backend=ghcr.io/test-intelligence/testlookup/backend@sha256:... \
+      --image frontend=ghcr.io/test-intelligence/testlookup/frontend@sha256:... \
+      --image mcp=ghcr.io/test-intelligence/testlookup/mcp@sha256:... \
+      --image postgres=postgres:16-alpine@sha256:... \
+      ... \
       --output release-manifest.json
 
     python scripts/release/release_manifest.py materialize \
@@ -36,8 +39,31 @@ from pathlib import Path
 from typing import Any, Mapping
 
 
-SCHEMA_VERSION = 1
-COMPONENTS = ("backend", "frontend", "mcp")
+SCHEMA_VERSION = 2
+LEGACY_SCHEMA_VERSION = 1
+APPLICATION_COMPONENTS = ("backend", "frontend", "mcp")
+INFRASTRUCTURE_COMPONENTS = (
+    "postgres",
+    "valkey",
+    "mongo",
+    "versitygw",
+    "busybox",
+    "ollama",
+    "chroma",
+)
+COMPONENTS = APPLICATION_COMPONENTS + INFRASTRUCTURE_COMPONENTS
+EXPECTED_SOURCE_NAMES = {
+    "backend": "ghcr.io/test-intelligence/testlookup/backend",
+    "frontend": "ghcr.io/test-intelligence/testlookup/frontend",
+    "mcp": "ghcr.io/test-intelligence/testlookup/mcp",
+    "postgres": "postgres:16-alpine",
+    "valkey": "valkey/valkey:8.1-alpine",
+    "mongo": "mongo:7",
+    "versitygw": "ghcr.io/versity/versitygw:v1.8.0",
+    "busybox": "busybox:1.36",
+    "ollama": "ollama/ollama:0.40.10",
+    "chroma": "chromadb/chroma:1.5.9",
+}
 _SHA_RE = re.compile(r"^[0-9a-f]{40}$")
 _DIGEST_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 _IMMUTABLE_REF_RE = re.compile(r"^(?P<name>[^\s@]+)@(?P<digest>sha256:[0-9a-f]{64})$")
@@ -88,11 +114,11 @@ def _split_immutable_ref(ref: str) -> tuple[str, str]:
     return match.group("name"), match.group("digest")
 
 
-def _validate_images(value: object) -> dict[str, dict[str, str]]:
+def _validate_images(value: object, components: tuple[str, ...]) -> dict[str, dict[str, str]]:
     if not isinstance(value, Mapping):
         raise ManifestError("images must be an object keyed by component")
     names = set(value)
-    expected = set(COMPONENTS)
+    expected = set(components)
     if names != expected:
         missing = ", ".join(sorted(expected - names))
         unexpected = ", ".join(sorted(names - expected))
@@ -100,16 +126,24 @@ def _validate_images(value: object) -> dict[str, dict[str, str]]:
             f"missing: {missing}" if missing else "",
             f"unexpected: {unexpected}" if unexpected else "",
         ) if part)
-        raise ManifestError(f"images must contain exactly {', '.join(COMPONENTS)} ({details})")
+        raise ManifestError(f"images must contain exactly {', '.join(components)} ({details})")
 
     images: dict[str, dict[str, str]] = {}
     seen_digests: set[str] = set()
-    for component in COMPONENTS:
+    for component in components:
         entry = value[component]
         if not isinstance(entry, Mapping) or set(entry) != {"source_ref"}:
             raise ManifestError(f"images.{component} must contain only source_ref")
         source_ref = _validate_immutable_ref(entry["source_ref"], f"images.{component}.source_ref")
-        _, digest = _split_immutable_ref(source_ref)
+        source_name, digest = _split_immutable_ref(source_ref)
+        if (
+            components == COMPONENTS
+            and component in INFRASTRUCTURE_COMPONENTS
+            and source_name != EXPECTED_SOURCE_NAMES[component]
+        ):
+            raise ManifestError(
+                f"images.{component}.source_ref must lock {EXPECTED_SOURCE_NAMES[component]}"
+            )
         if digest in seen_digests:
             raise ManifestError("each component must use a distinct immutable image digest")
         seen_digests.add(digest)
@@ -138,18 +172,34 @@ def validate_manifest(manifest: object, *, expected_source_sha: str | None = Non
             f"unexpected: {unexpected}" if unexpected else "",
         ) if part)
         raise ManifestError(f"manifest fields must be exactly {', '.join(sorted(required))} ({details})")
-    if manifest["schema_version"] != SCHEMA_VERSION:
-        raise ManifestError(f"schema_version must be {SCHEMA_VERSION}")
+    schema_version = manifest["schema_version"]
+    if schema_version not in (LEGACY_SCHEMA_VERSION, SCHEMA_VERSION):
+        raise ManifestError(f"schema_version must be {LEGACY_SCHEMA_VERSION} or {SCHEMA_VERSION}")
+    components = APPLICATION_COMPONENTS if schema_version == LEGACY_SCHEMA_VERSION else COMPONENTS
 
     source_sha = _validate_sha(manifest["source_sha"])
     if expected_source_sha is not None and source_sha != _validate_sha(expected_source_sha, "expected_source_sha"):
         raise ManifestError("manifest source_sha does not match the verified source SHA")
     return {
-        "schema_version": SCHEMA_VERSION,
+        "schema_version": schema_version,
         "source_sha": source_sha,
         "version": _validate_version(manifest["version"]),
-        "images": _validate_images(manifest["images"]),
+        "images": _validate_images(manifest["images"], components),
     }
+
+
+def require_schema_version(manifest: Mapping[str, Any], required: int) -> None:
+    """Reject a valid legacy document when a deployment needs the complete set."""
+
+    actual = manifest["schema_version"]
+    if actual == required:
+        return
+    if actual == LEGACY_SCHEMA_VERSION and required == SCHEMA_VERSION:
+        raise ManifestError(
+            "schema_version 1 is supported for legacy inspection only; deployment requires "
+            "schema_version 2 with the complete application and infrastructure image set"
+        )
+    raise ManifestError(f"schema_version {actual} does not satisfy required schema_version {required}")
 
 
 def create_manifest(*, source_sha: str, version: str, images: Mapping[str, str]) -> dict[str, Any]:
@@ -189,9 +239,15 @@ def materialize_destination_refs(manifest: object, *, destination_prefix: str) -
     normalized = validate_manifest(manifest)
     prefix = _validate_destination_prefix(destination_prefix)
     destination_refs: dict[str, str] = {}
-    for component in COMPONENTS:
-        _, digest = _split_immutable_ref(normalized["images"][component]["source_ref"])
-        destination_refs[component] = f"{prefix}/testlookup/{component}@{digest}"
+    for component in normalized["images"]:
+        source_name, digest = _split_immutable_ref(normalized["images"][component]["source_ref"])
+        if component in APPLICATION_COMPONENTS:
+            destination_name = f"testlookup/{component}"
+        else:
+            # Infrastructure refs retain the repository path established by
+            # deploy/images.manifest.txt.  Only the registry prefix changes.
+            destination_name = source_name.rsplit(":", 1)[0]
+        destination_refs[component] = f"{prefix}/{destination_name}@{digest}"
     return {**normalized, "destination_prefix": prefix, "destination_refs": destination_refs}
 
 
@@ -214,11 +270,17 @@ def validate_materialized_manifest(
     if expected_destination_prefix is not None and prefix != _validate_destination_prefix(expected_destination_prefix):
         raise ManifestError("materialized destination_prefix does not match the requested destination")
     refs = materialized["destination_refs"]
-    if not isinstance(refs, Mapping) or set(refs) != set(COMPONENTS):
-        raise ManifestError("destination_refs must contain exactly backend, frontend, mcp")
-    for component in COMPONENTS:
-        _, digest = _split_immutable_ref(base["images"][component]["source_ref"])
-        expected = f"{prefix}/testlookup/{component}@{digest}"
+    components = tuple(base["images"])
+    if not isinstance(refs, Mapping) or set(refs) != set(components):
+        raise ManifestError(f"destination_refs must contain exactly {', '.join(components)}")
+    for component in components:
+        source_name, digest = _split_immutable_ref(base["images"][component]["source_ref"])
+        destination_name = (
+            f"testlookup/{component}"
+            if component in APPLICATION_COMPONENTS
+            else source_name.rsplit(":", 1)[0]
+        )
+        expected = f"{prefix}/{destination_name}@{digest}"
         if refs[component] != expected:
             raise ManifestError(f"destination_refs.{component} does not preserve the verified source digest")
     return {**base, "destination_prefix": prefix, "destination_refs": dict(refs)}
@@ -279,6 +341,7 @@ def _parser() -> argparse.ArgumentParser:
     validate = commands.add_parser("validate", help="validate an immutable release manifest")
     validate.add_argument("--manifest", required=True)
     validate.add_argument("--expected-source-sha")
+    validate.add_argument("--require-schema-version", type=int, choices=(1, 2))
 
     materialize = commands.add_parser("materialize", help="produce destination digest refs from a release manifest")
     materialize.add_argument("--manifest", required=True)
@@ -289,6 +352,15 @@ def _parser() -> argparse.ArgumentParser:
     validate_destination.add_argument("--manifest", required=True)
     validate_destination.add_argument("--expected-source-sha")
     validate_destination.add_argument("--expected-destination-prefix")
+    validate_destination.add_argument("--require-schema-version", type=int, choices=(1, 2))
+
+    refs = commands.add_parser("refs", help="print validated immutable refs as component/ref TSV")
+    refs.add_argument("--manifest", required=True)
+    refs.add_argument("--kind", choices=("application", "infrastructure", "all"), default="all")
+    refs.add_argument(
+        "--destination-prefix",
+        help="emit refs materialized under this registry prefix instead of source refs",
+    )
     return parser
 
 
@@ -301,21 +373,42 @@ def main(argv: list[str] | None = None) -> int:
                 args.output,
             )
         elif args.command == "validate":
-            validate_manifest(
+            manifest = validate_manifest(
                 json.loads(Path(args.manifest).read_text(encoding="utf-8")),
                 expected_source_sha=args.expected_source_sha,
             )
+            if args.require_schema_version is not None:
+                require_schema_version(manifest, args.require_schema_version)
             print(f"valid release manifest: {args.manifest}")
         elif args.command == "materialize":
             manifest = json.loads(Path(args.manifest).read_text(encoding="utf-8"))
             _write_json(materialize_destination_refs(manifest, destination_prefix=args.destination_prefix), args.output)
         elif args.command == "validate-materialized":
-            validate_materialized_manifest(
+            manifest = validate_materialized_manifest(
                 json.loads(Path(args.manifest).read_text(encoding="utf-8")),
                 expected_source_sha=args.expected_source_sha,
                 expected_destination_prefix=args.expected_destination_prefix,
             )
+            if args.require_schema_version is not None:
+                require_schema_version(manifest, args.require_schema_version)
             print(f"valid materialized release manifest: {args.manifest}")
+        elif args.command == "refs":
+            manifest = validate_manifest(json.loads(Path(args.manifest).read_text(encoding="utf-8")))
+            selected = {
+                "application": APPLICATION_COMPONENTS,
+                "infrastructure": INFRASTRUCTURE_COMPONENTS,
+                "all": COMPONENTS,
+            }[args.kind]
+            refs_by_component = (
+                materialize_destination_refs(
+                    manifest, destination_prefix=args.destination_prefix
+                )["destination_refs"]
+                if args.destination_prefix
+                else {component: entry["source_ref"] for component, entry in manifest["images"].items()}
+            )
+            for component in selected:
+                if component in manifest["images"]:
+                    print(f"{component}\t{refs_by_component[component]}")
         else:  # argparse makes this unreachable; keep the return contract total.
             raise ManifestError(f"unknown command: {args.command}")
     except (ManifestError, OSError, json.JSONDecodeError) as exc:

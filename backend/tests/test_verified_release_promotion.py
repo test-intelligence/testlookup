@@ -200,6 +200,8 @@ def test_manifest_tool_is_present_for_workflow_validation_and_materialization():
         assert command in text, f"release manifest tool must expose {command!r}"
     for component in COMPONENTS:
         assert component in text, f"release manifest tool must require the {component} digest"
+    for component in ("postgres", "valkey", "mongo", "versitygw", "busybox", "ollama", "chroma"):
+        assert component in text, f"release manifest tool must require the {component} digest"
     assert "@sha256:" in text, "release manifest tool must reject mutable tag-only references"
 
 
@@ -230,6 +232,9 @@ def test_main_image_manifest_resolves_version_file_before_publishing_images():
     create_run = str(step_by_name["Create and validate verified image manifest"].get("run", ""))
     assert "steps.manifest-version.outputs.version" in create_run
     assert "GITHUB_REF_NAME" not in create_run
+    assert "manifest_refs any infra core,llm,external" in create_run
+    assert "docker buildx imagetools inspect" in create_run
+    assert 'image_args+=(--image "$component=$ref@$digest")' in create_run
 
 
 def test_dev_migration_and_backend_rollout_use_the_same_immutable_digest():
@@ -251,6 +256,8 @@ def test_dev_migration_and_backend_rollout_use_the_same_immutable_digest():
     assert 'release_manifest.py validate --manifest verified-images/release-manifest.json --expected-source-sha "$GITHUB_SHA"' in pin["run"]
     assert 'expected = f"{root}/{component}@{os.environ[component.upper() + \'_DIGEST\']}"' in pin["run"]
     assert 'manifest["images"][component]["source_ref"] != expected' in pin["run"]
+    assert "--kind infrastructure" in pin["run"]
+    assert 'infra_images+=("$image_name=$ref")' in pin["run"]
     assert backend_ref in migrate
     assert "run-k8s-migrations.sh testlookup-dev" in migrate
     assert "verify_kubernetes_rollout.py" in verify
@@ -264,6 +271,8 @@ def test_deploy_helper_preserves_the_complete_kustomize_resource_tree():
     assert 'cp -r k8s "$TMP_ROOT/k8s"' in script
     assert 'TMP_OVERLAY="$TMP_ROOT/$OVERLAY"' in script
     assert 'cp -r "$OVERLAY" "$TMP_OVERLAY"' not in script
+    assert "for img in backend frontend mcp postgres valkey mongo versitygw busybox ollama chroma" in script
+    assert 'kubectl kustomize edit set image "$source_name=$ref"' in script
 
 
 def test_airgap_override_routes_the_migration_service_to_the_private_registry():
