@@ -12,7 +12,7 @@ import subprocess
 import sys
 import time
 
-from release_manifest import ManifestError, validate_manifest
+from release_manifest import APPLICATION_COMPONENTS, ManifestError, validate_manifest
 
 
 ROLES = {
@@ -147,7 +147,10 @@ def main() -> int:
     try:
         source = args.manifest.read_bytes()
         manifest = validate_manifest(json.loads(source), expected_source_sha=args.source_sha)
-        image_refs = {name: record["source_ref"] for name, record in manifest["images"].items()}
+        image_refs = {
+            name: manifest["images"][name]["source_ref"]
+            for name in APPLICATION_COMPONENTS
+        }
         allowed = {name: runtime_digests(ref) for name, ref in image_refs.items()}
         command = ["kubectl", f"--namespace={args.namespace}", "--request-timeout=10s"]
         if args.context:

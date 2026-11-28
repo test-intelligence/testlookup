@@ -159,6 +159,27 @@ jobs:
             docker tag "$manifest_ref" "testlookup/$component:$BUNDLE_VERSION"
             printf '%s\t%s\n' "$component" "$manifest_ref" >> release-images.txt
           done
+          source scripts/release/image-manifest.sh
+          infra_filter=core
+          if [ "$WITH_LLM" = true ]; then infra_filter=core,llm; fi
+          while IFS= read -r tagged_ref; do
+            component="$(manifest_ref_component "$tagged_ref")"
+            manifest_ref="$(jq -r ".images.$component.source_ref" verified-images/release-manifest.json)"
+            [ "${manifest_ref%@sha256:*}" = "$tagged_ref" ] \
+              || { echo "::error::signed $component ref '$manifest_ref' does not lock catalogue ref '$tagged_ref'"; exit 1; }
+            [[ "${manifest_ref##*@sha256:}" =~ ^[0-9a-f]{64}$ ]] \
+              || { echo "::error::signed $component ref is not digest-addressed"; exit 1; }
+            docker pull "$manifest_ref"
+            docker tag "$manifest_ref" "$tagged_ref"
+          done < <(manifest_refs any infra "$infra_filter")
+          if [ "$WITH_TELEMETRY" = true ]; then
+            # These optional rows are already immutable in the catalogue and
+            # are not part of the production release manifest. A tagged bundle
+            # uses --skip-pull below, so preload them on a fresh runner now.
+            # The helper selects only `telemetry`, never the AGPL
+            # `telemetry-external` prerequisites.
+            bash scripts/release/pull-offline-telemetry-images.sh
+          fi
           cat release-images.txt
 
       - name: Set up kustomize
@@ -198,7 +219,7 @@ jobs:
           args=(--version "$BUNDLE_VERSION" --created-at "${{ steps.meta.outputs.created_at }}")
           if [ "$WITH_LLM" = true ]; then args+=(--with-llm); fi
           if [ "$WITH_TELEMETRY" = true ]; then args+=(--with-telemetry); fi
-          if [ -n "$RELEASE_TAG" ]; then args+=(--skip-build); fi
+          if [ -n "$RELEASE_TAG" ]; then args+=(--skip-build --skip-pull); fi
           bash scripts/release/offline-bundle.sh "${args[@]}"
 
       # The bundle must carry the pulled digests, not a local build:

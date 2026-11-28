@@ -419,14 +419,22 @@ hostnames at import time:
 ```
 
 If your build host *can* reach both the internet and the cluster's registry,
-the older registry-to-registry path is still available and does the same job
-without a tarball — it also mirrors `mongo:7` from upstream, creates the
-buckets, and generates the first admin password (printed once at the end):
+the registry-to-registry path is still available without a tarball. Download
+the selected release's `release-manifest.json` and `.intoto.jsonl` provenance
+bundle first. The scripts authenticate the complete schema-v2 image set, copy
+exact multi-platform indexes by digest (including `mongo:7`), and deploy only
+the resulting private `repository@sha256` references:
 
 ```bash
-make k8s-mirror-images-openshift          # seed Artifactory
-make k8s-deploy-openshift-artifactory     # build, push, deploy
+make k8s-mirror-images-openshift \
+  ARGS="--manifest release-manifest.json --provenance testlookup-offline-X.Y.Z.intoto.jsonl"
+RELEASE_MANIFEST=release-manifest.json \
+RELEASE_PROVENANCE_BUNDLE=testlookup-offline-X.Y.Z.intoto.jsonl \
+  make k8s-deploy-openshift-artifactory
 ```
+
+The deploy command verifies every destination digest again, even when
+`ARGS=--skip-mirror`; it never rebuilds application images in release mode.
 
 The offline bundle exists for the case that host does **not** exist.
 

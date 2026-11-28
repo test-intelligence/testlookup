@@ -19,7 +19,7 @@ from policy import evaluate
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts/release"))
-from release_manifest import validate_manifest  # noqa: E402 - shared repository validator
+from release_manifest import APPLICATION_COMPONENTS, validate_manifest  # noqa: E402 - shared repository validator
 
 ROLES = ("VIEWER", "TESTER", "QA_ENGINEER", "QA_LEAD", "ADMIN")
 PUBLIC = ["TL-DEPLOY-002", "TL-AUTH-002"]
@@ -406,7 +406,7 @@ def main():
             if image_file:
                 entries = json.loads(Path(image_file).read_text(encoding="utf-8-sig"))
                 observed_images = {entry["component"]: entry for entry in entries}
-                same = set(observed_images) == set(manifest["images"])
+                same = set(observed_images) == set(APPLICATION_COMPONENTS)
                 for component, entry in observed_images.items():
                     wanted = manifest["images"][component]["source_ref"]
                     digest = entry["running"].rsplit("@", 1)[-1]

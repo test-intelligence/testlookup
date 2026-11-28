@@ -5,14 +5,12 @@
 # Deploy the COMPLETE TestLookup stack to an air-gapped OpenShift cluster that
 # can reach ONLY one Artifactory registry (no public internet), over HTTPS.
 #
-# What it does:
-#   1. Builds the 3 app images locally (backend / frontend / mcp) and pushes
-#      them to Artifactory under one immutable build tag.
-#   2. Mirrors every third-party infra image (postgres, valkey, mongo,
-#      versitygw, chromadb, ollama, busybox — the list comes from
-#      deploy/images.manifest.txt) into the SAME Artifactory, so the cluster
-#      pulls 100% of its images from that one registry. MongoDB is SSPL-1.0:
-#      it is pulled from its upstream registry here, on your host.
+# What it does in verified-release mode (RELEASE_MANIFEST + provenance set):
+#   1. Authenticates the complete schema-v2 release manifest before contacting
+#      the cluster or copying an image. Locally built app images are disabled.
+#   2. Copies every signed application and infrastructure manifest index, all
+#      platforms, into Artifactory without changing its digest; --skip-mirror
+#      still verifies every destination digest before deployment.
 #   3. Creates the project, an Artifactory image-pull secret, app secrets
 #      (with a generated Redis password; MongoDB authentication is opt-in,
 #      ENABLE_MONGO_AUTH), and grants two SCCs: anyuid to the one
@@ -29,7 +27,9 @@
 # This is the OpenShift/Artifactory sibling of k3ssetup/deploy-k3s.sh.
 #
 # Prereqs on the BUILD host (which DOES have internet + Artifactory access):
-#   - docker, oc (or kubectl), curl, openssl
+#   - verified release: gh, python3, skopeo, kustomize 5.7.1 (tested),
+#     oc (or kubectl), openssl
+#   - deliberate local build: docker, curl, oc (or kubectl), openssl
 #   - oc logged in to the target cluster (``oc login ...``)
 #   - openshiftsetup/artifactory.env filled in (copy from .env.example)
 #
@@ -39,10 +39,11 @@
 #   ./openshiftsetup/deploy-openshift-artifactory.sh [flags]
 #
 # Flags:
-#   --skip-build     Don't rebuild app images; reuse an existing tag
+#   --skip-build     Local-build mode only: reuse an existing app-image tag
 #                    (APP_TAG from config, else newest common build-* in Artifactory)
 #   --skip-push      Build images but don't push (local smoke test)
-#   --skip-mirror    Don't mirror infra images (already present in Artifactory)
+#   --skip-mirror    Don't copy release images; verify all signed destination
+#                    digests already exist before rendering or deploying
 #   --no-anyuid      Don't grant the anyuid SCC to the data stores' account
 #                    (hardened clusters that pre-provision an SCC)
 #   --skip-admin     Don't create the initial admin user
@@ -56,7 +57,7 @@ set -euo pipefail
 
 # ── Paths ───────────────────────────────────────────────────────────────────
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-OVERLAY_DIR="$REPO_ROOT/k8s/overlays/openshift-artifactory"
+OVERLAY_DIR="${OPENSHIFT_OVERLAY_DIR:-$REPO_ROOT/k8s/overlays/openshift-artifactory}"
 CONFIG_FILE="${ARTIFACTORY_ENV_FILE:-$REPO_ROOT/openshiftsetup/artifactory.env}"
 CREDS_FILE="$REPO_ROOT/openshiftsetup/.openshift-credentials"
 
@@ -89,12 +90,25 @@ for arg in "$@"; do
 done
 
 # ── Load config ─────────────────────────────────────────────────────────────
+RELEASE_MANIFEST_ENV_STATE="${RELEASE_MANIFEST+x}"
+RELEASE_MANIFEST_ENV_VALUE="${RELEASE_MANIFEST:-}"
+RELEASE_PROVENANCE_ENV_STATE="${RELEASE_PROVENANCE_BUNDLE+x}"
+RELEASE_PROVENANCE_ENV_VALUE="${RELEASE_PROVENANCE_BUNDLE:-}"
 if [ -f "$CONFIG_FILE" ]; then
   log "Loading config from $CONFIG_FILE"
   # shellcheck disable=SC1090
   set -a; . "$CONFIG_FILE"; set +a
 else
   warn "Config file $CONFIG_FILE not found — relying on environment variables."
+fi
+# These release inputs are commonly selected per deployment rather than kept
+# in the shared site config. Preserve the documented environment-over-config
+# precedence even when the example config contains empty placeholders.
+if [ "$RELEASE_MANIFEST_ENV_STATE" = x ]; then
+  RELEASE_MANIFEST="$RELEASE_MANIFEST_ENV_VALUE"
+fi
+if [ "$RELEASE_PROVENANCE_ENV_STATE" = x ]; then
+  RELEASE_PROVENANCE_BUNDLE="$RELEASE_PROVENANCE_ENV_VALUE"
 fi
 
 # Defaults
@@ -118,17 +132,20 @@ ADMIN_PASSWORD_GENERATED=false
 ADMIN_CREATED=false
 ADMIN_EMAIL="${ADMIN_EMAIL:-admin@example.com}"
 ADMIN_FULL_NAME="${ADMIN_FULL_NAME:-TestLookup Admin}"
-# Derived from deploy/images.manifest.txt — see mirror-images.sh for the
-# rationale (a hardcoded copy here is how the list drifted from k8s before).
-# `external` rows (MongoDB, SSPL-1.0) are mirrored too: this host pulls them
-# from upstream; only the offline bundle leaves them out.
+# The catalogue supplies stable component names; a release manifest supplied
+# by the operator supplies their signed immutable identities. `external` rows
+# (MongoDB, SSPL-1.0) are mirrored too; only the offline bundle leaves them out.
 # shellcheck source=../scripts/release/image-manifest.sh
 . "$REPO_ROOT/scripts/release/image-manifest.sh"
-INFRA_IMAGES="${INFRA_IMAGES:-$(manifest_refs k8s infra core,llm,external | tr '\n' ' ')}"
+RELEASE_MANIFEST="${RELEASE_MANIFEST:-}"
+RELEASE_PROVENANCE_BUNDLE="${RELEASE_PROVENANCE_BUNDLE:-}"
 PULL_OLLAMA_MODELS="${PULL_OLLAMA_MODELS:-false}"
 OLLAMA_MODELS="${OLLAMA_MODELS:-qwen2.5:7b-instruct nomic-embed-text:v1.5}"
 PULL_SECRET_NAME="artifactory-pull"
 APP_IMAGES=(backend frontend mcp)
+RELEASE_COMPONENTS=(backend frontend mcp postgres valkey mongo versitygw busybox ollama chroma)
+VERIFIED_RELEASE=false
+declare -A RELEASE_SOURCE_REFS RELEASE_PUSH_REFS RELEASE_PULL_REFS
 
 # ── Pick the cluster CLI (oc preferred for Route/SCC support) ───────────────
 if command -v oc >/dev/null 2>&1; then
@@ -323,6 +340,68 @@ fi
 
 # ── Validate required config ────────────────────────────────────────────────
 [ -n "${ARTIFACTORY_REGISTRY:-}" ] || error "ARTIFACTORY_REGISTRY is required (set it in $CONFIG_FILE)."
+ARTIFACTORY_PULL_REGISTRY="${ARTIFACTORY_PULL_REGISTRY:-$ARTIFACTORY_REGISTRY}"
+
+# A release deployment begins here. The attestation covers the bytes of the
+# complete manifest; schema validation then makes those authenticated bytes a
+# closed ten-image identity. This block intentionally precedes Docker/Skopeo,
+# cluster preflight, local builds, mirroring and overlay work. Supplying only
+# one release input is always an error, including with --skip-mirror.
+if [ -n "$RELEASE_MANIFEST" ] || [ -n "$RELEASE_PROVENANCE_BUNDLE" ]; then
+  [ -n "$RELEASE_MANIFEST" ] \
+    || error "RELEASE_MANIFEST is required with RELEASE_PROVENANCE_BUNDLE, including with --skip-mirror."
+  [ -f "$RELEASE_MANIFEST" ] || error "Release manifest not found: $RELEASE_MANIFEST"
+  [ -n "$RELEASE_PROVENANCE_BUNDLE" ] \
+    || error "RELEASE_PROVENANCE_BUNDLE is required with RELEASE_MANIFEST, including with --skip-mirror."
+  [ -f "$RELEASE_PROVENANCE_BUNDLE" ] || error "Release provenance bundle not found: $RELEASE_PROVENANCE_BUNDLE"
+  command -v gh >/dev/null 2>&1 || error "GitHub CLI (gh) is required to authenticate the release manifest."
+  command -v python3 >/dev/null 2>&1 || error "python3 is required to validate the release manifest."
+  gh attestation verify "$RELEASE_MANIFEST" \
+    --repo test-intelligence/testlookup \
+    --signer-workflow test-intelligence/testlookup/.github/workflows/offline-bundle.yml \
+    --source-ref refs/heads/main \
+    --bundle "$RELEASE_PROVENANCE_BUNDLE" >/dev/null \
+    || error "Release manifest does not have trusted TestLookup release provenance."
+  python3 "$REPO_ROOT/scripts/release/release_manifest.py" validate \
+    --manifest "$RELEASE_MANIFEST" --require-schema-version 2 >/dev/null \
+    || error "Release manifest must be the complete authenticated schema-v2 image set."
+
+  SOURCE_ROWS="$(python3 "$REPO_ROOT/scripts/release/release_manifest.py" refs \
+    --manifest "$RELEASE_MANIFEST" --kind all)" \
+    || error "Could not read source digests from the authenticated release manifest."
+  PUSH_ROWS="$(python3 "$REPO_ROOT/scripts/release/release_manifest.py" refs \
+    --manifest "$RELEASE_MANIFEST" --kind all \
+    --destination-prefix "$ARTIFACTORY_REGISTRY")" \
+    || error "Could not materialize release digests for the Artifactory push repository."
+  PULL_ROWS="$(python3 "$REPO_ROOT/scripts/release/release_manifest.py" refs \
+    --manifest "$RELEASE_MANIFEST" --kind all \
+    --destination-prefix "$ARTIFACTORY_PULL_REGISTRY")" \
+    || error "Could not materialize release digests for the cluster pull repository."
+  while IFS=$'\t' read -r component ref; do
+    [ -n "$component" ] && RELEASE_SOURCE_REFS["$component"]="$ref"
+  done <<< "$SOURCE_ROWS"
+  while IFS=$'\t' read -r component ref; do
+    [ -n "$component" ] && RELEASE_PUSH_REFS["$component"]="$ref"
+  done <<< "$PUSH_ROWS"
+  while IFS=$'\t' read -r component ref; do
+    [ -n "$component" ] && RELEASE_PULL_REFS["$component"]="$ref"
+  done <<< "$PULL_ROWS"
+  for component in "${RELEASE_COMPONENTS[@]}"; do
+    [ -n "${RELEASE_SOURCE_REFS[$component]:-}" ] \
+      && [ -n "${RELEASE_PUSH_REFS[$component]:-}" ] \
+      && [ -n "${RELEASE_PULL_REFS[$component]:-}" ] \
+      || error "Authenticated release manifest did not materialize component $component."
+  done
+  [ -z "${INFRA_IMAGES:-}" ] \
+    || error "INFRA_IMAGES cannot narrow a verified release; all signed release images are required."
+  if [ "$SKIP_PUSH" = true ] && [ "$SKIP_MIRROR" = false ]; then
+    error "--skip-push cannot be used while copying a verified release; use --skip-mirror for an already seeded registry."
+  fi
+  VERIFIED_RELEASE=true
+  log "Authenticated complete schema-v2 release manifest before release actions."
+elif [ "$SKIP_MIRROR" = false ]; then
+  error "A release mirror requires RELEASE_MANIFEST and RELEASE_PROVENANCE_BUNDLE. For a deliberate non-release local build, pre-seed infrastructure images and pass --skip-mirror."
+fi
 
 # Resolve route hosts: explicit values win, else derive from APPS_DOMAIN.
 if [ -z "${ROUTE_HOST_FRONTEND:-}" ] || [ -z "${ROUTE_HOST_API:-}" ] || [ -z "${ROUTE_HOST_MCP:-}" ]; then
@@ -334,23 +413,37 @@ fi
 
 # ── Preflight ───────────────────────────────────────────────────────────────
 header "Step 0 — Preflight"
-command -v docker >/dev/null 2>&1 || error "docker is required."
-command -v curl   >/dev/null 2>&1 || error "curl is required."
-docker info >/dev/null 2>&1 || error "Docker daemon not reachable. Start Docker first."
+if [ "$VERIFIED_RELEASE" = true ]; then
+  command -v skopeo >/dev/null 2>&1 || error "skopeo is required for digest-preserving release copies."
+  command -v kustomize >/dev/null 2>&1 || error "kustomize is required to render verified destination digests."
+else
+  command -v docker >/dev/null 2>&1 || error "docker is required for a non-release local build."
+  command -v curl   >/dev/null 2>&1 || error "curl is required for a non-release local build."
+  docker info >/dev/null 2>&1 || error "Docker daemon not reachable. Start Docker first."
+fi
 "$KCLI" whoami >/dev/null 2>&1 || "$KCLI" get nodes >/dev/null 2>&1 || error "Not logged in to a cluster. Run 'oc login ...' first."
 log "Cluster reachable as: $("$KCLI" whoami 2>/dev/null || echo 'unknown')"
 log "Push registry:  $ARTIFACTORY_REGISTRY"
 log "Pull registry:  $ARTIFACTORY_PULL_REGISTRY"
 log "Routes (HTTPS): https://$ROUTE_HOST_FRONTEND  |  https://$ROUTE_HOST_API  |  https://$ROUTE_HOST_MCP/sse"
 
-# ── docker login to Artifactory ─────────────────────────────────────────────
+# ── Registry login ──────────────────────────────────────────────────────────
 ARTIFACTORY_HOST="${ARTIFACTORY_REGISTRY%%/*}"   # strip repo path → host[:port]
+ARTIFACTORY_PULL_HOST="${ARTIFACTORY_PULL_REGISTRY%%/*}"
 if [ -n "${ARTIFACTORY_USERNAME:-}" ] && [ -n "${ARTIFACTORY_PASSWORD:-}" ]; then
-  log "docker login $ARTIFACTORY_HOST ..."
-  echo "$ARTIFACTORY_PASSWORD" | docker login "$ARTIFACTORY_HOST" -u "$ARTIFACTORY_USERNAME" --password-stdin \
-    || error "docker login to $ARTIFACTORY_HOST failed."
+  if [ "$VERIFIED_RELEASE" = true ]; then
+    log "skopeo login $ARTIFACTORY_HOST ..."
+    printf '%s\n' "$ARTIFACTORY_PASSWORD" \
+      | skopeo login "$ARTIFACTORY_HOST" --username "$ARTIFACTORY_USERNAME" --password-stdin \
+      || error "skopeo login to $ARTIFACTORY_HOST failed."
+  else
+    log "docker login $ARTIFACTORY_HOST ..."
+    printf '%s\n' "$ARTIFACTORY_PASSWORD" \
+      | docker login "$ARTIFACTORY_HOST" -u "$ARTIFACTORY_USERNAME" --password-stdin \
+      || error "docker login to $ARTIFACTORY_HOST failed."
+  fi
 else
-  warn "ARTIFACTORY_USERNAME/PASSWORD not set — assuming docker is already logged in to $ARTIFACTORY_HOST."
+  warn "ARTIFACTORY_USERNAME/PASSWORD not set — assuming the registry client is already authenticated to $ARTIFACTORY_HOST."
 fi
 
 # ── Resolve the build tag ───────────────────────────────────────────────────
@@ -366,7 +459,11 @@ _artifactory_tags() {  # $1 = repo path under the registry (e.g. testlookup/back
     | grep -E '^build-[0-9]{8}-[0-9]{6}$' || true
 }
 
-if [ "$SKIP_BUILD" = true ]; then
+if [ "$VERIFIED_RELEASE" = true ]; then
+  # This value only clears the committed tag placeholder before `kustomize
+  # edit` replaces every image with an authenticated destination digest.
+  APP_TAG="verified-release-digest"
+elif [ "$SKIP_BUILD" = true ]; then
   if [ -n "${APP_TAG:-}" ]; then
     log "Reusing APP_TAG from config: $APP_TAG"
   else
@@ -383,7 +480,10 @@ else
 fi
 
 # ── Step 1 — Build + push app images ────────────────────────────────────────
-if [ "$SKIP_BUILD" = false ]; then
+if [ "$VERIFIED_RELEASE" = true ]; then
+  header "Step 1 — Use signed application images"
+  log "Local application builds are disabled for an authenticated release."
+elif [ "$SKIP_BUILD" = false ]; then
   header "Step 1 — Build app images ($APP_TAG)"
   cd "$REPO_ROOT"
 
@@ -425,21 +525,31 @@ else
   log "Skipping app image build (--skip-build), using tag $APP_TAG"
 fi
 
-# ── Step 2 — Mirror infra images into the SAME Artifactory ──────────────────
-if [ "$SKIP_MIRROR" = false ]; then
-  header "Step 2 — Mirror infra images into Artifactory"
-  warn "Pulling upstream infra images — the BUILD host needs internet for this step."
-  for ref in $INFRA_IMAGES; do
-    dest="${ARTIFACTORY_REGISTRY}/${ref}"
-    log "Mirroring ${ref} -> ${dest}"
-    docker pull "$ref"
-    docker tag  "$ref" "$dest"
-    if [ "$SKIP_PUSH" = false ]; then
-      docker push "$dest"
-    fi
+# ── Step 2 — Copy and verify the complete signed image set ──────────────────
+if [ "$VERIFIED_RELEASE" = true ]; then
+  if [ "$SKIP_MIRROR" = false ]; then
+    header "Step 2 — Mirror signed release indexes into Artifactory"
+    warn "Copying signed release digests — the BUILD host needs upstream registry access."
+    for component in "${RELEASE_COMPONENTS[@]}"; do
+      source_ref="$(manifest_registry_ref "${RELEASE_SOURCE_REFS[$component]}")"
+      destination_ref="${RELEASE_PUSH_REFS[$component]}"
+      log "Mirroring $component: ${RELEASE_SOURCE_REFS[$component]} -> $destination_ref"
+      skopeo copy --all --preserve-digests \
+        "docker://$source_ref" "docker://$destination_ref" \
+        || error "Digest-preserving copy failed for release component $component."
+    done
+  else
+    header "Step 2 — Verify pre-seeded signed release indexes"
+    log "Skipping copies (--skip-mirror), but not destination digest verification."
+  fi
+  for component in "${RELEASE_COMPONENTS[@]}"; do
+    destination_ref="${RELEASE_PUSH_REFS[$component]}"
+    skopeo inspect --raw "docker://$destination_ref" >/dev/null \
+      || error "Signed digest for $component is missing from destination repository: $destination_ref"
+    log "Verified destination digest for $component: $destination_ref"
   done
 else
-  log "Skipping infra image mirror (--skip-mirror)."
+  log "Skipping release-image mirror in deliberate non-release local-build mode."
 fi
 
 # ── Step 3 — Project / namespace ────────────────────────────────────────────
@@ -456,7 +566,7 @@ header "Step 4 — Artifactory image-pull secret"
 if [ -n "${ARTIFACTORY_USERNAME:-}" ] && [ -n "${ARTIFACTORY_PASSWORD:-}" ]; then
   "$KCLI" -n "$NAMESPACE" delete secret "$PULL_SECRET_NAME" --ignore-not-found >/dev/null 2>&1 || true
   create_secret "$PULL_SECRET_NAME" kubernetes.io/dockerconfigjson .dockerconfigjson \
-    "$(dockerconfig_json "$ARTIFACTORY_HOST" "$ARTIFACTORY_USERNAME" "$ARTIFACTORY_PASSWORD" "$ARTIFACTORY_EMAIL")"
+    "$(dockerconfig_json "$ARTIFACTORY_PULL_HOST" "$ARTIFACTORY_USERNAME" "$ARTIFACTORY_PASSWORD" "$ARTIFACTORY_EMAIL")"
   # Link to the default SA so every pod pulls with it (covers app + infra).
   if [ "$KCLI" = "oc" ]; then
     oc -n "$NAMESPACE" secrets link default "$PULL_SECRET_NAME" --for=pull
@@ -549,7 +659,7 @@ fi
 
 # ── Step 8 — Substitute placeholders (in place, restored by trap) ───────────
 header "Step 8 — Render overlay"
-SUBST_FILES=( kustomization.yaml route.yaml infra-postgres.yaml infra-mongo.yaml infra-minio.yaml infra-chromadb.yaml )
+SUBST_FILES=( kustomization.yaml route.yaml infra-postgres.yaml infra-mongo.yaml infra-redis.yaml infra-minio.yaml infra-chromadb.yaml )
 restore_overlay() {
   for f in "${SUBST_FILES[@]}"; do
     [ -f "$OVERLAY_DIR/$f.deploy-bak" ] && mv -f "$OVERLAY_DIR/$f.deploy-bak" "$OVERLAY_DIR/$f"
@@ -571,13 +681,53 @@ for f in "${SUBST_FILES[@]}"; do
   rm -f "$OVERLAY_DIR/$f.tmp"
 done
 
+if [ "$VERIFIED_RELEASE" = true ]; then
+  for component in "${RELEASE_COMPONENTS[@]}"; do
+    source_name="$(manifest_ref_name "${RELEASE_SOURCE_REFS[$component]}")"
+    (
+      cd "$OVERLAY_DIR"
+      kustomize edit set image "$source_name=${RELEASE_PULL_REFS[$component]}"
+    ) || error "Could not pin $component to its authenticated destination digest."
+  done
+fi
+
 if grep -rqE "ARTIFACTORY_REGISTRY_PLACEHOLDER|APP_TAG_PLACEHOLDER|STORAGE_CLASS_PLACEHOLDER|ROUTE_HOST_.*_PLACEHOLDER" "$OVERLAY_DIR"/*.yaml; then
   error "Unsubstituted placeholder remains in the overlay — aborting before apply."
 fi
 
+RENDERED_OVERLAY=""
+if [ "$VERIFIED_RELEASE" = true ]; then
+  RENDERED_OVERLAY="$(kustomize build "$OVERLAY_DIR")" \
+    || error "Could not render the digest-pinned release overlay."
+  RELEASE_ALLOWED_REFS=""
+  for component in "${RELEASE_COMPONENTS[@]}"; do
+    RELEASE_ALLOWED_REFS="${RELEASE_ALLOWED_REFS}${RELEASE_PULL_REFS[$component]}
+"
+    grep -Fq -- "${RELEASE_PULL_REFS[$component]}" <<< "$RENDERED_OVERLAY" \
+      || error "Rendered overlay does not use the authenticated destination digest for $component."
+  done
+  while IFS= read -r rendered_ref; do
+    [ -n "$rendered_ref" ] || continue
+    case "
+$RELEASE_ALLOWED_REFS" in
+      *"
+$rendered_ref
+"*) ;;
+      *) error "Rendered release contains an image outside the authenticated destination set: $rendered_ref" ;;
+    esac
+  done < <(awk '$1 == "image:" { gsub(/^"|"$/, "", $2); print $2 }' <<< "$RENDERED_OVERLAY")
+  case "$RENDERED_OVERLAY" in
+    *verified-release-digest*) error "Rendered release overlay retained a tag fallback." ;;
+  esac
+fi
+
 if [ "$DRY_RUN" = true ]; then
   header "DRY RUN — rendered manifests"
-  "$KCLI" kustomize "$OVERLAY_DIR" 2>/dev/null || "$KCLI" apply -k "$OVERLAY_DIR" --dry-run=client -o yaml
+  if [ "$VERIFIED_RELEASE" = true ]; then
+    printf '%s\n' "$RENDERED_OVERLAY"
+  else
+    "$KCLI" kustomize "$OVERLAY_DIR" 2>/dev/null || "$KCLI" apply -k "$OVERLAY_DIR" --dry-run=client -o yaml
+  fi
   restore_overlay; trap - EXIT INT TERM
   log "Dry run complete — nothing applied."
   exit 0
@@ -585,7 +735,11 @@ fi
 
 # ── Step 9 — Apply ──────────────────────────────────────────────────────────
 header "Step 9 — Apply to cluster"
-MIGRATION_IMAGE="${ARTIFACTORY_PULL_REGISTRY}/testlookup/backend:${APP_TAG}"
+if [ "$VERIFIED_RELEASE" = true ]; then
+  MIGRATION_IMAGE="${RELEASE_PULL_REFS[backend]}"
+else
+  MIGRATION_IMAGE="${ARTIFACTORY_PULL_REGISTRY}/testlookup/backend:${APP_TAG}"
+fi
 HAD_BACKEND=0
 if "$KCLI" -n "$NAMESPACE" get deployment testlookup-backend >/dev/null 2>&1; then
   HAD_BACKEND=1
@@ -599,7 +753,11 @@ KCLI="$KCLI" bash "$REPO_ROOT/scripts/prepare-live-fanout-cutover.sh" "$NAMESPAC
 # an upgrade the still password-less Valkey refuses that until the apply below
 # replaces it. Keeping the two steps adjacent keeps that window short.
 ensure_redis_credentials
-"$KCLI" apply -k "$OVERLAY_DIR"
+if [ "$VERIFIED_RELEASE" = true ]; then
+  printf '%s\n' "$RENDERED_OVERLAY" | "$KCLI" apply -f -
+else
+  "$KCLI" apply -k "$OVERLAY_DIR"
+fi
 if [ "$HAD_BACKEND" -eq 0 ]; then
   log "Fresh install detected; migrating after datastore creation..."
   KCLI="$KCLI" bash "$REPO_ROOT/scripts/run-k8s-migrations.sh" "$NAMESPACE" "$MIGRATION_IMAGE"
@@ -607,7 +765,7 @@ fi
 log "Manifests applied and database migrations completed."
 restore_overlay; trap - EXIT INT TERM
 
-# `apply -k` never deletes. The single /health/ Route of earlier versions is
+# `apply` never deletes. The single /health/ Route of earlier versions is
 # replaced by one Route per published endpoint (route.yaml); left in place it
 # would keep publishing the whole prefix.
 "$KCLI" -n "$NAMESPACE" delete route testlookup-api-health --ignore-not-found >/dev/null 2>&1 \

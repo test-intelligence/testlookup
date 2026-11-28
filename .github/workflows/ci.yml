@@ -138,6 +138,11 @@ jobs:
         # `pip install pytest` takes whatever PyPI serves that minute.
         run: pip install --require-hashes -r scripts/requirements-ci.txt
 
+      - name: Set up Kustomize for release transport tests
+        uses: imranismail/setup-kustomize@53f941b41dca13ed61874bbc6b4b6e1562877530 # v3.0.0
+        with:
+          kustomize-version: "5.7.1"
+
       - name: Self-test the drift guard
         # Pins that the guard actually FAILS on drift — a guard that can only
         # pass is a guard that silently rots.
@@ -2243,11 +2248,26 @@ jobs:
       - name: Create and validate verified image manifest
         run: |
           set -euo pipefail
+          # deploy/images.manifest.txt remains the reviewed version catalogue;
+          # this signed release identity records what every catalogue tag
+          # resolved to in this CI run. Downstream release paths consume only
+          # these immutable refs, so a later upstream tag move is irrelevant.
+          source scripts/release/image-manifest.sh
+          image_args=(
+            --image "backend=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/backend@${{ steps.build-backend.outputs.digest }}"
+            --image "frontend=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/frontend@${{ steps.build-frontend.outputs.digest }}"
+            --image "mcp=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/mcp@${{ steps.build-mcp.outputs.digest }}"
+          )
+          while IFS= read -r ref; do
+            component="$(manifest_ref_component "$ref")"
+            digest="$(docker buildx imagetools inspect "$ref" --format '{{json .Manifest}}' | jq -r '.digest')"
+            [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] \
+              || { echo "::error::$ref did not resolve to an immutable sha256 digest"; exit 1; }
+            image_args+=(--image "$component=$ref@$digest")
+          done < <(manifest_refs any infra core,llm,external)
           python3 scripts/release/release_manifest.py create \
             --source-sha "${GITHUB_SHA}" --version "${{ steps.manifest-version.outputs.version }}" \
-            --image "backend=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/backend@${{ steps.build-backend.outputs.digest }}" \
-            --image "frontend=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/frontend@${{ steps.build-frontend.outputs.digest }}" \
-            --image "mcp=${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/mcp@${{ steps.build-mcp.outputs.digest }}" \
+            "${image_args[@]}" \
             --output verified-images/release-manifest.json
           python3 scripts/release/release_manifest.py validate --manifest verified-images/release-manifest.json --expected-source-sha "${GITHUB_SHA}"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -2382,11 +2402,19 @@ jobs:
               if manifest["images"][component]["source_ref"] != expected:
                   raise SystemExit("Build output and verified image manifest disagree")
           PY
+          infra_images=()
+          while IFS=$'\t' read -r _ ref; do
+            tagged_ref="${ref%@sha256:*}"
+            image_name="${tagged_ref%:*}"
+            infra_images+=("$image_name=$ref")
+          done < <(python3 scripts/release/release_manifest.py refs \
+            --manifest verified-images/release-manifest.json --kind infrastructure)
           cd k8s/overlays/dev
           kustomize edit set image \
             "ghcr.io/test-intelligence/testlookup/backend=$REGISTRY/$IMAGE_PREFIX/backend@$BACKEND_DIGEST" \
             "ghcr.io/test-intelligence/testlookup/frontend=$REGISTRY/$IMAGE_PREFIX/frontend@$FRONTEND_DIGEST" \
-            "ghcr.io/test-intelligence/testlookup/mcp=$REGISTRY/$IMAGE_PREFIX/mcp@$MCP_DIGEST"
+            "ghcr.io/test-intelligence/testlookup/mcp=$REGISTRY/$IMAGE_PREFIX/mcp@$MCP_DIGEST" \
+            "${infra_images[@]}"
 
       - name: Authenticate read-only registry inspection
         if: steps.check-secret.outputs.skip != 'true'

@@ -86,7 +86,7 @@ The lite stack omits Ollama, ChromaDB, Flower, the MCP server and the beat sched
 curl -fsSL https://raw.githubusercontent.com/test-intelligence/testlookup/main/install.sh | bash
 ```
 
-It checks for Docker and Compose v2, downloads `docker-compose.release.yml`, `.env.example`, `scripts/gen-dev-env.sh` and `scripts/init-db.sql` into `./testlookup`, authenticates the release checksums and exact application-image digests, generates `.env` with `scripts/gen-dev-env.sh --release` (an existing `.env` is reused), and starts Compose with a generated `docker-compose.images.yml` digest override. Read the script before piping it to a shell if your policy requires it.
+It checks for Docker and Compose v2, downloads `docker-compose.release.yml`, `.env.example`, `scripts/gen-dev-env.sh` and `scripts/init-db.sql` into `./testlookup`, authenticates the release checksums and the complete application-and-infrastructure digest set, generates `.env` with `scripts/gen-dev-env.sh --release` (an existing `.env` is reused), and starts Compose with a generated `docker-compose.images.yml` digest override. Read the script before piping it to a shell if your policy requires it.
 
 `--release` fills every secret with a random value and keeps the secure defaults: `APP_ENV=production` and `DEV_AUTO_LOGIN_ENABLED=false`, so there is no passwordless login. It also writes a random `INITIAL_ADMIN_PASSWORD` into `.env`. On first start the `db-migrate` service runs `alembic upgrade head` and then `scripts/create_admin.py`, which creates the user `admin` with that password on a new database only (an existing admin is never modified) and requires a password change at the first sign-in.
 
@@ -97,7 +97,7 @@ The installer also explains that port 3000 is plain HTTP bound to `127.0.0.1` by
 | Variable | Default | Effect |
 |---|---|---|
 | `TL_DIR` | `testlookup` | Install directory |
-| `TL_REF` | the latest published release | Branch, tag or commit the files are downloaded from. With a release tag (`vX.Y.Z`) the installer authenticates `SHA256SUMS`, `release-manifest.json`, and every application-image digest before startup. With neither this nor `TESTLOOKUP_VERSION` set, it looks up the latest release; if the lookup fails it stops. `TL_REF=main` explicitly installs the unverified tip and uses `latest` |
+| `TL_REF` | the latest published release | Branch, tag or commit the files are downloaded from. With a release tag (`vX.Y.Z`) the installer authenticates `SHA256SUMS`, `release-manifest.json`, and every application and infrastructure digest before startup. With neither this nor `TESTLOOKUP_VERSION` set, it looks up the latest release; if the lookup fails it stops. `TL_REF=main` explicitly installs the unverified tip and uses `latest` |
 | `TESTLOOKUP_VERSION` | the release in `TL_REF` | Release to install. With a release tag (`vX.Y.Z`) and no `TL_REF`, files follow the same release; when both are release tags they must match |
 | `TL_RAW_BASE` | `https://raw.githubusercontent.com/test-intelligence/testlookup` | Where the files are downloaded from (a mirror) |
 | `TL_RELEASE_BASE` | `https://github.com/test-intelligence/testlookup/releases/download` | Where `SHA256SUMS`, `release-manifest.json`, and the release's Sigstore bundle are downloaded from (a mirror) |
@@ -110,7 +110,7 @@ With nothing set, the installer installs the latest published release. To instal
 
 ### Image tags
 
-Images are `ghcr.io/test-intelligence/testlookup/backend`, `.../frontend` and `.../mcp`; `TESTLOOKUP_IMAGE` can repoint an install to a mirror while preserving each authenticated digest. CI publishes `latest` and the full commit SHA for every build of `main`, and the release workflow adds a `vX.Y.Z` alias after verification. The installer never relies on that mutable alias: `docker-compose.images.yml` names `repository@sha256:...` for every application service. Keep both `-f docker-compose.release.yml -f docker-compose.images.yml` in later Compose commands.
+Application images are `ghcr.io/test-intelligence/testlookup/backend`, `.../frontend` and `.../mcp`; `TESTLOOKUP_IMAGE` can repoint them to a mirror while preserving each authenticated digest. CI publishes `latest` and the full commit SHA for every build of `main`, and the release workflow adds a `vX.Y.Z` alias after verification. The installer never relies on mutable aliases: `docker-compose.images.yml` names `repository@sha256:...` for every application and infrastructure service. Keep both `-f docker-compose.release.yml -f docker-compose.images.yml` in later Compose commands.
 
 ### Without the installer
 

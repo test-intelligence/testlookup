@@ -367,10 +367,10 @@ k8s-deploy-k3s-update: ## Rebuild images and redeploy to the K3s cluster (skip r
 k8s-deploy-openshift-artifactory: ## Air-gapped OpenShift deploy over HTTPS, all images from one Artifactory (config: openshiftsetup/artifactory.env; flags via ARGS)
 	$(BASH_CMD) openshiftsetup/deploy-openshift-artifactory.sh $(ARGS)
 
-k8s-deploy-openshift-artifactory-update: ## Rebuild app images + redeploy to OpenShift, reuse already-mirrored infra images
+k8s-deploy-openshift-artifactory-update: ## Redeploy with --skip-mirror; verified releases still authenticate and check every destination digest
 	$(BASH_CMD) openshiftsetup/deploy-openshift-artifactory.sh --skip-mirror $(ARGS)
 
-k8s-mirror-images-openshift: ## Pre-seed the configured Artifactory with all third-party infra images (run on an internet-connected host)
+k8s-mirror-images-openshift: ## Pre-seed signed third-party digests (ARGS="--manifest ... --provenance ...")
 	$(BASH_CMD) openshiftsetup/mirror-images.sh $(ARGS)
 
 k8s-status: ## Show Kubernetes deployment status

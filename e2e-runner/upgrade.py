@@ -21,7 +21,7 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts/release"))
-from release_manifest import validate_manifest  # noqa: E402
+from release_manifest import APPLICATION_COMPONENTS, validate_manifest  # noqa: E402
 
 
 class PreconditionError(RuntimeError):
@@ -75,7 +75,8 @@ def verify_baseline(previous_file, candidate_file, provenance_file, archive_file
     if prior["source_sha"] == candidate["source_sha"]:
         raise PreconditionError("A true previous build must have a different source revision")
     if any(prior["images"][name]["source_ref"].rsplit("@", 1)[1]
-           == candidate["images"][name]["source_ref"].rsplit("@", 1)[1] for name in prior["images"]):
+           == candidate["images"][name]["source_ref"].rsplit("@", 1)[1]
+           for name in APPLICATION_COMPONENTS):
         raise PreconditionError("Every application component needs a distinct prior image")
     ancestry = subprocess.run(["git", "merge-base", "--is-ancestor", prior["source_sha"],
                                candidate["source_sha"]], cwd=ROOT, capture_output=True)

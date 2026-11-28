@@ -15,7 +15,11 @@
 # read), Python (stdlib only) and the CI drift guard can all parse it without
 # PyYAML — the drift guard has to run in a job that installs nothing.
 #
-#   1. ref       full image reference incl. tag. App images use the literal
+#   1. ref       reviewed version-catalogue reference incl. tag. Release CI
+#                resolves every production infra row to @sha256 and records
+#                the complete set in signed release-manifest.json; installers
+#                and mirror scripts reject infra refs outside that digest set.
+#                App images use the literal
 #                tag `@APP_TAG`, resolved at build time (bundle version /
 #                build-YYYYMMDD-HHMMSS / BUILD_TAG_PLACEHOLDER depending on
 #                the deploy path) — only their NAMES are drift-checked.

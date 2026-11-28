@@ -15,14 +15,13 @@ import release_manifest as manifests  # noqa: E402
 
 SOURCE_SHA = "a" * 40
 DIGESTS = {
-    "backend": "1" * 64,
-    "frontend": "2" * 64,
-    "mcp": "3" * 64,
+    component: format(index, "x") * 64
+    for index, component in enumerate(manifests.COMPONENTS, start=1)
 }
 
 
 def image(component: str) -> str:
-    return f"ghcr.io/acme/testlookup/{component}@sha256:{DIGESTS[component]}"
+    return f"{manifests.EXPECTED_SOURCE_NAMES[component]}@sha256:{DIGESTS[component]}"
 
 
 def valid_manifest() -> dict:
@@ -37,14 +36,39 @@ def test_create_and_validate_requires_all_release_components():
     manifest = valid_manifest()
 
     assert manifests.validate_manifest(manifest, expected_source_sha=SOURCE_SHA) == manifest
-    assert list(manifest["images"]) == ["backend", "frontend", "mcp"]
+    assert list(manifest["images"]) == list(manifests.COMPONENTS)
+
+
+def test_legacy_application_only_manifest_remains_readable():
+    legacy = valid_manifest()
+    legacy["schema_version"] = manifests.LEGACY_SCHEMA_VERSION
+    legacy["images"] = {
+        component: legacy["images"][component]
+        for component in manifests.APPLICATION_COMPONENTS
+    }
+
+    assert list(manifests.validate_manifest(legacy)["images"]) == list(manifests.APPLICATION_COMPONENTS)
+
+
+def test_deployment_schema_gate_rejects_legacy_but_keeps_inspection_compatible():
+    legacy = valid_manifest()
+    legacy["schema_version"] = manifests.LEGACY_SCHEMA_VERSION
+    legacy["images"] = {
+        component: legacy["images"][component]
+        for component in manifests.APPLICATION_COMPONENTS
+    }
+
+    inspected = manifests.validate_manifest(legacy)
+    with pytest.raises(manifests.ManifestError, match="inspection only.*schema_version 2"):
+        manifests.require_schema_version(inspected, manifests.SCHEMA_VERSION)
 
 
 @pytest.mark.parametrize(
     ("mutate", "message"),
     [
-        (lambda manifest: manifest["images"]["backend"].__setitem__("source_ref", "ghcr.io/acme/testlookup/backend:v1.2.3"), "immutable"),
+        (lambda manifest: manifest["images"]["backend"].__setitem__("source_ref", "ghcr.io/test-intelligence/testlookup/backend:v1.2.3"), "immutable"),
         (lambda manifest: manifest["images"].pop("mcp"), "exactly"),
+        (lambda manifest: manifest["images"]["postgres"].__setitem__("source_ref", image("mongo")), "must lock postgres"),
         (lambda manifest: manifest.__setitem__("source_sha", "A" * 40), "lowercase"),
         (lambda manifest: manifest.__setitem__("surprise", "unreviewed"), "unexpected"),
     ],
@@ -62,10 +86,14 @@ def test_materialization_preserves_each_verified_digest_without_a_tag():
         valid_manifest(), destination_prefix="us-central1-docker.pkg.dev/example/release"
     )
 
-    assert materialized["destination_refs"] == {
-        component: f"us-central1-docker.pkg.dev/example/release/testlookup/{component}@sha256:{DIGESTS[component]}"
-        for component in manifests.COMPONENTS
-    }
+    expected = {}
+    for component in manifests.COMPONENTS:
+        if component in manifests.APPLICATION_COMPONENTS:
+            path = f"testlookup/{component}"
+        else:
+            path = manifests.EXPECTED_SOURCE_NAMES[component].rsplit(":", 1)[0]
+        expected[component] = f"us-central1-docker.pkg.dev/example/release/{path}@sha256:{DIGESTS[component]}"
+    assert materialized["destination_refs"] == expected
     assert all(":v" not in ref for ref in materialized["destination_refs"].values())
     assert manifests.validate_materialized_manifest(
         materialized,
@@ -139,7 +167,7 @@ def test_cli_returns_nonzero_when_a_mutable_tag_is_supplied(tmp_path: Path):
         "--output",
         str(tmp_path / "release.json"),
     ]
-    command.extend(("--image", "backend=ghcr.io/acme/testlookup/backend:v1.2.3"))
+    command.extend(("--image", "backend=ghcr.io/test-intelligence/testlookup/backend:v1.2.3"))
     result = subprocess.run(
         command,
         check=False,
@@ -149,3 +177,45 @@ def test_cli_returns_nonzero_when_a_mutable_tag_is_supplied(tmp_path: Path):
 
     assert result.returncode == 2
     assert "immutable" in result.stderr
+
+
+def test_refs_cli_emits_the_complete_immutable_infrastructure_set(tmp_path: Path):
+    manifest = tmp_path / "release.json"
+    manifest.write_text(json.dumps(valid_manifest()), encoding="utf-8")
+
+    result = subprocess.run(
+        [sys.executable, str(Path(manifests.__file__)), "refs", "--manifest", str(manifest),
+         "--kind", "infrastructure"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0
+    assert result.stdout.splitlines() == [
+        f"{component}\t{image(component)}" for component in manifests.INFRASTRUCTURE_COMPONENTS
+    ]
+
+
+def test_refs_cli_materializes_private_registry_digests(tmp_path: Path):
+    manifest = tmp_path / "release.json"
+    manifest.write_text(json.dumps(valid_manifest()), encoding="utf-8")
+
+    result = subprocess.run(
+        [sys.executable, str(Path(manifests.__file__)), "refs", "--manifest", str(manifest),
+         "--kind", "all", "--destination-prefix", "pull.internal.example/releases"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0
+    refs = dict(line.split("\t", 1) for line in result.stdout.splitlines())
+    assert refs["backend"] == (
+        f"pull.internal.example/releases/testlookup/backend@sha256:{DIGESTS['backend']}"
+    )
+    assert refs["versitygw"] == (
+        "pull.internal.example/releases/ghcr.io/versity/versitygw"
+        f"@sha256:{DIGESTS['versitygw']}"
+    )
+    assert all("@sha256:" in ref for ref in refs.values())

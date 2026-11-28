@@ -49,7 +49,8 @@ The committed overlay contains `*_PLACEHOLDER` tokens (registry, tag, storage cl
 
 ### Prerequisites on the build host
 
-- `docker`, `oc` (or `kubectl`; Route certificate injection and the `anyuid` grant need `oc`), `curl`, `openssl`.
+- Verified release: `gh`, `python3`, `skopeo`, Kustomize 5.7.1 (the tested version), `oc` (or `kubectl`; Route certificate injection and the `anyuid` grant need `oc`) and `openssl`.
+- Deliberate non-release local build: `docker`, `curl`, `oc` (or `kubectl`) and `openssl`.
 - `oc login` to the target cluster.
 - Push access to the Artifactory repository.
 
@@ -63,11 +64,13 @@ make k8s-deploy-openshift-artifactory
 
 Every value can also come from the environment (the environment wins). `ARTIFACTORY_ENV_FILE` points the scripts at another config file. Keep the filled-in file out of version control.
 
+Setting either release input selects verified-release mode and requires both. Omitting both is retained only for deliberate local-image development: pre-seed the infrastructure repositories, pass `--skip-mirror`, and use the build/tag flags below. That mode does not claim release provenance.
+
 | Variable | Required | Meaning |
 |---|---|---|
 | `ARTIFACTORY_REGISTRY` | yes | Docker repository base for every image, without scheme or trailing slash, e.g. `artifactory.example.com/testlookup-docker` |
 | `ARTIFACTORY_PULL_REGISTRY` | no | Address the cluster pulls from when it differs from the push address (for example a virtual repository); defaults to `ARTIFACTORY_REGISTRY` |
-| `ARTIFACTORY_USERNAME`, `ARTIFACTORY_PASSWORD` | no | Used for `docker login` and for the in-cluster pull secret `artifactory-pull` (linked to the default service account). Use an API key or identity token as the password. Without them the script assumes Docker is already logged in and the cluster can pull anonymously |
+| `ARTIFACTORY_USERNAME`, `ARTIFACTORY_PASSWORD` | no | Used for the registry-client login and for the in-cluster pull secret `artifactory-pull` (linked to the default service account and keyed to `ARTIFACTORY_PULL_REGISTRY`). Use an API key or identity token as the password. Without them the script assumes the client is already logged in and the cluster can pull anonymously |
 | `ARTIFACTORY_EMAIL` | no | Email on the pull secret |
 | `APPS_DOMAIN` | yes, unless all three hosts are set | The cluster's apps wildcard domain; hosts become `testlookup.`, `testlookup-api.` and `testlookup-mcp.` under it |
 | `ROUTE_HOST_FRONTEND`, `ROUTE_HOST_API`, `ROUTE_HOST_MCP` | no | Explicit Route hosts; override `APPS_DOMAIN` |
@@ -77,15 +80,15 @@ Every value can also come from the environment (the environment wins). `ARTIFACT
 | `GRANT_ANYUID` | no | `true` grants the `anyuid` SCC to the `testlookup-anyuid` service account, which only the bundled data stores and Ollama use, so the stock images run with their expected UIDs (the application pods get `nonroot-v2`; `GRANT_NONROOT`, default `true`). An install from before this change keeps the old grant on `default` until one run with `REVOKE_DEFAULT_ANYUID=true`. `ENABLE_MONGO_AUTH=true` turns on MongoDB authentication (off by default; the bundled Valkey always gets a generated password); set `false` (or pass `--no-anyuid`) on hardened clusters with UID-agnostic images |
 | `ADMIN_USERNAME`, `ADMIN_EMAIL`, `ADMIN_FULL_NAME` | no | The first admin account |
 | `ADMIN_PASSWORD` | no | Leave empty: the script generates the password at first install and prints it once. Set it only to choose your own |
-| `INFRA_IMAGES` | no | Space-separated third-party images to mirror. Empty derives the list from `deploy/images.manifest.txt`; set it only to mirror a subset |
+| `RELEASE_MANIFEST`, `RELEASE_PROVENANCE_BUNDLE` | yes for a release, including `--skip-mirror` | Paths to the selected release's `release-manifest.json` and `.intoto.jsonl` provenance bundle; the script authenticates the complete schema-v2 image set before registry or cluster release work |
 | `PULL_OLLAMA_MODELS`, `OLLAMA_MODELS` | no | `true` pulls the listed models into the in-cluster Ollama after deploy. This needs a model mirror reachable from the cluster; otherwise load weights from an [offline model pack](../../user-guide/offline-model-pack.md) |
 | `APP_TAG` | no | With `--skip-build`, the existing `build-YYYYMMDD-HHMMSS` tag to deploy; empty picks the newest tag present for all three images |
 
 ### What the script does
 
-1. Preflight: checks Docker, `curl`, cluster login and the configuration.
-2. Builds the backend, frontend and MCP images and pushes them under an immutable `build-YYYYMMDD-HHMMSS` tag.
-3. Mirrors the third-party images into the same Artifactory, keeping their repository paths.
+1. Authenticates and validates the selected release's complete schema-v2 image manifest before registry, cluster or rendering work.
+2. Copies every signed application and infrastructure manifest index, including all platforms, into Artifactory with `skopeo --all --preserve-digests`; `--skip-mirror` instead proves every destination `repository@sha256` exists.
+3. Materializes the push and private cluster-pull registry mappings separately, then renders every workload and the migration Job with the cluster's `repository@sha256` reference. No application image is rebuilt in release mode.
 4. Creates the project and the `artifactory-pull` image-pull secret, and grants `anyuid` when enabled.
 5. Creates `testlookup-secrets` with generated values on first install (an existing Secret is kept) and writes the generated database and object-store credentials to `openshiftsetup/.openshift-credentials`, which Git ignores.
 6. Resolves the StorageClass, substitutes the placeholders and runs the migration Job (before the apply on an upgrade, after it on a fresh install), then applies the overlay.
@@ -93,9 +96,9 @@ Every value can also come from the environment (the environment wins). `ARTIFACT
 
 | Flag | Effect |
 |---|---|
-| `--skip-build` | Reuse an existing tag instead of building |
-| `--skip-push` | Build but do not push (local smoke test) |
-| `--skip-mirror` | Do not mirror third-party images (already present). `make k8s-deploy-openshift-artifactory-update` uses this to redeploy new application images |
+| `--skip-build` | Non-release mode only: reuse an existing tag instead of building |
+| `--skip-push` | Non-release mode only: build but do not push (local smoke test) |
+| `--skip-mirror` | Do not copy release images, but still authenticate the manifest and verify every signed destination digest before rendering |
 | `--no-anyuid` | Do not grant the `anyuid` SCC |
 | `--skip-admin` | Do not create the first admin |
 | `--dry-run` | Render the manifests and exit |
@@ -104,7 +107,7 @@ Every value can also come from the environment (the environment wins). `ARTIFACT
 
 ### Pre-seed the registry separately
 
-`openshiftsetup/mirror-images.sh` (or `make k8s-mirror-images-openshift`) mirrors only the third-party images, for teams that seed Artifactory ahead of time or refresh images without rebuilding the application. It reads the same `artifactory.env`, requires `ARTIFACTORY_REGISTRY`, derives the image list from `deploy/images.manifest.txt` unless `INFRA_IMAGES` is set, and accepts `--dry-run` to print the plan on a host without Docker.
+`openshiftsetup/mirror-images.sh` (or `make k8s-mirror-images-openshift`) mirrors only the third-party images, for teams that seed Artifactory ahead of time. Pass the selected release's `release-manifest.json` and `.intoto.jsonl` bundle with `--manifest` and `--provenance` (or set `RELEASE_MANIFEST` and `RELEASE_PROVENANCE_BUNDLE`). The script requires `ARTIFACTORY_REGISTRY`, GitHub CLI and `skopeo`, authenticates schema v2, and copies exact multi-platform indexes to digest-addressed destination repositories. `--dry-run` prints that digest-only plan without invoking `skopeo`.
 
 MongoDB (`mongo:7`) is mirrored from its upstream image like the other datastores; it is licensed SSPL-1.0, so check that this fits your organization before mirroring it.
 

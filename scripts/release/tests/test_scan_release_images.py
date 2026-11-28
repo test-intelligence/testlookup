@@ -20,7 +20,9 @@ def _manifest(path: Path) -> dict:
         source_sha=SOURCE_SHA,
         version="v1.2.3",
         images={
-            component: f"ghcr.io/acme/testlookup/{component}@sha256:{str(index) * 64}"
+            component: (
+                f"{release_manifest.EXPECTED_SOURCE_NAMES[component]}@sha256:{format(index, 'x') * 64}"
+            )
             for index, component in enumerate(release_manifest.COMPONENTS, start=1)
         },
     )
@@ -64,7 +66,7 @@ def test_scan_uses_every_exact_digest_and_writes_complete_evidence(tmp_path: Pat
 
     assert scanner.scan_release(manifest_path, output, runner=trivy) == 0
     image_commands = [command for command in trivy.commands if len(command) > 2]
-    assert len(image_commands) == 6
+    assert len(image_commands) == 2 * len(release_manifest.COMPONENTS)
     vulnerability_commands = [command for command in image_commands if command[command.index("--format") + 1] == "json"]
     assert all("--ignore-unfixed" in command for command in vulnerability_commands)
     assert all(command[command.index("--severity") + 1] == "HIGH,CRITICAL" for command in vulnerability_commands)
@@ -93,7 +95,7 @@ def test_one_policy_failure_still_scans_every_component(tmp_path: Path):
     assert summary["components"]["frontend"]["vulnerability_status"] == "blocked"
     assert summary["components"]["frontend"]["actionable_high_or_critical"] == 1
     assert set(summary["components"]) == set(release_manifest.COMPONENTS)
-    assert len([command for command in trivy.commands if len(command) > 2]) == 6
+    assert len([command for command in trivy.commands if len(command) > 2]) == 2 * len(release_manifest.COMPONENTS)
 
 
 def test_scanner_error_fails_closed_and_continues(tmp_path: Path):

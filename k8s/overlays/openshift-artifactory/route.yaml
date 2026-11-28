@@ -1,7 +1,7 @@
 # ============================================================================
 # OpenShift Routes — HTTPS (edge TLS termination + forced HTTP->HTTPS redirect)
 # ============================================================================
-# ROUTE_HOST_*_PLACEHOLDER tokens are substituted by
+# Route hostnames are substituted by
 # openshiftsetup/deploy-openshift-artifactory.sh from APPS_DOMAIN (or explicit
 # ROUTE_HOST_* config).
 #

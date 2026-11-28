@@ -68,6 +68,7 @@ def inputs(tmp_path, monkeypatch):
                     "matched": True,
                 }
                 for k, img in manifest["images"].items()
+                if k in merger.APPLICATION_COMPONENTS
             ],
         }
     for idx, manifest in (

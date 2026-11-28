@@ -212,7 +212,7 @@ def test_hardcoded_infra_images_in_mirror_script_fails(repo: Path):
     script = repo / "openshiftsetup/mirror-images.sh"
     _sub(
         script,
-        'INFRA_IMAGES="${INFRA_IMAGES:-$(manifest_refs k8s infra core,llm,external | tr \'\\n\' \' \')}"',
+        'INFRA_IMAGES="${INFRA_IMAGES:-$(printf \'%s\\n\' "$SIGNED_INFRA" | tr \'\\n\' \' \')}"',
         'INFRA_IMAGES="postgres:16-alpine valkey/valkey:8.1-alpine"',
     )
     errors = _joined(check(repo))
@@ -227,6 +227,57 @@ def test_script_not_sourcing_the_manifest_fails(repo: Path):
     )
     errors = _joined(check(repo))
     assert "does not source" in errors
+
+
+def test_mirror_without_signed_digest_inventory_fails(repo: Path):
+    script = repo / "openshiftsetup/mirror-images.sh"
+    _sub(script, "--kind infrastructure", "--kind application")
+    _sub(script, "--kind infrastructure", "--kind application")
+
+    errors = _joined(check(repo))
+
+    assert "validated release manifest" in errors
+
+
+def test_mirror_without_release_attestation_check_fails(repo: Path):
+    script = repo / "openshiftsetup/mirror-images.sh"
+    _sub(script, "gh attestation verify", "gh attestation inspect")
+
+    errors = _joined(check(repo))
+
+    assert "authenticate the release manifest" in errors
+
+
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        ("skopeo copy --all --preserve-digests", "skopeo copy"),
+        ("skopeo inspect --raw", "skopeo inspect"),
+    ],
+)
+def test_mirror_without_digest_preservation_or_destination_verification_fails(
+    repo: Path, old: str, new: str
+):
+    script = repo / "openshiftsetup/mirror-images.sh"
+    _sub(script, old, new)
+    _sub(script, old, new)
+
+    errors = _joined(check(repo))
+
+    assert "preserve complete manifest indexes" in errors
+
+
+def test_openshift_release_render_must_keep_destination_digests(repo: Path):
+    script = repo / "openshiftsetup/deploy-openshift-artifactory.sh"
+    _sub(
+        script,
+        'MIGRATION_IMAGE="${RELEASE_PULL_REFS[backend]}"',
+        'MIGRATION_IMAGE="${ARTIFACTORY_PULL_REGISTRY}/testlookup/backend:${APP_TAG}"',
+    )
+
+    errors = _joined(check(repo))
+
+    assert "overlay and migration" in errors
 
 
 # ── 3. Floating tags ────────────────────────────────────────────────────────

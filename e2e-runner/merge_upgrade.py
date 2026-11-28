@@ -10,7 +10,7 @@ import zipfile
 
 from policy import evaluate
 from run import JOURNEYS, render
-from upgrade import public_proof, qualifying_run, validate_manifest
+from upgrade import APPLICATION_COMPONENTS, public_proof, qualifying_run, validate_manifest
 
 CASE = "TL-DEPLOY-001"
 STAGES = (
@@ -116,8 +116,8 @@ def bind_baseline(folder, candidate, candidate_hash, raw):
         and provenance["artifact"]["expired"] is False
         and all(
             previous["images"][k]["source_ref"].rsplit("@", 1)[-1]
-            != v["source_ref"].rsplit("@", 1)[-1]
-            for k, v in candidate["images"].items()
+            != candidate["images"][k]["source_ref"].rsplit("@", 1)[-1]
+            for k in APPLICATION_COMPONENTS
         ),
         "Previous verified build provenance does not match.",
     )
@@ -237,7 +237,7 @@ def verify_stages(raw, previous, candidate):
             and observed["expected_revision"]
             == observed["observed_revision"]
             == build["source_sha"]
-            and {i["component"] for i in observed["images"]} == set(build["images"]),
+            and {i["component"] for i in observed["images"]} == set(APPLICATION_COMPONENTS),
             "Running components or revision differ from the expected stage.",
         )
         for image in observed["images"]:

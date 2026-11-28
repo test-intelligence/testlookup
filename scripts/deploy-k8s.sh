@@ -54,6 +54,20 @@ for arg in "$@"; do
   esac
 done
 
+# A materialized release manifest is a deployment authorization, not merely a
+# convenient source of image names. Validate its complete schema-v2 identity
+# before selecting/copying an overlay or contacting a cluster. Schema v1 stays
+# readable by release_manifest.py for legacy inspection, but it contains only
+# the application images and therefore cannot authorize a deployment.
+if [[ -n "$RELEASE_MANIFEST" ]]; then
+  [[ -f "$RELEASE_MANIFEST" ]] || { echo "ERROR: release manifest not found: $RELEASE_MANIFEST" >&2; exit 1; }
+  command -v python3 >/dev/null 2>&1 \
+    || { echo "ERROR: python3 is required to validate a release manifest" >&2; exit 1; }
+  python3 scripts/release/release_manifest.py validate-materialized \
+    --manifest "$RELEASE_MANIFEST" --require-schema-version 2 >/dev/null \
+    || { echo "ERROR: release manifest is not a complete schema-v2 deployment manifest" >&2; exit 1; }
+fi
+
 case "$CLOUD" in
   aws|aws-eks)        OVERLAY="k8s/overlays/aws-eks" ;;
   gcp|gcp-gke|gke)    OVERLAY="k8s/overlays/gcp-gke" ;;
@@ -149,15 +163,19 @@ prepare_temp_overlay() {
 }
 
 if [[ -n "$RELEASE_MANIFEST" ]]; then
-  [[ -f "$RELEASE_MANIFEST" ]] || { echo "ERROR: release manifest not found: $RELEASE_MANIFEST" >&2; exit 1; }
-  python3 scripts/release/release_manifest.py validate-materialized --manifest "$RELEASE_MANIFEST" >/dev/null
   BACKEND_IMAGE="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["destination_refs"]["backend"])' "$RELEASE_MANIFEST")"
   RELEASE_ID="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["source_sha"])' "$RELEASE_MANIFEST")"
   prepare_temp_overlay
   pushd "$TMP_OVERLAY" >/dev/null
-  for img in backend frontend mcp; do
+  for img in backend frontend mcp postgres valkey mongo versitygw busybox ollama chroma; do
+    source_ref="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["images"][sys.argv[2]]["source_ref"])' "$OLDPWD/$RELEASE_MANIFEST" "$img")"
+    source_name="${source_ref%@*}"
+    case "$img" in
+      backend|frontend|mcp) ;;
+      *) source_name="${source_name%:*}" ;;
+    esac
     ref="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["destination_refs"][sys.argv[2]])' "$OLDPWD/$RELEASE_MANIFEST" "$img")"
-    kubectl kustomize edit set image "${BASE_IMAGE_PREFIX}/$img=$ref" 2>/dev/null || kustomize edit set image "${BASE_IMAGE_PREFIX}/$img=$ref"
+    kubectl kustomize edit set image "$source_name=$ref" 2>/dev/null || kustomize edit set image "$source_name=$ref"
   done
   popd >/dev/null
   OVERLAY="$TMP_OVERLAY"

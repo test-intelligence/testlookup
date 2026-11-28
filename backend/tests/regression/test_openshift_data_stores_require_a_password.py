@@ -297,13 +297,22 @@ def test_a_first_install_needs_no_running_server(run):
     assert "mongo-fresh: MONGO_AUTH_JUST_ENABLED=true" in stdout
 
 
-def test_the_script_sets_the_credentials_before_it_applies():
+@pytest.mark.parametrize(
+    "apply_command",
+    [
+        r"""printf '%s\n' "$RENDERED_OVERLAY" | "$KCLI" apply -f -""",
+        '"$KCLI" apply -k "$OVERLAY_DIR"',
+    ],
+    ids=["verified-release", "local-build"],
+)
+def test_the_script_sets_the_credentials_before_it_applies(apply_command: str):
     script = SCRIPT.read_text(encoding="utf-8")
     main = script[script.index("# <<< secret helpers"):]
-    apply_at = re.search(r'^"\$KCLI" apply -k "\$OVERLAY_DIR"$', main, re.MULTILINE).start()
+    apply_call = re.search(rf"^[ \t]*{re.escape(apply_command)}$", main, re.MULTILINE)
+    assert apply_call, f"missing deployment command: {apply_command}"
     for call in ("ensure_redis_credentials", "ensure_mongo_credentials"):
-        called_at = re.search(rf"^\s*{call}$", main, re.MULTILINE)
-        assert called_at and called_at.start() < apply_at, f"{call} does not run before the apply"
+        called_at = re.search(rf"^[ \t]*{call}$", main, re.MULTILINE)
+        assert called_at and called_at.start() < apply_call.start(), f"{call} does not run before {apply_command}"
 
 
 def test_a_dry_run_changes_no_credentials():
