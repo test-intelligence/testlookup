@@ -9,11 +9,13 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import os
 import re
 import shlex
 import subprocess
 from pathlib import Path
 
+import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -1005,6 +1007,15 @@ _VERIFY_DOCS = (
     ".github/workflows/ci.yml",
     ".github/workflows/offline-bundle.yml",
 )
+_INSTALL_BOOTSTRAP_DOCS = (
+    "README.md",
+    "GETTING_STARTED.md",
+    "docs/operations/deploy-compose.md",
+)
+_BASH_BOOTSTRAP_ONLY = pytest.mark.skipif(
+    os.name == "nt",
+    reason="installer bootstrap behavioral fixture requires /bin/bash and POSIX executable stubs",
+)
 
 
 def _attestation_verify_commands(text: str) -> list[str]:
@@ -1065,6 +1076,202 @@ def test_the_documented_attestation_checks_name_the_signing_workflow_and_main() 
     ]
 
 
+def test_the_documented_installer_is_authenticated_before_bash() -> None:
+    """The primary paths select one eligible immutable release and perform both
+    independent installer checks before Bash interprets downloaded bytes."""
+    for rel in _INSTALL_BOOTSTRAP_DOCS:
+        text = (ROOT / rel).read_text(encoding="utf-8")
+        assert "raw.githubusercontent.com/test-intelligence/testlookup/main/install.sh |" not in text
+        assert "gh auth login" in text and "GH_TOKEN" in text
+        assert ".immutable == true" in text
+        assert 'index("install.sh")' in text
+        assert 'index("testlookup-offline-\\($tag | ltrimstr("v")).intoto.jsonl")' in text
+        assert 'releases/tags/${TL_INSTALLER_VERSION}' in text
+        assert 'gh api --paginate "repos/${TL_REPOSITORY}/releases?per_page=100"' in text
+        download = text.index('gh release download "$TL_INSTALLER_VERSION"')
+        release_verify = text.index('gh release verify-asset "$TL_INSTALLER_VERSION"', download)
+        provenance_verify = text.index('gh attestation verify "$TL_BOOTSTRAP/install.sh"', release_verify)
+        execute = text.index('bash "$TL_BOOTSTRAP/install.sh"', provenance_verify)
+        assert download < release_verify < provenance_verify < execute, rel
+        command = text[release_verify:execute + len('bash "$TL_BOOTSTRAP/install.sh"')]
+        assert 'verify-asset "$TL_INSTALLER_VERSION" "$TL_BOOTSTRAP/install.sh"' in command
+        assert "--repo test-intelligence/testlookup" in command
+        assert "--signer-workflow test-intelligence/testlookup/.github/workflows/offline-bundle.yml" in command
+        assert "--source-ref refs/heads/main" in command
+        assert 'TL_REF="$TL_INSTALLER_VERSION"' in command
+        assert 'TESTLOOKUP_VERSION="$TL_INSTALLER_VERSION"' in command
+
+    for rel in (
+        "docker-compose.release.yml",
+        "frontend/src/components/onboarding/firstRunSteps.ts",
+    ):
+        text = (ROOT / rel).read_text(encoding="utf-8")
+        assert "raw.githubusercontent.com/test-intelligence/testlookup/main/install.sh |" not in text
+
+
+def _documented_installer_bootstrap() -> str:
+    text = (ROOT / "README.md").read_text(encoding="utf-8")
+    marker = text.index("TL_RELEASE_FILTER=")
+    start = text.rfind("```bash\n", 0, marker) + len("```bash\n")
+    end = text.index("\n```", marker)
+    return text[start:end]
+
+
+def _write_installer_bootstrap_stubs(directory: Path) -> Path:
+    """Provide deterministic gh and Bash boundaries for the documented block.
+
+    The gh API stub returns post-`--jq` output: v0.1.0 represents the current
+    immutable release without installer assets, while v0.2.0 is eligible.
+    """
+    bin_dir = directory / "bin"
+    bin_dir.mkdir(parents=True)
+    gh = bin_dir / "gh"
+    gh.write_text(
+        r'''#!/bin/sh
+set -eu
+printf 'gh\t%s\n' "$*" >> "$GH_LOG"
+case "$1:$2" in
+  api:--paginate)
+    case "$*" in
+      *'.immutable == true'*'index("install.sh")'*'testlookup-offline-'*) ;;
+      *) exit 90 ;;
+    esac
+    [ "$GH_SCENARIO" = no_candidates ] || printf '%s\n' v0.2.0
+    ;;
+  api:repos/*/releases/tags/*)
+    tag=${2##*/}
+    case "$tag" in
+      v0.2.0) printf '%s\n' "$tag" ;;
+      v0.1.0) : ;; # Existing, but removed by --jq because both assets are absent.
+      *) exit 1 ;;
+    esac
+    ;;
+  release:download)
+    tag=$3
+    shift 3
+    destination=
+    while [ "$#" -gt 0 ]; do
+      if [ "$1" = --dir ]; then destination=$2; shift; fi
+      shift
+    done
+    mkdir -p "$destination"
+    printf '# installer fixture\n' > "$destination/install.sh"
+    : > "$destination/testlookup-offline-${tag#v}.intoto.jsonl"
+    ;;
+  release:verify-asset)
+    [ "$GH_SCENARIO" != asset_failure ]
+    ;;
+  attestation:verify)
+    [ "$GH_SCENARIO" != provenance_failure ]
+    ;;
+  *) exit 91 ;;
+esac
+''',
+        encoding="utf-8",
+    )
+    gh.chmod(0o755)
+    bash = bin_dir / "bash"
+    bash.write_text(
+        "#!/bin/sh\n"
+        "printf 'bash\\tTL_REF=%s\\tTESTLOOKUP_VERSION=%s\\tTL_PROFILE=%s\\t%s\\n' "
+        '"${TL_REF:-}" "${TESTLOOKUP_VERSION:-}" "${TL_PROFILE:-}" "$*" >> "$GH_LOG"\n',
+        encoding="utf-8",
+    )
+    bash.chmod(0o755)
+    return bin_dir
+
+
+def _run_documented_installer_bootstrap(
+    directory: Path,
+    scenario: str,
+    version: str | None = None,
+) -> tuple[subprocess.CompletedProcess[str], str]:
+    directory.mkdir(parents=True, exist_ok=True)
+    script = directory / "bootstrap.sh"
+    script.write_text(_documented_installer_bootstrap(), encoding="utf-8")
+    log = directory / "commands.log"
+    bin_dir = _write_installer_bootstrap_stubs(directory)
+    env = os.environ.copy()
+    env.update({
+        "PATH": f"{bin_dir}:{env['PATH']}",
+        "GH_LOG": str(log),
+        "GH_SCENARIO": scenario,
+    })
+    if version is None:
+        env.pop("TL_INSTALLER_VERSION", None)
+    else:
+        env["TL_INSTALLER_VERSION"] = version
+    completed = subprocess.run(
+        ["/bin/bash", str(script)],
+        cwd=directory,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    return completed, log.read_text(encoding="utf-8") if log.exists() else ""
+
+
+@_BASH_BOOTSTRAP_ONLY
+def test_installer_bootstrap_skips_v010_without_assets(tmp_path: Path) -> None:
+    completed, commands = _run_documented_installer_bootstrap(tmp_path, "eligible_after_v010")
+
+    assert completed.returncode == 0, completed.stderr
+    assert "gh\tapi --paginate" in commands
+    assert "gh\trelease download v0.2.0" in commands
+    assert "release download v0.1.0" not in commands
+    assert "gh\trelease verify-asset v0.2.0" in commands
+    assert "gh\tattestation verify" in commands
+    assert "bash\tTL_REF=v0.2.0\tTESTLOOKUP_VERSION=v0.2.0\tTL_PROFILE=demo" in commands
+
+
+@_BASH_BOOTSTRAP_ONLY
+def test_installer_bootstrap_rejects_explicit_assetless_release(tmp_path: Path) -> None:
+    completed, commands = _run_documented_installer_bootstrap(tmp_path, "explicit", "v0.1.0")
+
+    assert completed.returncode != 0
+    assert "not an eligible immutable installer release" in completed.stderr
+    assert "gh\tapi repos/test-intelligence/testlookup/releases/tags/v0.1.0" in commands
+    assert "api --paginate" not in commands
+    assert "release download" not in commands
+    assert "bash\t" not in commands
+
+
+@_BASH_BOOTSTRAP_ONLY
+def test_installer_bootstrap_fails_when_no_candidate_exists(tmp_path: Path) -> None:
+    completed, commands = _run_documented_installer_bootstrap(tmp_path, "no_candidates")
+
+    assert completed.returncode != 0
+    assert "no eligible immutable TestLookup release" in completed.stderr
+    assert "release download" not in commands
+    assert "bash\t" not in commands
+
+
+@_BASH_BOOTSTRAP_ONLY
+def test_installer_bootstrap_stops_before_bash_on_verification_failure(tmp_path: Path) -> None:
+    asset_result, asset_commands = _run_documented_installer_bootstrap(
+        tmp_path / "asset",
+        "asset_failure",
+    )
+    provenance_result, provenance_commands = _run_documented_installer_bootstrap(
+        tmp_path / "provenance",
+        "provenance_failure",
+    )
+
+    assert asset_result.returncode != 0
+    assert "failed immutable release-asset verification" in asset_result.stderr
+    assert "gh\trelease verify-asset v0.2.0" in asset_commands
+    assert "gh\tattestation verify" not in asset_commands
+    assert "bash\t" not in asset_commands
+
+    assert provenance_result.returncode != 0
+    assert "failed trusted offline-bundle.yml/main provenance verification" in provenance_result.stderr
+    assert provenance_commands.index("gh\trelease verify-asset") < provenance_commands.index(
+        "gh\tattestation verify"
+    )
+    assert "bash\t" not in provenance_commands
+
+
 def test_the_air_gap_guide_authenticates_the_bundle_before_extraction() -> None:
     """The transferred checksum is attacker-replaceable, so signed provenance
     must authenticate the tarball before any archive member can be trusted."""
@@ -1109,6 +1316,7 @@ def test_a_release_bundle_run_attaches_signed_provenance() -> None:
     assert [p.strip() for p in attest["with"]["subject-path"].splitlines() if p.strip()] == [
         "dist/testlookup-offline-${{ env.BUNDLE_VERSION }}.tar.gz",
         "dist/testlookup-offline-${{ env.BUNDLE_VERSION }}.tar.gz.sha256",
+        "dist/install.sh",
         "dist/SHA256SUMS",
         "dist/release-manifest.json",
     ]
@@ -1117,9 +1325,11 @@ def test_a_release_bundle_run_attaches_signed_provenance() -> None:
     assert keep["env"]["BUNDLE_PATH"] == "${{ steps.attest.outputs.bundle-path }}"
     [upload] = [s for s in steps if "upload-artifact" in s.get("uses", "")]
     assert "dist/*.intoto.jsonl" in upload["with"]["path"]
+    assert "dist/install.sh" in upload["with"]["path"]
     assert "dist/release-manifest.json" in upload["with"]["path"]
+    installer = next(i for i, s in enumerate(steps) if "git show HEAD:install.sh > dist/install.sh" in s.get("run", ""))
     sums = next(i for i, s in enumerate(steps) if "> dist/SHA256SUMS" in s.get("run", ""))
-    assert sums < steps.index(attest) < steps.index(keep) < steps.index(upload)
+    assert installer == sums < steps.index(attest) < steps.index(keep) < steps.index(upload)
 
 
 def test_the_online_manifest_contains_only_ci_attested_release_digests() -> None:

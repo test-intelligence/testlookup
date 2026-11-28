@@ -81,12 +81,13 @@ How a maintainer cuts a release. Users upgrading an install want
    (refusing if `:vX.Y.Z` is missing or is not CI's image of the tagged
    commit), bundles them without rebuilding, and checks the import with the
    network blocked. The run's `offline-bundle` artifact (kept 30 days) holds
-   `testlookup-offline-X.Y.Z.tar.gz`, its `.sha256`, `SHA256SUMS` for
-   `install.sh` and the files it downloads, `release-manifest.json` with the
-   exact backend, frontend and MCP digests authenticated against CI, and
-   `testlookup-offline-X.Y.Z.intoto.jsonl`, the signed SLSA build provenance of
-   those four files. Attach all five to the **draft** GitHub release: releases
-   are immutable once published, so a file left off cannot be added later.
+   `testlookup-offline-X.Y.Z.tar.gz`, its `.sha256`, the versioned `install.sh`,
+   `SHA256SUMS` for the installer and the files it downloads,
+   `release-manifest.json` with the exact backend, frontend and MCP digests
+   authenticated against CI, and `testlookup-offline-X.Y.Z.intoto.jsonl`, the
+   signed SLSA build provenance of those five files. Attach all six to the
+   **draft** GitHub release: releases are immutable once published, so a file
+   left off cannot be added later.
    OpenSSF Scorecard's Signed-Releases check reads the `.intoto.jsonl` asset,
    and anyone can check a download with
 
@@ -99,9 +100,11 @@ How a maintainer cuts a release. Users upgrading an install want
 
    (add `--bundle testlookup-offline-X.Y.Z.intoto.jsonl` to check against the
    attached file instead of asking GitHub). The same command checks the
-   `.sha256` file, `SHA256SUMS` and `release-manifest.json`. The online
-   installer verifies the last two with the attached provenance bundle, then
-   verifies every manifest digest against CI before it starts Compose.
+   `.sha256` file, `install.sh`, `SHA256SUMS` and `release-manifest.json`. The
+   documented bootstrap authenticates `install.sh` before execution. The online
+   installer verifies the last two data files with the attached provenance
+   bundle, then verifies every manifest digest against CI before it starts
+   Compose.
    `make offline-bundle` builds the images from source, so use it for
    testing, not for a release. Under Podman it also names the app images
    `localhost/testlookup/...`, which a Docker host cannot import.
@@ -133,5 +136,5 @@ assembled release. Branch protection should require the lightweight check on
 - [ ] `CITATION.cff` has the same `version` and the release's `date-released`
 - [ ] `THIRD_PARTY_NOTICES.md` regenerated (`--check` passes)
 - [ ] "Promote verified release" succeeded; `:vX.Y.Z` exists for backend, frontend and mcp
-- [ ] Offline bundle built and all five assets attached to the draft (including `release-manifest.json` and provenance)
+- [ ] Offline bundle built and all six assets attached to the draft (including `install.sh`, `release-manifest.json` and provenance)
 - [ ] GitHub release published

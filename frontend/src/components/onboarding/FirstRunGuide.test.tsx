@@ -98,12 +98,13 @@ describe('FirstRunGuide', () => {
     expect(screen.getByText(/explore the intelligence/i)).toBeInTheDocument()
   })
 
-  // D-09: the one-command install has no Makefile, so step 1 cannot offer only `make quickstart`.
-  it('step 1 gives the one-command install its demo command first, a source clone make quickstart second', () => {
+  // D-09: the release install has no Makefile, so step 1 cannot offer only `make quickstart`.
+  it('step 1 enables the installed demo profile first, a source clone make quickstart second', () => {
     renderGuide()
     const demo = screen.getByText(DEMO_INSTALL_COMMAND)
     const make = screen.getByText('make quickstart')
-    expect(DEMO_INSTALL_COMMAND).toContain('TL_PROFILE=demo')
+    expect(DEMO_INSTALL_COMMAND).toContain('--profile demo')
+    expect(DEMO_INSTALL_COMMAND).not.toContain('raw.githubusercontent.com')
     expect(demo.compareDocumentPosition(make) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(screen.getByText('From a source clone instead:')).toBeInTheDocument()
     expect(buildSteps()[0].command).toBe(DEMO_INSTALL_COMMAND)

@@ -329,8 +329,8 @@ image: it waits for the object store and creates every bucket the backend
 writes to. It is idempotent; re-run it with
 `docker compose -f docker-compose.release.yml -f docker-compose.airgap.yml run --rm minio-setup`.
 
-`make dev` and the public `install.sh` one-liner are unaffected — they never
-load the override.
+`make dev` and the authenticated online `install.sh` release path are
+unaffected — they never load the override.
 
 Then confirm:
 

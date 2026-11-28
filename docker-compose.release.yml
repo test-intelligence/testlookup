@@ -7,10 +7,11 @@ name: testlookup
 # This file pulls pinned, pre-built images from the GitHub
 # Container Registry instead of building from source.
 #
-# Fastest path — the remote one-liner does everything for you:
-#   curl -fsSL https://raw.githubusercontent.com/test-intelligence/testlookup/main/install.sh | bash
+# Recommended path — authenticate the immutable release installer before use:
+#   https://github.com/test-intelligence/testlookup#install-an-authenticated-release
 #
-# Or by hand (download this file + the env tooling, generate .env, then up):
+# Deliberate unreleased path (mutable and unauthenticated; do not use this to
+# install a published release):
 #   mkdir testlookup && cd testlookup && mkdir scripts
 #   base=https://raw.githubusercontent.com/test-intelligence/testlookup/main
 #   curl -fsSLO $base/docker-compose.release.yml

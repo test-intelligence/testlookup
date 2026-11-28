@@ -10,13 +10,15 @@ TestLookup is open-source software test intelligence. It collects the test repor
 
 ## Install
 
-Try it with demo data (Docker with Compose v2 and Bash; about 1 GB of images):
+The `v0.1.0` release predates the authenticated no-clone installer's required `install.sh` and provenance assets. To try that historical release with demo data, use its source checkout (Docker with Compose v2, Bash and Git; about 1 GB of images):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/test-intelligence/testlookup/v0.1.0/install.sh | TL_REF=v0.1.0 TESTLOOKUP_VERSION=v0.1.0 TL_PROFILE=demo bash
+git clone --branch v0.1.0 --depth 1 https://github.com/test-intelligence/testlookup.git
+cd testlookup
+make quickstart
 ```
 
-Open `http://localhost:3000` and sign in as `admin` with the password the installer prints. Leave out `TL_PROFILE=demo` for an empty instance. From a clone: `git checkout v0.1.0 && make quickstart`. On Kubernetes: `scripts/deploy-k8s.sh --cloud=self-hosted --image-tag=v0.1.0` (the overlays already pin `v0.1.0`). Every mode: the [deployment guide](https://github.com/test-intelligence/testlookup/blob/v0.1.0/docs/operations/deployment.md).
+Open `http://localhost:3000`; this local demo uses passwordless Quick Login. On Kubernetes: `scripts/deploy-k8s.sh --cloud=self-hosted --image-tag=v0.1.0` (the overlays already pin `v0.1.0`). Every mode: the [deployment guide](https://github.com/test-intelligence/testlookup/blob/v0.1.0/docs/operations/deployment.md).
 
 | Image | Tag | Digest |
 |---|---|---|

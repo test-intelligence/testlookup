@@ -13,7 +13,7 @@
 <p align="center">
   <a href="https://testlookup.app"><b>Website</b></a> ·
   <a href="https://testlookup.app/docs/">Docs</a> ·
-  <a href="#run-it-in-one-command">Quick start</a> ·
+  <a href="#install-an-authenticated-release">Quick start</a> ·
   <a href="https://testlookup.app/demo/"><b>Demo</b></a> ·
   <a href="https://testlookup.app/features/">Features</a> ·
   <a href="https://testlookup.app/roadmap/">Roadmap</a>
@@ -33,17 +33,82 @@
 
 TestLookup collects the test reports your CI already produces, keeps their history per project, classifies why each test fails, and turns that evidence into a release recommendation you can audit. It runs on your own servers, and its AI analysis defaults to a local model, with hosted model providers blocked until you allow them.
 
-## Run it in one command
+## Install an authenticated release
 
-You need Docker with Compose v2, Bash (on Windows, Git Bash or WSL), and the [GitHub CLI](https://cli.github.com/) to authenticate the release manifest and image provenance. This installs the published images with demo projects, so your first dashboard already has data:
+You need Docker with Compose v2, Bash (on Windows, Git Bash or WSL), and a [GitHub CLI](https://cli.github.com/) version that provides `gh api`, `gh release download`, and `gh release verify-asset` plus artifact provenance verification. Authenticate first with `gh auth login`, or set `GH_TOKEN`; a fine-grained token needs Contents and Attestations read access to this repository. This selects the newest eligible immutable release, verifies the installer before Bash interprets it, and installs the published images with demo projects:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/test-intelligence/testlookup/main/install.sh | TL_PROFILE=demo bash
+(
+  set -euo pipefail
+  TL_REPOSITORY="test-intelligence/testlookup"
+  TL_RELEASE_FILTER='
+    .tag_name as $tag
+    | ([.assets[].name]) as $assets
+    | select(
+        .draft == false
+        and .prerelease == false
+        and .immutable == true
+        and ($tag | test("^v[0-9]+\\.[0-9]+\\.[0-9]+$"))
+        and (($assets | index("install.sh")) != null)
+        and (($assets | index("testlookup-offline-\($tag | ltrimstr("v")).intoto.jsonl")) != null)
+      )
+    | .tag_name
+  '
+  if [ -n "${TL_INSTALLER_VERSION:-}" ]; then
+    [[ "$TL_INSTALLER_VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || {
+      printf 'error: TL_INSTALLER_VERSION must be a vX.Y.Z release tag.\n' >&2
+      exit 1
+    }
+    TL_SELECTED="$(gh api "repos/${TL_REPOSITORY}/releases/tags/${TL_INSTALLER_VERSION}" \
+      --jq "$TL_RELEASE_FILTER")" || {
+      printf 'error: could not inspect %s; run gh auth login or set GH_TOKEN.\n' "$TL_INSTALLER_VERSION" >&2
+      exit 1
+    }
+    [ "$TL_SELECTED" = "$TL_INSTALLER_VERSION" ] || {
+      printf 'error: %s is not an eligible immutable installer release with install.sh and its version-matched provenance bundle.\n' "$TL_INSTALLER_VERSION" >&2
+      exit 1
+    }
+  else
+    TL_CANDIDATES="$(gh api --paginate "repos/${TL_REPOSITORY}/releases?per_page=100" \
+      --jq ".[] | ${TL_RELEASE_FILTER}")" || {
+      printf 'error: could not inspect TestLookup releases; run gh auth login or set GH_TOKEN.\n' >&2
+      exit 1
+    }
+    TL_INSTALLER_VERSION="${TL_CANDIDATES%%$'\n'*}"
+    [ -n "$TL_INSTALLER_VERSION" ] || {
+      printf 'error: no eligible immutable TestLookup release includes install.sh and its version-matched provenance bundle; use a source clone until one is published.\n' >&2
+      exit 1
+    }
+  fi
+  TL_BUNDLE="testlookup-offline-${TL_INSTALLER_VERSION#v}.intoto.jsonl"
+  TL_BOOTSTRAP="$(mktemp -d)"
+  trap 'rm -rf "$TL_BOOTSTRAP"' EXIT
+  gh release download "$TL_INSTALLER_VERSION" --repo test-intelligence/testlookup \
+    --pattern install.sh --pattern "$TL_BUNDLE" --dir "$TL_BOOTSTRAP" || {
+      printf 'error: failed to download the authenticated installer assets for %s.\n' "$TL_INSTALLER_VERSION" >&2
+      exit 1
+    }
+  gh release verify-asset "$TL_INSTALLER_VERSION" "$TL_BOOTSTRAP/install.sh" \
+    --repo test-intelligence/testlookup || {
+      printf 'error: install.sh failed immutable release-asset verification for %s.\n' "$TL_INSTALLER_VERSION" >&2
+      exit 1
+    }
+  gh attestation verify "$TL_BOOTSTRAP/install.sh" \
+    --repo test-intelligence/testlookup \
+    --signer-workflow test-intelligence/testlookup/.github/workflows/offline-bundle.yml \
+    --source-ref refs/heads/main \
+    --bundle "$TL_BOOTSTRAP/$TL_BUNDLE" || {
+      printf 'error: install.sh failed trusted offline-bundle.yml/main provenance verification for %s.\n' "$TL_INSTALLER_VERSION" >&2
+      exit 1
+    }
+  TL_REF="$TL_INSTALLER_VERSION" TESTLOOKUP_VERSION="$TL_INSTALLER_VERSION" \
+    TL_PROFILE=demo bash "$TL_BOOTSTRAP/install.sh"
+)
 ```
 
 - **Time and size:** the images are about 1 GB to download (0.95 GB for linux/amd64, measured on 11 November 2026). On a 100 Mbit/s connection, expect about 5 minutes from the command to a working dashboard. Leave about 8 GB of memory free for the services.
 - **Then:** open [localhost:3000](http://localhost:3000) and sign in as `admin`. The installer never prints the password: it is in `testlookup/.env` as `INITIAL_ADMIN_PASSWORD` (readable by you only; `grep '^INITIAL_ADMIN_PASSWORD=' testlookup/.env` shows it), and you choose a new one at the first sign-in. The demo projects load in the background after the database is ready.
-- **What it does:** downloads the release Compose file into `./testlookup`, authenticates the release's exact image digests, writes a `.env` with random secrets in production mode (no passwordless login), and starts the stack with those digests. Read [install.sh](install.sh) first if your policy asks you to. Leave out `TL_PROFILE=demo` to start with an empty instance for your team.
+- **What it does:** skips releases that are mutable or lack either required installer asset, checks the downloaded `install.sh` against the selected immutable release and the fixed release workflow on `main`, downloads the matching release Compose file into `./testlookup`, authenticates the release's exact image digests, writes a `.env` with random secrets in production mode (no passwordless login), and starts the stack with those digests. Set `TL_INSTALLER_VERSION=vX.Y.Z` before the block to choose an eligible release; an ineligible explicit tag fails without falling back. Leave out `TL_PROFILE=demo` on the final command to start with an empty instance for your team. The existing `v0.1.0` release predates the required installer assets, so use the source-clone option below until a newer eligible release is published.
 
 Nothing to install? Replay real screens in the browser with the [guided tours](https://testlookup.app/demo/) (first run, failure triage, release review), or [open a Codespace](https://codespaces.new/test-intelligence/testlookup?quickstart=1) that starts the full app with demo data on your GitHub account's Codespaces allowance.
 
@@ -111,13 +176,13 @@ TestLookup ingests Allure results and JUnit-style output from those tools; it co
 
 The website's [quick start](https://testlookup.app/docs/next/quickstart/) uses the same two options. Pick one: both use the same ports and container names, so only one copy runs on a machine. Both need Docker with Compose v2 and Bash, about 8 GB of free memory, and free ports 3000, 8000, 8002, 5433, 6379, 9000 and 27017; see the [sizing guide](user-guide/sizing.md) for disk.
 
-### Option A: one-command install (published images)
+### Option A: authenticated release install (published images)
 
-The [command above](#run-it-in-one-command). It pulls `ghcr.io/test-intelligence/testlookup` images by the authenticated release digests and builds nothing. Sign-in is always `admin`, with the password from `.env` (`INITIAL_ADMIN_PASSWORD`). Other settings (`TESTLOOKUP_VERSION` to select a release, `TL_PROFILE=local-llm` for local models, `TL_DIR`, `TL_NO_UP`) are in the [Compose guide](docs/operations/deploy-compose.md#release-images-without-a-clone). Explicit `TL_REF=main` installs remain available for unreleased evaluation builds, warn that they are unverified, and use the moving `latest` tag.
+The [commands above](#install-an-authenticated-release). They pull `ghcr.io/test-intelligence/testlookup` images by the authenticated release digests and build nothing. Sign-in is always `admin`, with the password from `.env` (`INITIAL_ADMIN_PASSWORD`). Other settings (`TL_PROFILE=local-llm` for local models, `TL_DIR`, `TL_NO_UP`) are in the [Compose guide](docs/operations/deploy-compose.md#release-images-without-a-clone). Explicit `TL_REF=main` installs remain available for unreleased evaluation builds after authenticating a release installer; they warn that the subsequently downloaded files are unverified and use the moving `latest` tag.
 
 #### Check a release before you run it
 
-CI signs every published image, and the release process signs the digest manifest and offline bundle. The installer performs these checks automatically; you can also use the GitHub CLI to check that an image or bundle came from this repository's own workflow on `main`:
+CI signs every published image, and the release process signs the installer, digest manifest and offline bundle. The bootstrap above authenticates the installer before it runs, and the installer checks the remaining release inputs automatically. You can also use the GitHub CLI to check that an image or bundle came from this repository's own workflow on `main`:
 
 ```bash
 # An image (the same for frontend and mcp)

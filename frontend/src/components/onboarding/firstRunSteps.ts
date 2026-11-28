@@ -119,9 +119,9 @@ export function uploadCommand(projectId?: string): string {
  */
 export const DEFAULT_INGEST_URL = 'http://localhost:8000/api/v1/ingest/file'
 
-/** D-09: the one-command install's demo path (README "Option A", install.sh TL_PROFILE=demo). */
+/** D-09: enable the demo profile in an existing authenticated release install. */
 export const DEMO_INSTALL_COMMAND =
-  'curl -fsSL https://raw.githubusercontent.com/test-intelligence/testlookup/main/install.sh | TL_PROFILE=demo bash'
+  'cd testlookup && docker compose -f docker-compose.release.yml -f docker-compose.images.yml --profile demo up -d'
 
 /**
  * The raw ingest-API equivalent of {@link uploadCommand}, for CI runners that
@@ -217,10 +217,11 @@ export function buildSteps(
   return [
     {
       // D-09: the one-command (Docker Compose) install has no Makefile; its demo
-      // path is the installer's demo profile. A source clone keeps `make quickstart`.
+      // path enables the already-installed release's demo profile without fetching code.
+      // A source clone keeps `make quickstart`.
       n: 1,
       title: 'Load the demo dataset',
-      body: 'Add demo projects with sample runs, failures, flaky tests, trends and a release gate. On the one-command install, run the installer again with the demo profile:',
+      body: 'Add demo projects with sample runs, failures, flaky tests, trends and a release gate. In an authenticated release install, enable the local demo profile:',
       command: DEMO_INSTALL_COMMAND,
       altCommand: { label: 'From a source clone instead:', command: 'make quickstart' },
     },
