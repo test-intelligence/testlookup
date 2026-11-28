@@ -139,7 +139,7 @@ sequenceDiagram
 
     M->>PG: commit membership mutation or erasure
     M->>R: delete membership:{user_id}
-    Note over M,R: Legacy cleanup for older replicas; new authorization reads never consume this key
+    Note over M,R: This cleanup serves older replicas. New authorization reads ignore the key.
 ```
 
 `invalidate_membership_cache` remains best-effort so membership mutations and
