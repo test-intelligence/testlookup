@@ -177,7 +177,7 @@ const JDOE = { id: 'u-jdoe', email: 'jane@example.test', username: 'jdoe', full_
 // ── Add User / Invite User (real hooks) ────────────────────────────────────
 
 describe('Add User: the temporary password is shown once, in its section', () => {
-  const SECRET = 'Tmp-once-Zq81x'
+  const SECRET = 'Tmp-once-Zq81x' // gitleaks:allow -- synthetic test credential, never production authority
 
   it('is shown after Create User while the list re-reads in place, never leaks, asks before Invite User replaces it, and Done drops it', async () => {
     const reread = deferred<unknown[]>()

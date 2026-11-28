@@ -79,7 +79,7 @@ Then, in **Settings → Security & access → SSO & identity** (administrators):
 
 Sign-in is started by TestLookup: **Sign in with SSO** sends a SAML request to the identity provider and returns the user to the page they started from. TestLookup's requests are unsigned, so an identity provider that insists on signed requests will refuse them. Single logout works in one direction. When the identity provider ends a session and the configuration has an **IdP SLO URL**, the provider's signed logout request ends that user's TestLookup sessions as well (IdP-initiated SAML single logout). Signing out of TestLookup does not sign the user out of the identity provider. Details: [Single logout](../docs/operations/integrations.md#single-logout-idp-initiated).
 
-**Identity Events** shows sign-ins, provisioning and role changes for the last 30 days; **Sync Status** shows federated users, the last SSO sign-in and SCIM sync, and recent failures. SSO-managed accounts are exempt from the MFA requirement below.
+**Identity Events** shows sign-ins, provisioning and role changes for the last 30 days; **Sync Status** shows federated users, the last SSO sign-in and SCIM sync, and recent failures. Sessions established through SSO are exempt from the local MFA requirement below.
 
 ### When your identity provider deletes a user
 
@@ -136,9 +136,11 @@ Requires your password **and** a live second factor. If workspace policy require
 | Failed attempts before lockout | 10 | Consecutive failures before the account locks (3–100). |
 | Lockout duration | 15 min | How long the lock lasts (1–1440 minutes). |
 
-Turning the requirement on takes effect immediately for new sign-ins, and within one access-token lifetime for sessions that are already live — the token-refresh path re-checks the policy and sends affected users back to the login screen, where they are handed an enrollment challenge instead of a session.
+Turning the requirement on takes effect immediately for new password sign-ins. The next token refresh rechecks policy for existing sessions. Affected users sign in again to enroll or verify their authenticator.
 
-**SSO-managed accounts are exempt from the requirement.** Any account with a federated identity link, or one that was provisioned over SCIM, is skipped: your IdP already owns that account's authentication. SAML sign-in (`/api/v1/sso/acs`) does not consult this policy at all. An SSO-managed user who enrolls voluntarily is still challenged when they use the local password path.
+**SAML and OIDC sign-ins are exempt from local MFA policy.** Your identity provider handles authentication for those sessions. Password sign-in follows workspace MFA policy for federated and SCIM-provisioned accounts as well. Linked users who enroll a local authenticator can manage its recovery codes in **Profile → Security**. Workspace policy prevents disabling a required local authenticator on a linked account.
+
+After upgrading, older refresh tokens without a recorded authentication method are treated as password-only. Affected users may need to sign in once more through their identity provider or complete local MFA to renew their session.
 
 **API keys are never challenged.** A key embedded in a CI pipeline cannot type a TOTP code, so keys keep working when you turn the policy on. The flip side is that a key is a single-factor way into the account, so treat key issuance as a sensitive grant — keys are per-user, listed under **My API keys** (and, for project-bound keys, **Streaming API keys**), and revocable. Keys *can* read MFA status but cannot enroll, disable, or reissue recovery codes.
 

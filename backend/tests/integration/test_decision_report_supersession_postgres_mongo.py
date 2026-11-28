@@ -20,6 +20,27 @@ def _dsn() -> str:
     return value
 
 
+async def _seed_failing_case(factory, seeded: list) -> dict:
+    """A project, a run and one FAILED test case, recorded in ``seeded`` for the test's cleanup."""
+    from app.models.postgres import Project, TestCase, TestRun, TestStatus
+
+    marker = uuid.uuid4().hex[:10]
+    project = Project(id=uuid.uuid4(), name=f"supersession {marker}", slug=f"supersession-{marker}", is_active=True)
+    run = TestRun(id=uuid.uuid4(), project_id=project.id, build_number=f"b-{marker}", jenkins_job="supersession",
+                  ingestion_source="unknown")
+    case = TestCase(id=uuid.uuid4(), test_run_id=run.id, test_name=f"test_checkout_{marker}",
+                    test_fingerprint=f"fp-{marker}", status=TestStatus.FAILED)
+    async with factory() as db:
+        db.add(project)
+        await db.flush()
+        db.add(run)
+        await db.flush()
+        db.add(case)
+        await db.commit()
+    seeded.extend([("projects", project.id), ("test_runs", run.id), ("test_cases", case.id)])
+    return {"run_id": run.id, "project_id": project.id, "test_case_id": case.id}
+
+
 async def test_supersession_publishes_one_immutable_version_and_replays_idempotently(
     monkeypatch,
 ):
@@ -43,6 +64,7 @@ async def test_supersession_publishes_one_immutable_version_and_replays_idempote
     request_id = uuid.uuid4()
     spawn_key = uuid.uuid4().hex + uuid.uuid4().hex
     report_ids: list[str] = []
+    seeded: list[tuple[str, uuid.UUID]] = []
 
     try:
         async with engine.begin() as db:
@@ -52,7 +74,9 @@ async def test_supersession_publishes_one_immutable_version_and_replays_idempote
                 "WHERE tc.status IN ('FAILED','BROKEN') LIMIT 1"
             ))).mappings().first()
             if authority is None:
-                pytest.skip("no failure-cluster authority fixture")
+                # A fresh database has no failing result. The test used to skip
+                # here, so in CI it ran only because an earlier file left one.
+                authority = await _seed_failing_case(factory, seeded)
             run_id = authority["run_id"]
             project_id = authority["project_id"]
             test_case_id = authority["test_case_id"]
@@ -147,6 +171,8 @@ async def test_supersession_publishes_one_immutable_version_and_replays_idempote
             await db.execute(text(
                 "DELETE FROM failure_clusters WHERE id=:id"
             ), {"id": cluster_id})
+            for table, row_id in reversed(seeded):  # constant table names, from _seed_failing_case
+                await db.execute(text(f"DELETE FROM {table} WHERE id=:id"), {"id": row_id})
         await engine.dispose()
         await app_postgres.dispose_engine_for_loop()
         await close_mongo()
@@ -178,6 +204,7 @@ async def test_supersession_external_store_failure_is_retryable_and_idempotent(
     request_id = uuid.uuid4()
     spawn_key = uuid.uuid4().hex + uuid.uuid4().hex
     report_ids: list[str] = []
+    seeded: list[tuple[str, uuid.UUID]] = []
 
     try:
         async with engine.begin() as db:
@@ -187,7 +214,9 @@ async def test_supersession_external_store_failure_is_retryable_and_idempotent(
                 "WHERE tc.status IN ('FAILED','BROKEN') LIMIT 1"
             ))).mappings().first()
             if authority is None:
-                pytest.skip("no failure-cluster authority fixture")
+                # A fresh database has no failing result. The test used to skip
+                # here, so in CI it ran only because an earlier file left one.
+                authority = await _seed_failing_case(factory, seeded)
             run_id = authority["run_id"]
             project_id = authority["project_id"]
             test_case_id = authority["test_case_id"]
@@ -309,6 +338,8 @@ async def test_supersession_external_store_failure_is_retryable_and_idempotent(
             await db.execute(text(
                 "DELETE FROM failure_clusters WHERE id=:id"
             ), {"id": cluster_id})
+            for table, row_id in reversed(seeded):  # constant table names, from _seed_failing_case
+                await db.execute(text(f"DELETE FROM {table} WHERE id=:id"), {"id": row_id})
         await engine.dispose()
         await app_postgres.dispose_engine_for_loop()
         await close_mongo()

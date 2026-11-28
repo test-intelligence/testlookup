@@ -5638,6 +5638,16 @@ These are the full generated JSON Schema definitions, including required fields,
       ],
       "title": "Run Seq"
     },
+    "stage_quality_detail": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/AgentPipelineStageQuality"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "started_at": {
       "anyOf": [
         {},
@@ -5716,6 +5726,79 @@ These are the full generated JSON Schema definitions, including required fields,
     "state"
   ],
   "title": "AgentPipelineReviewSummary",
+  "type": "object"
+}
+```
+
+## AgentPipelineStageIssue
+
+```json
+{
+  "description": "One stage of a degraded pipeline that failed or fell back (D-153).",
+  "properties": {
+    "error_category": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Error Category"
+    },
+    "fallback_reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Fallback Reason"
+    },
+    "stage_name": {
+      "title": "Stage Name",
+      "type": "string"
+    },
+    "status": {
+      "title": "Status",
+      "type": "string"
+    }
+  },
+  "required": [
+    "stage_name",
+    "status"
+  ],
+  "title": "AgentPipelineStageIssue",
+  "type": "object"
+}
+```
+
+## AgentPipelineStageQuality
+
+```json
+{
+  "description": "Why a pipeline is DEGRADED, for the tag's title (D-153).\n\n``stages_run`` counts the stages that started (completed or failed, the\nlatest attempt of each); ``issues`` are the failed ones and the ones that\nused their fallback, in run order.",
+  "properties": {
+    "issues": {
+      "items": {
+        "$ref": "#/components/schemas/AgentPipelineStageIssue"
+      },
+      "title": "Issues",
+      "type": "array"
+    },
+    "stages_run": {
+      "title": "Stages Run",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "stages_run",
+    "issues"
+  ],
+  "title": "AgentPipelineStageQuality",
   "type": "object"
 }
 ```
@@ -21550,6 +21633,421 @@ These are the full generated JSON Schema definitions, including required fields,
 }
 ```
 
+## IdentityRetentionApproval
+
+```json
+{
+  "properties": {
+    "confirmation": {
+      "title": "Confirmation",
+      "type": "string"
+    },
+    "observed_at": {
+      "format": "date-time",
+      "title": "Observed At",
+      "type": "string"
+    },
+    "preview_hash": {
+      "pattern": "^[a-f0-9]{64}$",
+      "title": "Preview Hash",
+      "type": "string"
+    },
+    "reason": {
+      "maxLength": 500,
+      "minLength": 3,
+      "title": "Reason",
+      "type": "string"
+    },
+    "retention_days": {
+      "maximum": 3650.0,
+      "minimum": 365.0,
+      "title": "Retention Days",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "retention_days",
+    "observed_at",
+    "preview_hash",
+    "confirmation",
+    "reason"
+  ],
+  "title": "IdentityRetentionApproval",
+  "type": "object"
+}
+```
+
+## IdentityRetentionHold
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "audit_id": {
+      "format": "uuid",
+      "title": "Audit Id",
+      "type": "string"
+    },
+    "expires_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Expires At"
+    },
+    "id": {
+      "format": "uuid",
+      "title": "Id",
+      "type": "string"
+    },
+    "placed_at": {
+      "format": "date-time",
+      "title": "Placed At",
+      "type": "string"
+    },
+    "reason": {
+      "maxLength": 500,
+      "minLength": 3,
+      "title": "Reason",
+      "type": "string"
+    }
+  },
+  "required": [
+    "id",
+    "reason",
+    "placed_at",
+    "audit_id"
+  ],
+  "title": "IdentityRetentionHold",
+  "type": "object"
+}
+```
+
+## IdentityRetentionHoldCreate
+
+```json
+{
+  "properties": {
+    "expires_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Expires At"
+    },
+    "reason": {
+      "maxLength": 500,
+      "minLength": 3,
+      "title": "Reason",
+      "type": "string"
+    }
+  },
+  "required": [
+    "reason"
+  ],
+  "title": "IdentityRetentionHoldCreate",
+  "type": "object"
+}
+```
+
+## IdentityRetentionHoldRelease
+
+```json
+{
+  "properties": {
+    "confirmation": {
+      "title": "Confirmation",
+      "type": "string"
+    },
+    "reason": {
+      "maxLength": 500,
+      "minLength": 3,
+      "title": "Reason",
+      "type": "string"
+    }
+  },
+  "required": [
+    "reason",
+    "confirmation"
+  ],
+  "title": "IdentityRetentionHoldRelease",
+  "type": "object"
+}
+```
+
+## IdentityRetentionPreview
+
+```json
+{
+  "properties": {
+    "active_hold_count": {
+      "title": "Active Hold Count",
+      "type": "integer"
+    },
+    "counts": {
+      "additionalProperties": {
+        "type": "integer"
+      },
+      "title": "Counts",
+      "type": "object"
+    },
+    "cutoff": {
+      "format": "date-time",
+      "title": "Cutoff",
+      "type": "string"
+    },
+    "enable_confirmation": {
+      "title": "Enable Confirmation",
+      "type": "string"
+    },
+    "enabled": {
+      "title": "Enabled",
+      "type": "boolean"
+    },
+    "max_batch_size": {
+      "default": 500,
+      "title": "Max Batch Size",
+      "type": "integer"
+    },
+    "observed_at": {
+      "format": "date-time",
+      "title": "Observed At",
+      "type": "string"
+    },
+    "preview_hash": {
+      "title": "Preview Hash",
+      "type": "string"
+    },
+    "purge_confirmation": {
+      "title": "Purge Confirmation",
+      "type": "string"
+    },
+    "retention_days": {
+      "title": "Retention Days",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "observed_at",
+    "cutoff",
+    "retention_days",
+    "enabled",
+    "active_hold_count",
+    "counts",
+    "preview_hash",
+    "enable_confirmation",
+    "purge_confirmation"
+  ],
+  "title": "IdentityRetentionPreview",
+  "type": "object"
+}
+```
+
+## IdentityRetentionPurge
+
+```json
+{
+  "properties": {
+    "batch_size": {
+      "default": 500,
+      "maximum": 500.0,
+      "minimum": 1.0,
+      "title": "Batch Size",
+      "type": "integer"
+    },
+    "confirmation": {
+      "title": "Confirmation",
+      "type": "string"
+    },
+    "observed_at": {
+      "format": "date-time",
+      "title": "Observed At",
+      "type": "string"
+    },
+    "preview_hash": {
+      "pattern": "^[a-f0-9]{64}$",
+      "title": "Preview Hash",
+      "type": "string"
+    },
+    "reason": {
+      "maxLength": 500,
+      "minLength": 3,
+      "title": "Reason",
+      "type": "string"
+    }
+  },
+  "required": [
+    "observed_at",
+    "preview_hash",
+    "confirmation",
+    "reason"
+  ],
+  "title": "IdentityRetentionPurge",
+  "type": "object"
+}
+```
+
+## IdentityRetentionPurgeResult
+
+```json
+{
+  "properties": {
+    "batch_full": {
+      "title": "Batch Full",
+      "type": "boolean"
+    },
+    "batch_size": {
+      "title": "Batch Size",
+      "type": "integer"
+    },
+    "cutoff": {
+      "format": "date-time",
+      "title": "Cutoff",
+      "type": "string"
+    },
+    "deleted": {
+      "title": "Deleted",
+      "type": "integer"
+    },
+    "policy_revision": {
+      "title": "Policy Revision",
+      "type": "integer"
+    },
+    "status": {
+      "const": "completed",
+      "title": "Status",
+      "type": "string"
+    }
+  },
+  "required": [
+    "status",
+    "deleted",
+    "batch_size",
+    "batch_full",
+    "cutoff",
+    "policy_revision"
+  ],
+  "title": "IdentityRetentionPurgeResult",
+  "type": "object"
+}
+```
+
+## IdentityRetentionRead
+
+```json
+{
+  "additionalProperties": false,
+  "properties": {
+    "active_hold_count": {
+      "default": 0,
+      "title": "Active Hold Count",
+      "type": "integer"
+    },
+    "approved_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Approved At"
+    },
+    "eligible_event_types": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Eligible Event Types",
+      "type": "array"
+    },
+    "enabled": {
+      "default": false,
+      "title": "Enabled",
+      "type": "boolean"
+    },
+    "holds": {
+      "items": {
+        "$ref": "#/components/schemas/IdentityRetentionHold"
+      },
+      "maxItems": 100,
+      "title": "Holds",
+      "type": "array"
+    },
+    "protected_authority_event_types": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Protected Authority Event Types",
+      "type": "array"
+    },
+    "protected_identity_events": {
+      "default": "All other identity event types, including unknown future types, remain retained.",
+      "title": "Protected Identity Events",
+      "type": "string"
+    },
+    "retention_days": {
+      "default": 2555,
+      "maximum": 3650.0,
+      "minimum": 365.0,
+      "title": "Retention Days",
+      "type": "integer"
+    },
+    "revision": {
+      "default": 0,
+      "minimum": 0.0,
+      "title": "Revision",
+      "type": "integer"
+    },
+    "schema_version": {
+      "const": 1,
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "scope": {
+      "const": "instance",
+      "default": "instance",
+      "title": "Scope",
+      "type": "string"
+    }
+  },
+  "title": "IdentityRetentionRead",
+  "type": "object"
+}
+```
+
+## IdentityRetentionReason
+
+```json
+{
+  "properties": {
+    "reason": {
+      "maxLength": 500,
+      "minLength": 3,
+      "title": "Reason",
+      "type": "string"
+    }
+  },
+  "required": [
+    "reason"
+  ],
+  "title": "IdentityRetentionReason",
+  "type": "object"
+}
+```
+
 ## IdentitySyncStatus
 
 ```json
@@ -32511,6 +33009,16 @@ These are the full generated JSON Schema definitions, including required fields,
 ```json
 {
   "properties": {
+    "backlog_count": {
+      "default": 0,
+      "title": "Backlog Count",
+      "type": "integer"
+    },
+    "capacity": {
+      "default": 0,
+      "title": "Capacity",
+      "type": "integer"
+    },
     "dead_letter_count": {
       "default": 0,
       "title": "Dead Letter Count",
@@ -32519,6 +33027,16 @@ These are the full generated JSON Schema definitions, including required fields,
     "dead_letter_limit": {
       "default": 0,
       "title": "Dead Letter Limit",
+      "type": "integer"
+    },
+    "oldest_pending_age_seconds": {
+      "default": 0,
+      "title": "Oldest Pending Age Seconds",
+      "type": "number"
+    },
+    "outbox_total_count": {
+      "default": 0,
+      "title": "Outbox Total Count",
       "type": "integer"
     },
     "recent_dead_letters": {
@@ -32533,6 +33051,13 @@ These are the full generated JSON Schema definitions, including required fields,
       "default": "healthy",
       "title": "Status",
       "type": "string"
+    },
+    "status_counts": {
+      "additionalProperties": {
+        "type": "integer"
+      },
+      "title": "Status Counts",
+      "type": "object"
     },
     "write_failure_count": {
       "default": 0,
@@ -32924,6 +33449,18 @@ These are the full generated JSON Schema definitions, including required fields,
       "additionalProperties": true,
       "title": "Detail",
       "type": "object"
+    },
+    "event_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Event Id"
     },
     "event_type": {
       "title": "Event Type",
@@ -36800,6 +37337,23 @@ These are the full generated JSON Schema definitions, including required fields,
 {
   "description": "Extended release decision with council context.",
   "properties": {
+    "analysis_changed_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Analysis Changed At"
+    },
+    "analysis_changed_since": {
+      "default": false,
+      "title": "Analysis Changed Since",
+      "type": "boolean"
+    },
     "band_downgrades": {
       "default": [],
       "items": {
@@ -36807,6 +37361,11 @@ These are the full generated JSON Schema definitions, including required fields,
       },
       "title": "Band Downgrades",
       "type": "array"
+    },
+    "band_held_back": {
+      "default": false,
+      "title": "Band Held Back",
+      "type": "boolean"
     },
     "band_policy_id": {
       "anyOf": [
@@ -37011,6 +37570,18 @@ These are the full generated JSON Schema definitions, including required fields,
         }
       ],
       "title": "Pass Rate"
+    },
+    "pass_rate_bands": {
+      "anyOf": [
+        {
+          "additionalProperties": true,
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Pass Rate Bands"
     },
     "policy_id": {
       "anyOf": [
@@ -46667,6 +47238,20 @@ These are the full generated JSON Schema definitions, including required fields,
       ],
       "title": "Input Tokens"
     },
+    "mode_distribution": {
+      "anyOf": [
+        {
+          "additionalProperties": {
+            "type": "integer"
+          },
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Mode Distribution"
+    },
     "output_tokens": {
       "anyOf": [
         {
@@ -55355,6 +55940,30 @@ These are the full generated JSON Schema definitions, including required fields,
 {
   "description": "Async status of an uploaded report (GET /api/v1/ingest/uploads/{task_id}).\n\nstate: pending | parsing | ingesting | succeeded | failed.",
   "properties": {
+    "accepted_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Accepted At"
+    },
+    "completed_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Completed At"
+    },
     "error": {
       "anyOf": [
         {
@@ -55366,6 +55975,34 @@ These are the full generated JSON Schema definitions, including required fields,
         }
       ],
       "title": "Error"
+    },
+    "payload_ready_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Payload Ready At"
+    },
+    "payload_state": {
+      "anyOf": [
+        {
+          "enum": [
+            "reserved",
+            "ready",
+            "deleted"
+          ],
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Payload State"
     },
     "progress": {
       "anyOf": [

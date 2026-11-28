@@ -9,7 +9,7 @@
  *   with the run_id.
  * - A backend error detail (string) is rendered inline.
  */
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { act, render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mockUpload = vi.hoisted(() => vi.fn())
@@ -26,6 +26,7 @@ vi.mock('react-hot-toast', () => ({
 
 import UploadReportModal from './UploadReportModal'
 import { MAX_UPLOAD_BYTES } from '@/services/reportUploadService'
+import toast from 'react-hot-toast'
 
 // jsdom's File lacks arrayBuffer() (standard in real browsers) — polyfill it via
 // FileReader so the multi-file client-zip path reads each File's REAL bytes
@@ -59,6 +60,7 @@ describe('UploadReportModal', () => {
   beforeEach(() => {
     mockUpload.mockReset()
     mockGetStatus.mockReset()
+    vi.mocked(toast.success).mockClear()
     mockUpload.mockResolvedValue({ run_id: 'run-123', task_id: 't1', total_results: 0 })
   })
 
@@ -129,6 +131,111 @@ describe('UploadReportModal', () => {
     fireEvent.click(uploadBtn())
 
     expect(await screen.findByText(/could not parse the junit report/i, {}, { timeout: 4000 })).toBeInTheDocument()
+  })
+
+  it('retains the exact bundled bytes key and blank build label after an uncertain network response', async () => {
+    mockUpload.mockRejectedValueOnce(new Error('Response unavailable')).mockResolvedValue({ run_id: 'run-123', task_id: 't1', total_results: 0 })
+    const { input, uploadBtn } = setup()
+    fireEvent.change(input, { target: { files: [new File(['<a/>'], 'a.xml'), new File(['<b/>'], 'b.xml')] } })
+    fireEvent.click(uploadBtn())
+    await screen.findByText('Response unavailable')
+    const first = mockUpload.mock.calls[0][0]
+    fireEvent.click(uploadBtn())
+    await waitFor(() => expect(mockUpload).toHaveBeenCalledTimes(2))
+    const second = mockUpload.mock.calls[1][0]
+    expect(second.file).toBe(first.file)
+    expect(second.idempotencyKey).toBe(first.idempotencyKey)
+    expect(second.buildNumber).toBe(first.buildNumber)
+    expect(first.buildNumber).toMatch(/^upload-/)
+  })
+
+  it('starts a new key when upload fields change after uncertainty', async () => {
+    mockUpload.mockRejectedValue(new Error('Response unavailable'))
+    const { input, uploadBtn } = setup()
+    selectFile(input, new File(['<a/>'], 'a.xml'))
+    fireEvent.click(uploadBtn())
+    await screen.findByText('Response unavailable')
+    const first = mockUpload.mock.calls[0][0]
+    fireEvent.change(screen.getByLabelText('Format'), { target: { value: 'junit' } })
+    fireEvent.click(uploadBtn())
+    await waitFor(() => expect(mockUpload).toHaveBeenCalledTimes(2))
+    expect(mockUpload.mock.calls[1][0].idempotencyKey).not.toBe(first.idempotencyKey)
+  })
+
+  it('starts a new key for a changed file selection', async () => {
+    mockUpload.mockRejectedValue(new Error('Response unavailable'))
+    const { input, uploadBtn } = setup()
+    selectFile(input, new File(['one'], 'a.xml'))
+    fireEvent.click(uploadBtn())
+    await screen.findByText('Response unavailable')
+    const first = mockUpload.mock.calls[0][0]
+    selectFile(input, new File(['two'], 'a.xml'))
+    fireEvent.click(uploadBtn())
+    await waitFor(() => expect(mockUpload).toHaveBeenCalledTimes(2))
+    expect(mockUpload.mock.calls[1][0].idempotencyKey).not.toBe(first.idempotencyKey)
+  })
+
+  it('keeps project state authoritative when changing the target after uncertainty', async () => {
+    mockUpload.mockRejectedValue(new Error('Response unavailable'))
+    const { input, uploadBtn, rerender, onClose, onSuccess } = setup()
+    selectFile(input, new File(['one'], 'a.xml'))
+    fireEvent.click(uploadBtn())
+    await screen.findByText('Response unavailable')
+    const first = mockUpload.mock.calls[0][0]
+    rerender(<UploadReportModal projectId="p2" onClose={onClose} onSuccess={onSuccess} />)
+    fireEvent.click(uploadBtn())
+    await waitFor(() => expect(mockUpload).toHaveBeenCalledTimes(2))
+    expect(mockUpload.mock.calls[1][0].projectId).toBe('p2')
+    expect(mockUpload.mock.calls[1][0].idempotencyKey).not.toBe(first.idempotencyKey)
+  })
+
+  it('starts a new key after a terminal processing failure', async () => {
+    mockGetStatus.mockResolvedValue({ task_id: 't1', run_id: 'run-123', state: 'failed', error: { message: 'Terminal parse failure' } })
+    const { input, uploadBtn } = setup()
+    selectFile(input, new File(['<a/>'], 'a.xml'))
+    fireEvent.click(uploadBtn())
+    await screen.findByText('Terminal parse failure', {}, { timeout: 4000 })
+    const first = mockUpload.mock.calls[0][0].idempotencyKey
+    fireEvent.click(uploadBtn())
+    await waitFor(() => expect(mockUpload).toHaveBeenCalledTimes(2))
+    expect(mockUpload.mock.calls[1][0].idempotencyKey).not.toBe(first)
+  })
+
+  it('refuses status for a different receipt without clearing the uncertain invocation', async () => {
+    mockUpload.mockResolvedValue({ run_id: 'run-123', task_id: 't1', total_results: 0, publication_confirmed: false })
+    mockGetStatus.mockResolvedValue({ task_id: 'other-task', run_id: 'other-run', state: 'succeeded' })
+    const { input, uploadBtn } = setup()
+    selectFile(input, new File(['<a/>'], 'a.xml'))
+    fireEvent.click(uploadBtn())
+    await screen.findByText('The status response did not match this upload. Keep the original receipt and check it again.', {}, { timeout: 4000 })
+    expect(toast.success).not.toHaveBeenCalled()
+    const first = mockUpload.mock.calls[0][0].idempotencyKey
+    fireEvent.click(uploadBtn())
+    await waitFor(() => expect(mockUpload).toHaveBeenCalledTimes(2))
+    expect(mockUpload.mock.calls[1][0].idempotencyKey).toBe(first)
+  })
+
+  it('keeps an unconfirmed receipt neutral at poll timeout and checks the same task again without posting', async () => {
+    vi.useFakeTimers()
+    try {
+      mockUpload.mockResolvedValue({ run_id: 'run-123', task_id: 't1', total_results: 0, publication_confirmed: false })
+      mockGetStatus.mockResolvedValue({ run_id: 'run-123', task_id: 't1', state: 'pending' })
+      const { input, uploadBtn } = setup()
+      selectFile(input, new File(['<a/>'], 'a.xml'))
+      await act(async () => { fireEvent.click(uploadBtn()) })
+      expect(screen.getByText('Checking upload receipt…')).toBeInTheDocument()
+      await act(async () => { await vi.advanceTimersByTimeAsync(60_001) })
+      expect(screen.getByText('Upload confirmation pending')).toBeInTheDocument()
+      expect(toast.success).not.toHaveBeenCalled()
+      expect(mockUpload).toHaveBeenCalledTimes(1)
+      expect(mockGetStatus).toHaveBeenCalledTimes(40)
+      await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Check status' })) })
+      await act(async () => { await vi.advanceTimersByTimeAsync(1500) })
+      expect(mockUpload).toHaveBeenCalledTimes(1)
+      expect(mockGetStatus).toHaveBeenLastCalledWith('t1')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('rejects mixing a .zip with other files (would nest a zip)', () => {

@@ -75,6 +75,7 @@ Two more production-only behaviours:
 | `RATE_LIMIT_SHARED_STORAGE` | `auto` / `on` / `off` | `auto` | Where rate-limit counters live. `auto`: Redis (`REDIS_URL`) when `APP_ENV` is production or staging, so a limit holds across workers and pods; process memory in development. While Redis is unreachable the counters fall back to per-process memory. `off` keeps per-process counters everywhere. |
 | `LOGIN_ATTEMPTS_PER_USERNAME_PER_MINUTE` | int | `20` | Sign-in attempts accepted per typed account name per minute on `/api/v1/auth/login`, from any address; over it the answer is 429 with `Retry-After`. `0` turns it off. Development uses at least 200. |
 | `METRICS_TOKEN` | str | empty | When set, `/metrics` answers only a request with `Authorization: Bearer <token>` (401 otherwise). Empty leaves `/metrics` open, as before; keep it off the public network either way. |
+| `METRICS_TOKEN_FILE` | str | empty | Path to a mounted file containing one bearer token. Takes precedence over `METRICS_TOKEN`. An absent, unreadable or invalid configured file stops API startup when metrics are enabled. API processes read the file at startup. |
 | `API_DOCS_ENABLED` | bool | `true` | `false` turns off `/api-docs`, `/api-docs/redoc` and `/api-docs/openapi.json` (404). |
 | `HTTP_VERIFY_TLS` | bool | `true` | Certificate verification for outbound HTTPS from the shared HTTP client (Jira, Slack, Teams, GitHub, GitLab, webhooks, hosted LLM endpoints, knowledge connectors). `false` disables verification and logs a warning; only for isolated labs. Prefer `HTTP_CA_BUNDLE`. |
 | `HTTP_CA_BUNDLE` | str (optional) | unset | Path to a PEM bundle of extra trusted roots (corporate CA, TLS-intercepting proxy). Verification stays strict. Takes precedence over `HTTP_VERIFY_TLS`. See [Corporate CA and TLS interception](integrations.md#corporate-ca-and-tls-interception). |
@@ -88,7 +89,6 @@ Two more production-only behaviours:
 | `JWT_SECRET_KEY` | str | `change-me-jwt-secret` | HMAC key that signs access and refresh tokens. Generate with `openssl rand -hex 32`. Changing it signs every user out. **Secret. Production check.** |
 | `JWT_ALGORITHM` | str | `HS256` | JWT signing algorithm. Leave as is; the MCP server's token check also assumes HS256. |
 | `JWT_ACCESS_TOKEN_EXPIRE_MINUTES` | int | `30` | Access-token lifetime. Short on purpose: it is how long a stolen access token keeps working. The SPA, the CLI and the MCP server get a new one with the refresh token or by signing in again; a script that holds a sign-in token for longer should use an API key. |
-| `JWT_REFRESH_REUSE_LEEWAY_SECONDS` | int | `10` | For this many seconds after a refresh token was rotated, the old one is answered with a new pair (two browser tabs refreshing at the same moment). After that, reuse is treated as theft and signs the user out everywhere. `0` turns the leeway off. |
 | `ALLOW_INSECURE_DEV_SECRETS` | bool | `false` | Development only. With `APP_ENV=development` (the default when unset) the API refuses to start while `JWT_SECRET_KEY` is the placeholder from the source; `true` starts anyway. Never set it on a machine others can reach. |
 | `JWT_REFRESH_TOKEN_EXPIRE_DAYS` | int | `7` | Refresh-token lifetime. |
 | `AUTH_REVOCATION_FAIL_OPEN` | bool | `false` | Token revocation is checked in Valkey/Redis. Default: when that store is unreachable, authenticated requests get 503 instead of being accepted unchecked. `true` restores fail-open (a revoked token may keep working during an outage) and logs an ERROR on every use. Environment only; there is no UI toggle. |
@@ -259,7 +259,7 @@ TestLookup works without any model (`ANALYSIS_MODE=rules`). With a model, it is 
 | `EMBEDDING_MODEL` | str | `nomic-embed-text:v1.5` | The CONFIGURED embedding model (the one `make dev-llm` pulls), applied the same way as `EMBEDDING_PROVIDER`. The model-status panel requires an Ollama embedding model only while it is the embedder in use or the target of a running re-embed. |
 | `AI_MAX_RETRIES` | int | `3` | Retries after the first attempt for LLM clients and Jira issue creation. |
 | `AI_TIMEOUT_SECONDS` | int | `300` | Per-call timeout for every LLM call (pipeline stages, Ask AI, RAG generation); also how long a call waits for a cluster LLM slot. Overridable at `/settings/ai` (5-1800 s; the floor was 30 s before W04). A pipeline freezes the value in force when it starts: a running or resumed pipeline keeps it, a manual retry after a change starts a new run. An agent may set a lower limit for itself; a stage may cap it lower (the summary stage at 120 s). |
-| `LLM_MAX_CONCURRENT_ANALYSES` | int | `3` | Parallel root-cause LLM calls per process. |
+| `LLM_MAX_CONCURRENT_ANALYSES` | int | `3` | Parallel root-cause LLM calls per process. With a local provider (Ollama) and the variable unset, one analysis runs at a time, since a model on a processor answers one call at once; set it (at most 3 is used) when the local model runs on a GPU. |
 | `LLM_CLUSTER_MAX_CONCURRENT` | int | `4` | Cluster-wide concurrent LLM calls per provider, held as Valkey/Redis leases. `0` disables the cluster bound. |
 | `LLM_CLUSTER_SLOT_LEASE_SECONDS` | int | `60` | Lease length of a cluster LLM slot. Must be `0` (use 60) or at least 15; a smaller value stops startup. |
 | `AI_CONFIDENCE_THRESHOLD` | int | `80` | Minimum confidence (0-100) for automated actions such as auto-ticketing, and the threshold every pipeline stage that routes on confidence uses (triage, gap detection, the per-analysis threshold check). Overridable at `/settings/ai`. A pipeline freezes the value in force when it starts; a manual retry after a change starts a new run. |
@@ -331,7 +331,7 @@ TestLookup works without any model (`ANALYSIS_MODE=rules`). With a model, it is 
 | `GITHUB_TOKEN` | str (optional) | unset | Instance-wide GitHub token, used only by the deployment-wide GitHub row of Integration health (`api.github.com/rate_limit`); a token saved at `/settings/integrations` comes first. Since W10 no commit lookup reads it: the run Changes tab, the regression diff and the build-changes agent tool list commits through each project's own GitHub integration (`/settings/github`), offline-gated. **Secret.** |
 | `GITHUB_APP_API_BASE_URL` | str | `https://api.github.com` | The one GitHub API base the deployment's GitHub App signs in at. Set it to `https://<host>/api/v3` for GitHub Enterprise Server. A project integration whose API base differs gets no App token; a project's own base URL never chooses where the App's sign-in request goes. Does not affect personal access tokens. |
 | `GITHUB_REPO` | str (optional) | unset | Accepted for compatibility, not used (it named the repository of the former instance-wide commit lookups). |
-| `PROMETHEUS_URL` | str (optional) | unset | Prometheus base URL (for example `http://prometheus:9090`) for the agents' application-metrics tool and, when set, the observed latency on Settings › Performance. Unset disables the tool; Performance then measures in-app. |
+| `PROMETHEUS_URL` | str (optional) | unset | Base URL for TestLookup’s self-monitoring Prometheus (for example `http://prometheus:9090`). Settings › Performance uses this server when it answers and `AI_OFFLINE_MODE=false`. Performance uses Redis-backed in-app counters when offline mode is enabled, the URL is unset, or Prometheus cannot answer. |
 | `SLOW_QUERY_MS` | int | `500` | Statements at least this slow (ms) are captured, as their shape only (no values), for Settings › Performance › Slow queries. |
 
 #### Anomaly detection
@@ -434,9 +434,17 @@ Setup steps for each integration are in [Integrations](integrations.md). Values 
 
 | Setting | Type | Default | Description |
 |---|---|---|---|
-| `OTEL_ENABLED` | bool | `true` | OpenTelemetry tracing for the API. |
+| `OTEL_ENABLED` | bool | `true` | OpenTelemetry tracing switch. Worker and standalone Beat tracing also require an OTLP endpoint. |
+| `OBSERVABILITY_INSTALLATION` | str | empty | Stable installation identifier for opt-in journey indicators and [proposed API objectives](api-objectives.md). Use 1–63 ASCII letters, digits, dots, underscores or hyphens, beginning with a letter or digit. Choose a non-sensitive deployment name. |
 | `OTEL_SERVICE_NAME` | str | `testlookup` | Service name on spans. |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | str (optional) | unset | OTLP/HTTP collector, for example `http://otel-collector:4318`. Unset: spans go to stdout in development only; elsewhere nothing is exported and one warning is logged. |
+| `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` | str | unset | Full OTLP/HTTP URL ending in `/v1/logs` for selected API or worker events. Use HTTPS outside the private Compose or loopback hop. |
+| `OTEL_LOGS_ROLE` | literal | `api` | Use `worker` or `worker-children` for task outcomes. See the [durable telemetry contract](durable-telemetry.md). |
+| `TESTLOOKUP_OTLP_LOGS_ENDPOINT` | str | unset | Full OTLP/HTTP `/v1/logs` URL for selected MCP HTTP and tool events. |
+| `TESTLOOKUP_OTLP_TRACES_ENDPOINT` | str | unset | Full OTLP/HTTP `/v1/traces` URL for MCP tool spans. |
+| `TESTLOOKUP_OTLP_METRICS_ENDPOINT` | str | unset | Full OTLP/HTTP `/v1/metrics` URL for MCP completion counts and durations. |
+| `TESTLOOKUP_TELEMETRY_TRACE_SAMPLE_RATIO` | float, 0–1 | `1.0` | MCP root trace sampling ratio. A valid inbound `traceparent` supplies the parent sampling decision. |
+| `TESTLOOKUP_TELEMETRY_ENVIRONMENT` | str | `production` | MCP resource environment. Choose `development`, `staging` or `production`. |
 | `METRICS_ENABLED` | bool | `true` | Exposes Prometheus metrics at `/metrics` on the API. Worker metrics are separate (see `PROMETHEUS_MULTIPROC_DIR` below). |
 | `LOG_LEVEL` | str | `INFO` | `DEBUG`, `INFO`, `WARNING` or `ERROR`. |
 | `LOG_FORMAT` | `json` \| `text` | `json` | Structured JSON for log shippers; `text` for reading in a terminal. Logs can name people (proxy query strings; application lines written before the release that added personal-data erasure): see [Scrubbing a person from your log store](../../user-guide/compliance.md#scrubbing-a-person-from-your-log-store). |

@@ -1,0 +1,13 @@
+scrape_configs:
+  - job_name: testlookup-backend
+    static_configs:
+      - targets: ['backend:8000']
+        labels:
+          telemetry_profile: compose
+          telemetry_role: backend
+    metrics_path: /metrics
+    scrape_interval: 15s
+    follow_redirects: false
+    authorization:
+      type: Bearer
+      credentials_file: metrics-token

@@ -21,7 +21,7 @@
  */
 import { expect, test, type Locator, type Page } from '@playwright/test'
 import { MAIN, networkQuiet, openRollout, requestsTo } from '../lib/rollout'
-import type { ApiHandlers } from '../lib/production-pages'
+import { respond, type ApiHandlers, type ApiRequest } from '../lib/production-pages'
 import { isoAgo, LAYOUT, PROJECT_ID, runs, RUNS, USER } from '../visual/production/fixtures'
 import { POLICY_IDS, policyDocument, policyVersionsWorld } from '../visual/production/fixtures-release-planning'
 
@@ -241,6 +241,11 @@ test('a published policy: New version from this posts its document, the draft is
   expect(requestsTo(api, /\/release-gate-policies\/(history|system-history)/), 'no history read on load').toEqual([])
 
   await page.locator('[data-page-header]').getByRole('button', { name: 'New version from this', exact: true }).click()
+  // D-140: the header button only asks; the in-page strip's Create draft is the sender.
+  const askBranch = page.locator('[data-inline-confirm]')
+  await expect(askBranch.locator('p').first()).toHaveText('Create a draft copy of v4? It opens in the editor and changes nothing until you publish it.')
+  expect(world.writes, 'nothing is created before the answer').toEqual([])
+  await askBranch.getByRole('button', { name: 'Create draft', exact: true }).click()
   await expect(page.getByRole('status').filter({ hasText: 'Draft v5 created from v4.' })).toBeVisible()
   await expect(page).toHaveURL((url) => url.pathname === `/policies/${POLICY_IDS.v5}`)
   await expect(page.getByRole('heading', { name: 'Edit: Payments gate', level: 1 })).toBeVisible()
@@ -300,6 +305,94 @@ test('as QA LEAD a published policy offers no New version from this, but Version
   await expect(versions.getByText('Pass-rate band yellow_min 95 → 97', { exact: true })).toBeVisible()
   await networkQuiet(page, api)
   expect(world.writes).toEqual([])
+  expect(api.unhandled).toEqual([])
+  expect(errors).toEqual([])
+})
+
+// ── D-141: active and drafts first, Past versions closed, a never-published draft deleted ─────────────
+
+const LIVE_GATE = { ...ACTIVE }
+const SPARE_DRAFT = { ...POLICY, id: 'bbbbbbbb-0000-4000-8000-000000000011', name: 'Spare draft', version: 4 }
+/** A draft the server refuses to delete: a stored decision names it (the route's second 409). */
+const NAMED_DRAFT = { ...POLICY, id: 'bbbbbbbb-0000-4000-8000-000000000012', name: 'Named draft', version: 5 }
+const OLD_GATE = { ...POLICY, id: 'bbbbbbbb-0000-4000-8000-000000000013', name: 'Old gate', version: 2, is_draft: false, is_active: false, activated_at: isoAgo(48) }
+const NAMED_DETAIL = 'This draft is named by a stored release decision, so it is kept.'
+
+/** `/policies` with a live system default, two drafts and a past version; `DELETE` answers 204 or 409. */
+function deleteDraftWorld() {
+  const rows = [{ ...SPARE_DRAFT }, { ...NAMED_DRAFT }, { ...OLD_GATE }, { ...LIVE_GATE }]
+  const deletes: string[] = []
+  const handlers: ApiHandlers = [
+    ['/api/v1/release-gate-policies', () => rows],
+    [/^\/api\/v1\/release-gate-policies\/[^/]+$/, (request: ApiRequest) => {
+      const id = request.path.split('/').pop() as string
+      deletes.push(`DELETE ${request.path}`)
+      if (id === NAMED_DRAFT.id) return respond(409, { detail: NAMED_DETAIL })
+      const at = rows.findIndex((row) => row.id === id)
+      if (at < 0) return respond(404, { detail: 'Policy not found' })
+      rows.splice(at, 1)
+      return respond(204)
+    }, 'DELETE'],
+    ...LAYOUT,
+  ]
+  return { handlers, deletes, rows }
+}
+
+test('D-141: the list shows the active policy and drafts first, past versions closed; a draft is deleted, a refused delete says why', async ({ page }) => {
+  const world = deleteDraftWorld()
+  const ready = (p: Page) => p.getByRole('heading', { name: 'Release Gate Policies', level: 1 })
+  const { api, errors } = await openRollout(page, '/policies', { handlers: world.handlers, ready, user: ADMIN })
+  await networkQuiet(page, api)
+  const primary = page.locator('[data-primary]')
+  const card = (name: string) => primary.locator('.card').filter({ has: page.getByText(name, { exact: true }) })
+
+  // Active first, then the drafts; something is active, so no built-in sentence.
+  await expect(primary.locator('.card .font-medium')).toHaveText(['System gate', 'Spare draft', 'Named draft'])
+  await expect(page.getByText('No active policy: the built-in rule applies.')).toHaveCount(0)
+  // The past version waits under a closed "Past versions".
+  const past = page.locator('[data-policy-past-versions]')
+  const pastToggle = past.getByRole('button', { name: /^Past versions/ })
+  await expect(pastToggle).toHaveAttribute('aria-expanded', 'false')
+  await expect(pastToggle).toContainText('1 version')
+  await expect(page.getByText('Old gate', { exact: true })).toHaveCount(0)
+  await pastToggle.click()
+  await expect(past.getByText('Old gate', { exact: true })).toBeVisible()
+  await expect(past.getByRole('button', { name: 'Delete' })).toHaveCount(0)
+  // Only drafts offer Delete.
+  await expect(card('System gate').getByRole('button', { name: 'Delete' })).toHaveCount(0)
+
+  // Delete asks first; nothing is sent until the strip's Delete.
+  await card('Spare draft').getByRole('button', { name: 'Delete', exact: true }).click()
+  const ask = page.locator('[data-inline-confirm]')
+  await expect(ask.locator('p').first()).toHaveText('Delete this draft? It was never published, so no verdict used it. This cannot be undone.')
+  expect(world.deletes).toEqual([])
+  await ask.getByRole('button', { name: 'Delete', exact: true }).click()
+  await expect(page.getByRole('status').filter({ hasText: 'Draft deleted' })).toBeVisible()
+  expect(world.deletes).toEqual([`DELETE /api/v1/release-gate-policies/${SPARE_DRAFT.id}`])
+  await expect(card('Spare draft'), 'the deleted draft is gone after the re-read').toHaveCount(0)
+
+  // A refusal (409) shows the server's sentence, and the draft stays.
+  await card('Named draft').getByRole('button', { name: 'Delete', exact: true }).click()
+  await page.locator('[data-inline-confirm]').getByRole('button', { name: 'Delete', exact: true }).click()
+  await expect(page.getByText(NAMED_DETAIL, { exact: true })).toBeVisible()
+  expect(world.deletes).toEqual([
+    `DELETE /api/v1/release-gate-policies/${SPARE_DRAFT.id}`,
+    `DELETE /api/v1/release-gate-policies/${NAMED_DRAFT.id}`,
+  ])
+  await expect(card('Named draft')).toHaveCount(1)
+  await networkQuiet(page, api)
+  expect(api.unhandled).toEqual([])
+  expect(errors).toEqual([])
+})
+
+test('D-141: with no active policy the list says the built-in rule applies', async ({ page }) => {
+  const rows = [{ ...OLD_GATE }]
+  const handlers: ApiHandlers = [['/api/v1/release-gate-policies', () => rows], ...LAYOUT]
+  const ready = (p: Page) => p.getByRole('heading', { name: 'Release Gate Policies', level: 1 })
+  const { api, errors } = await openRollout(page, '/policies', { handlers, ready, user: ADMIN })
+  await networkQuiet(page, api)
+  await expect(page.getByText('No active policy: the built-in rule applies.', { exact: true })).toBeVisible()
+  await expect(page.locator('[data-policy-past-versions]').getByRole('button', { name: /^Past versions/ })).toHaveAttribute('aria-expanded', 'false')
   expect(api.unhandled).toEqual([])
   expect(errors).toEqual([])
 })

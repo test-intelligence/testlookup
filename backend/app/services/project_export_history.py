@@ -550,6 +550,7 @@ async def iter_documents(
     from app.services.project_export_documents import UnsupportedDocumentType
     from app.services.project_export_service import ProjectExportFailed
 
+    await ensure_pipeline_events_materialized(db, window)
     history = stats.setdefault("history", {})
     documents: dict[str, dict[str, int]] = history.setdefault("documents", {})
     slugs = await live_session_keys(db, window)
@@ -586,6 +587,29 @@ async def iter_documents(
         documents[spec.collection] = {"docs": writer.lines, "parts": writer.parts}
     if on_progress is not None:
         await on_progress("documents", written, total)
+
+
+async def ensure_pipeline_events_materialized(db: Any, window: RunWindow) -> None:
+    """Do not publish incomplete event history from this SQL snapshot.
+
+    Match the existing MongoSpec's canonical, terminal pipeline selection.
+    Other projects, runs outside the selected window and correlation-only
+    agent-run aliases do not block this archive. Estimates remain counts-only.
+    """
+    if not window.run_ids:
+        return
+    from app.services.project_export_service import ProjectExportFailed
+
+    outbox = _table("pipeline_event_outbox")
+    outstanding = select(outbox.c.id).where(
+        outbox.c.project_id == window.project_id,
+        outbox.c.status != "delivered",
+        outbox.c.pipeline_id.in_(exported_ids("agent_pipeline_runs", window)),
+    ).limit(1)
+    if (await db.execute(outstanding)).scalar():
+        # Existing safe error surface: no payload, event ID or foreign-project
+        # details. The archive runner fails before storage publication.
+        raise ProjectExportFailed("export_build", error_type="PipelineEventDeliveryPending")
 
 
 # ── objects (R-1) ────────────────────────────────────────────────────────────

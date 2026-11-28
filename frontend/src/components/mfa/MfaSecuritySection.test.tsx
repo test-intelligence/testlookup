@@ -5,7 +5,7 @@
  * fresh cache) so the read path is genuinely exercised.
  *
  * The two states with teeth:
- *  - `sso_managed` must offer NO controls — an Enable button there is a lie.
+ *  - SSO-linked users can manage an enrolled local authenticator.
  *  - `secret_unreadable` must read as BROKEN, never as "not enrolled". Showing
  *    an enrol prompt to a user in that state sends them into a 409 they cannot
  *    escape.
@@ -99,8 +99,8 @@ describe('MfaSecuritySection', () => {
     vi.clearAllMocks()
   })
 
-  it('offers no controls at all when MFA is managed by the identity provider', async () => {
-    mockStatus.mockResolvedValue({ ...BASE, sso_managed: true, enabled: true })
+  it('shows identity provider guidance for linked users without a local authenticator', async () => {
+    mockStatus.mockResolvedValue({ ...BASE, sso_managed: true })
     renderSection()
 
     expect(await screen.findByTestId('mfa-sso-managed')).toBeInTheDocument()
@@ -112,7 +112,7 @@ describe('MfaSecuritySection', () => {
   // W40 F-1: the title is the panel title role. The role's `m-0` beats the card's `space-y-*` (a zero-specificity
   // margin), so each shell hands its own gap to the title as a bottom margin — a space-y-3 shell gets mb-3.
   it.each([
-    ['mfa-sso-managed', { sso_managed: true, enabled: true }, 'space-y-3', 'mb-3'],
+    ['mfa-sso-managed', { sso_managed: true }, 'space-y-3', 'mb-3'],
     ['mfa-secret-unreadable', { enabled: true, secret_unreadable: true }, 'space-y-3', 'mb-3'],
     ['mfa-not-enrolled', {}, 'space-y-4', 'mb-4'],
   ] as const)('W40 F-1: the %s title is the panel title role and keeps the card gap', async (testId, patch, gap, margin) => {
@@ -257,12 +257,20 @@ describe('MfaSecuritySection', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent(/workspace policy requires mfa/i)
   })
 
-  it('warns that regenerating invalidates the old set, and gates dismissal', async () => {
-    mockStatus.mockResolvedValue({ ...BASE, enabled: true, recovery_codes_remaining: 2 })
+  it.each([false, true])('regenerates recovery codes and gates dismissal (SSO-linked: %s)', async (ssoManaged) => {
+    mockStatus.mockResolvedValue({
+      ...BASE, enabled: true, sso_managed: ssoManaged,
+      required_by_policy: ssoManaged, recovery_codes_remaining: 2,
+    })
     mockRegenerate.mockResolvedValue({ recovery_codes: RECOVERY_CODES })
     renderSection()
 
-    fireEvent.click(await screen.findByRole('button', { name: /regenerate recovery codes/i }))
+    const regenerate = await screen.findByRole('button', { name: /regenerate recovery codes/i })
+    if (ssoManaged) {
+      expect(screen.getByText(/workspace policy requires MFA for your role/i)).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /turn off two-factor/i })).toBeNull()
+    }
+    fireEvent.click(regenerate)
     fireEvent.change(screen.getByLabelText(/^password$/i), { target: { value: 'hunter22' } })
     fireEvent.change(screen.getByLabelText(/authentication code/i), {
       target: { value: '123456' },
@@ -270,6 +278,7 @@ describe('MfaSecuritySection', () => {
     fireEvent.submit(screen.getByTestId('mfa-regenerate-form'))
 
     const panel = await screen.findByTestId('recovery-codes-panel')
+    expect(mockRegenerate).toHaveBeenCalledWith({ password: 'hunter22', code: '123456' })
     expect(panel).toHaveTextContent(/previous recovery codes have just been invalidated/i)
     expect(screen.getByTestId('recovery-codes-list').querySelectorAll('li')).toHaveLength(10)
 

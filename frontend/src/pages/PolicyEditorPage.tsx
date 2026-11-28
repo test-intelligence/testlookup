@@ -14,6 +14,13 @@
  * W27b PAN-05: Publish and Deactivate ask in the page (`InlineConfirm`), not
  * with the browser's prompt: Publish right under the page header, Deactivate
  * right under its policy card. The strip's own button is the only sender.
+ * D-140: "New version from this" asks the same way (it creates a draft), and
+ * D-141: a never-published draft's Delete asks under its card.
+ *
+ * D-141: the list shows the active policies and the drafts first; versions
+ * that were published and later replaced or deactivated sit under a closed
+ * "Past versions" section (they are kept: past verdicts name them). With no
+ * active policy the list says the built-in rule applies.
  */
 import { Fragment, useState } from 'react';
 import { useProjectStore } from '@/store/projectStore';
@@ -37,8 +44,10 @@ import {
   DEFAULT_PASS_RATE_BANDS,
   DEFAULT_HARD_CAPS,
   DEFAULT_KIND_RULES,
+  type PolicySummary,
   createPolicy,
   deactivatePolicy,
+  deletePolicy,
   publishPolicy,
   simulatePolicy,
   updatePolicy,
@@ -259,6 +268,11 @@ export default function PolicyEditorPage() {
   // (one policy card of the list at a time).
   const [confirmingPublish, setConfirmingPublish] = useState(false);
   const [confirmingDeactivate, setConfirmingDeactivate] = useState<string | null>(null);
+  // D-141: the draft whose Delete is being asked about (one card at a time,
+  // shared with Deactivate's question so only one strip is open).
+  const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null);
+  // D-140: "New version from this" creates a draft, so it asks first.
+  const [confirmingBranch, setConfirmingBranch] = useState(false);
   // Tracks which policy id the editable form fields below were seeded from, so
   // the "adjust state during render" seeding (below) runs once per loaded
   // policy instead of from a set-state-in-effect.
@@ -391,6 +405,21 @@ export default function PolicyEditorPage() {
     }
   };
 
+  /**
+   * D-141: delete a never-published draft. A refusal (it was published in the
+   * meantime, or a stored decision names it) toasts the server's sentence and
+   * re-reads the list, so the reader sees the row's real state.
+   */
+  const handleDelete = async (id: string) => {
+    try {
+      await deletePolicy(id);
+      toast.success('Draft deleted');
+    } catch (err) {
+      toast.error(serverError(err, 'Could not delete the draft'));
+    }
+    refreshPolicies();
+  };
+
   const addRule = (type: string) => {
     const tmpl = RULE_TYPES.find(r => r.type === type);
     if (!tmpl) return;
@@ -425,6 +454,77 @@ export default function PolicyEditorPage() {
   // ── List mode ─────────────────────────────────────────────────────────────
 
   if (isNew && !policyId) {
+    // D-141: active policies and drafts first; a version that was published
+    // and is no longer active is a past version (kept, under a closed section).
+    const currentPolicies = [
+      ...policies.filter(p => p.is_active),
+      ...policies.filter(p => !p.is_active && p.is_draft),
+    ];
+    const pastPolicies = policies.filter(p => !p.is_active && !p.is_draft);
+    // Only on a list that loaded: a failed read is not "nothing is active".
+    const noneActive = !loading && !policiesError && !policies.some(p => p.is_active);
+
+    const renderRow = (p: PolicySummary) => (
+      <Fragment key={p.id}>
+        <div className="card flex justify-between items-center">
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-[var(--color-text)] font-medium">{p.name}</span>
+              <span className="text-[var(--color-text-muted)] text-xs">v{p.version}</span>
+              <span className={clsx('px-2 py-0.5 rounded text-xs', {
+                'bg-[var(--status-passed-bg)]/40 text-[var(--status-passed)]': p.is_active,
+                'bg-[var(--status-skipped-bg)]/40 text-[var(--status-skipped)]': p.is_draft && !p.is_active,
+                'bg-[var(--color-bg-secondary)] text-[var(--color-text-muted)]': !p.is_draft && !p.is_active,
+              })}>
+                {p.is_active ? 'Active' : p.is_draft ? 'Draft' : 'Inactive'}
+              </span>
+            </div>
+            <p className="text-xs text-[var(--color-text-muted)] mt-1">
+              {p.project_id ? `Project: ${projectLabel(p.project_id)}` : 'System Default'}
+              {' · '}Created: {formatDay(p.created_at)}
+            </p>
+          </div>
+          <div className="flex gap-2">
+            <button onClick={() => navigate(`/policies/${p.id}`)} className="px-3 py-1 text-xs bg-[var(--color-bg-secondary)] rounded hover:bg-[var(--color-bg-hover)] text-[var(--color-text-secondary)]">
+              {p.is_draft && isAdmin ? 'Edit' : 'View'}
+            </button>
+            {p.is_active && isAdmin && (
+              <button onClick={() => { setConfirmingDelete(null); setConfirmingDeactivate(p.id); }} className="px-3 py-1 text-xs bg-[var(--status-failed-bg)]/50 rounded hover:bg-[var(--status-failed-bg)] text-[var(--status-failed)]">
+                Deactivate
+              </button>
+            )}
+            {p.is_draft && !p.is_active && isAdmin && (
+              <button onClick={() => { setConfirmingDeactivate(null); setConfirmingDelete(p.id); }} className="px-3 py-1 text-xs bg-[var(--ui-danger-bg)]/40 rounded hover:bg-[var(--ui-danger-bg)] text-[var(--ui-danger-ink)]">
+                Delete
+              </button>
+            )}
+          </div>
+        </div>
+        {confirmingDeactivate === p.id && p.is_active && isAdmin && (
+          <div data-in-page-row="">
+            <InlineConfirm
+              message="Deactivate this policy?"
+              confirmLabel="Deactivate"
+              tone="danger"
+              onConfirm={() => { setConfirmingDeactivate(null); void handleDeactivate(p.id); }}
+              onCancel={() => setConfirmingDeactivate(null)}
+            />
+          </div>
+        )}
+        {confirmingDelete === p.id && p.is_draft && !p.is_active && isAdmin && (
+          <div data-in-page-row="">
+            <InlineConfirm
+              message="Delete this draft? It was never published, so no verdict used it. This cannot be undone."
+              confirmLabel="Delete"
+              tone="danger"
+              onConfirm={() => { setConfirmingDelete(null); void handleDelete(p.id); }}
+              onCancel={() => setConfirmingDelete(null)}
+            />
+          </div>
+        )}
+      </Fragment>
+    );
+
     return (
       <div className="space-y-4">
         <PageHeader
@@ -446,6 +546,12 @@ export default function PolicyEditorPage() {
 
         {displayError && <div className="bg-[var(--status-failed-bg)]/30 border border-[var(--status-failed-bd)] rounded-lg p-3 text-[var(--status-failed)] text-sm">{displayError}</div>}
 
+        {noneActive && (
+          <p data-policy-no-active="" className="text-sm text-[var(--color-text-secondary)]">
+            No active policy: the built-in rule applies.
+          </p>
+        )}
+
         {loading ? (
           <div className="text-[var(--color-text-muted)] text-center py-8">Loading…</div>
         ) : policies.length === 0 ? (
@@ -453,52 +559,28 @@ export default function PolicyEditorPage() {
             No policies configured. Create one to customize release gate thresholds per project.
           </div>
         ) : (
-          <div data-primary="" className="space-y-2">
-            {policies.map(p => (
-              <Fragment key={p.id}>
-                <div className="card flex justify-between items-center">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-[var(--color-text)] font-medium">{p.name}</span>
-                      <span className="text-[var(--color-text-muted)] text-xs">v{p.version}</span>
-                      <span className={clsx('px-2 py-0.5 rounded text-xs', {
-                        'bg-[var(--status-passed-bg)]/40 text-[var(--status-passed)]': p.is_active,
-                        'bg-[var(--status-skipped-bg)]/40 text-[var(--status-skipped)]': p.is_draft && !p.is_active,
-                        'bg-[var(--color-bg-secondary)] text-[var(--color-text-muted)]': !p.is_draft && !p.is_active,
-                      })}>
-                        {p.is_active ? 'Active' : p.is_draft ? 'Draft' : 'Inactive'}
-                      </span>
-                    </div>
-                    <p className="text-xs text-[var(--color-text-muted)] mt-1">
-                      {p.project_id ? `Project: ${projectLabel(p.project_id)}` : 'System Default'}
-                      {' · '}Created: {formatDay(p.created_at)}
-                    </p>
+          <>
+            {currentPolicies.length > 0 && (
+              <div data-primary="" className="space-y-2">
+                {currentPolicies.map(renderRow)}
+              </div>
+            )}
+            {/* Kept, not deletable: past verdicts name these versions. Closed
+                on load; the active policy and the drafts are what a reader
+                comes here for. */}
+            {pastPolicies.length > 0 && (
+              <div data-policy-past-versions="">
+                <Disclosure
+                  title="Past versions"
+                  summary={`${pastPolicies.length} ${pastPolicies.length === 1 ? 'version' : 'versions'}`}
+                >
+                  <div className="space-y-2">
+                    {pastPolicies.map(renderRow)}
                   </div>
-                  <div className="flex gap-2">
-                    <button onClick={() => navigate(`/policies/${p.id}`)} className="px-3 py-1 text-xs bg-[var(--color-bg-secondary)] rounded hover:bg-[var(--color-bg-hover)] text-[var(--color-text-secondary)]">
-                      {p.is_draft && isAdmin ? 'Edit' : 'View'}
-                    </button>
-                    {p.is_active && isAdmin && (
-                      <button onClick={() => setConfirmingDeactivate(p.id)} className="px-3 py-1 text-xs bg-[var(--status-failed-bg)]/50 rounded hover:bg-[var(--status-failed-bg)] text-[var(--status-failed)]">
-                        Deactivate
-                      </button>
-                    )}
-                  </div>
-                </div>
-                {confirmingDeactivate === p.id && p.is_active && isAdmin && (
-                  <div data-in-page-row="">
-                    <InlineConfirm
-                      message="Deactivate this policy?"
-                      confirmLabel="Deactivate"
-                      tone="danger"
-                      onConfirm={() => { setConfirmingDeactivate(null); void handleDeactivate(p.id); }}
-                      onCancel={() => setConfirmingDeactivate(null)}
-                    />
-                  </div>
-                )}
-              </Fragment>
-            ))}
-          </div>
+                </Disclosure>
+              </div>
+            )}
+          </>
         )}
       </div>
     );
@@ -539,7 +621,7 @@ export default function PolicyEditorPage() {
             )}
           </>
         ) : canBranch ? (
-          <button type="button" onClick={() => void handleNewVersion()} disabled={branching} className="btn-secondary">
+          <button type="button" onClick={() => setConfirmingBranch(true)} disabled={branching} className="btn-secondary">
             {branching ? 'Creating…' : 'New version from this'}
           </button>
         ) : undefined}
@@ -551,6 +633,15 @@ export default function PolicyEditorPage() {
           confirmLabel="Publish"
           onConfirm={() => { setConfirmingPublish(false); void handlePublish(); }}
           onCancel={() => setConfirmingPublish(false)}
+        />
+      )}
+
+      {confirmingBranch && canBranch && loadedPolicy && (
+        <InlineConfirm
+          message={`Create a draft copy of v${loadedPolicy.version}? It opens in the editor and changes nothing until you publish it.`}
+          confirmLabel="Create draft"
+          onConfirm={() => { setConfirmingBranch(false); void handleNewVersion(); }}
+          onCancel={() => setConfirmingBranch(false)}
         />
       )}
 

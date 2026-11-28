@@ -1,5 +1,28 @@
 """CLI error handling — maps HTTP errors to user-friendly messages and exit codes."""
+import re
+
 import httpx
+
+_REQUEST_ID = re.compile(r"[A-Za-z0-9._:-]{1,128}", re.ASCII)
+
+
+def validated_request_id(value: object) -> str | None:
+    """Accept the backend's bounded correlation grammar without normalizing it."""
+    return value if isinstance(value, str) and _REQUEST_ID.fullmatch(value) else None
+
+
+def response_request_id(response: object) -> str | None:
+    """Read diagnostic response metadata, including case-insensitive test headers."""
+    headers = getattr(response, "headers", {})
+    if not hasattr(headers, "items"):
+        return None
+    values = [value for key, value in headers.items() if str(key).lower() == "x-request-id"]
+    return validated_request_id(values[0]) if len(values) == 1 else None
+
+
+def diagnostic_message(message: str, request_id: object = None) -> str:
+    request_id = validated_request_id(request_id)
+    return f"{message} [request_id={request_id}]" if request_id else message
 
 # Stable exit codes for CI automation
 EXIT_SUCCESS = 0
@@ -23,10 +46,14 @@ class CLIError(Exception):
     ``status_code`` is the HTTP status behind it, when there was one, so a
     command can word a specific answer (a 429) without parsing the message.
     """
-    def __init__(self, message: str, exit_code: int = EXIT_ERROR, status_code: int | None = None):
+    def __init__(self, message: str, exit_code: int = EXIT_ERROR, status_code: int | None = None, *, request_id: object = None):
         super().__init__(message)
         self.exit_code = exit_code
         self.status_code = status_code
+        self.request_id = validated_request_id(request_id)
+
+    def __str__(self) -> str:
+        return diagnostic_message(super().__str__(), self.request_id)
 
 
 def exit_code_for(exc: Exception) -> int:
@@ -34,10 +61,11 @@ def exit_code_for(exc: Exception) -> int:
     return exc.exit_code if isinstance(exc, CLIError) else EXIT_ERROR
 
 
-def map_http_error(status_code: int, detail: str = "") -> CLIError:
+def map_http_error(status_code: int, detail: str = "", *, request_id: object = None) -> CLIError:
     """Map an HTTP status code to a CLIError with appropriate exit code."""
     error = _http_error(status_code, detail)
     error.status_code = status_code
+    error.request_id = validated_request_id(request_id)
     return error
 
 

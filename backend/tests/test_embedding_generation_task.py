@@ -320,7 +320,7 @@ def test_a_stale_fence_is_superseded_and_touches_nothing(world):
 
 def test_a_failure_leaves_the_active_generation_and_records_a_sentence(world):
     world.state = building(OLLAMA)
-    world.build_result = ConnectionError("http://gpu-box.internal:11434 refused; api_key=sk-live-abc123")
+    world.build_result = ConnectionError("http://gpu-box.internal:11434 refused; api_key=sk-live-abc123") # gitleaks:allow -- synthetic test credential, never production authority
     failed = counter(metrics.embedding_generation_builds_total, outcome="failed")
 
     outcome = tasks.rebuild_embedding_generation.run(OLLAMA.tag, 3)

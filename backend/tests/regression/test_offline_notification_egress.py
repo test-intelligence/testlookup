@@ -826,7 +826,7 @@ async def test_integrations_offline_mode_switches_off_are_not_probed(
     from app.services import integration_probe_service as probes
 
     client = _RecordingClient()
-    monkeypatch.setattr(probes, "get_http_client", lambda: client)
+    monkeypatch.setattr(probes, "get_integration_http_client", lambda: client)
     for key, value in enable.items():
         monkeypatch.setattr(settings, key, value)
 
@@ -1095,6 +1095,8 @@ async def test_the_global_webhook_is_delivered_and_a_personal_one_refused(
 class _Answer:
     """One query result, in whichever shape the dispatcher reads it."""
 
+    rowcount = 1
+
     def __init__(self, value):
         self._value = value
 
@@ -1114,6 +1116,8 @@ class _Answer:
 class _ScriptedSession:
     """Every AsyncSessionLocal() the digest task opens; answers in order."""
 
+    new = dirty = deleted = ()
+
     def __init__(self, answers: list, added: list):
         self._answers = answers
         self._added = added
@@ -1126,6 +1130,9 @@ class _ScriptedSession:
 
     async def execute(self, _statement):
         return _Answer(self._answers.pop(0))
+
+    async def close(self):
+        return None
 
     async def commit(self):
         return None
@@ -1160,11 +1167,13 @@ def test_a_digest_uses_the_allow_list_for_the_global_webhook_only(
     answers = [
         [(uuid.uuid4(), "DAILY", None, None, True, False, None, None)],  # the due subscription
         (user_id, project_id, channel),  # the claim
+        None,  # durable generated-phase update
         SimpleNamespace(id=user_id, role="QA_ENGINEER", email="qa@example.com", is_active=True),
         # Re-audit N33: the owner may still read the project -- an active member.
         [(user_id, True, "QA_ENGINEER")],  # the owner's account
         [(user_id, project_id)],  # the owner's membership
         prefs if own_webhook else [],
+        None,  # final delivery update
     ]
     monkeypatch.setattr(postgres, "AsyncSessionLocal", lambda: _ScriptedSession(answers, added))
 

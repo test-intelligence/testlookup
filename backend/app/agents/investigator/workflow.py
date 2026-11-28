@@ -953,6 +953,19 @@ async def _finalize(
             duration_ms=int(wall_seconds * 1000),
             prompt_registry_digest=_registry_digest(),
         )
+        if pipeline is not None and error is None and final_state is not None:
+            await emit_event(
+                pipeline_run_id, "pipeline_completed", db=db,
+                event_id=uuid.uuid5(pipeline.id, f"pipeline-completed:{pipeline.attempt}"),
+                detail={
+                    "workflow_type": "investigation",
+                    "investigation_id": investigation_id,
+                    "primary_cause": (final_state.get("verdict") or {}).get("primary_cause"),
+                    "cancelled": bool(final_state.get("cancelled")),
+                    "spend_llm_calls": final_state.get("spend_llm_calls"),
+                    "spend_tokens": final_state.get("spend_tokens"),
+                },
+            )
         await db.commit()
 
 
@@ -1235,14 +1248,6 @@ async def run_investigation(
             error=None,
             wall_seconds=wall,
         )
-        await emit_event(pipeline_run_id, "pipeline_completed", detail={
-            "workflow_type": "investigation",
-            "investigation_id": investigation_id,
-            "primary_cause": (final_state.get("verdict") or {}).get("primary_cause"),
-            "cancelled": bool(final_state.get("cancelled")),
-            "spend_llm_calls": final_state.get("spend_llm_calls"),
-            "spend_tokens": final_state.get("spend_tokens"),
-        })
         logger.info(
             "investigation_finished",
             investigation_id=investigation_id,

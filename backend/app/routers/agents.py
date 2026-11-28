@@ -21,6 +21,7 @@ from app.services.pipeline_cancellation import request_cancel
 from app.services.pipeline_retry_config import decide_retry_mode
 from app.services.review_request_service import REVIEW_REJECTED_ERROR_PREFIX
 from app.services.workflow_run_state import (
+    DEGRADED,
     PUBLIC_STATUS,
     PipelineRunStatus,
     is_known_status,
@@ -221,6 +222,64 @@ async def _require_pipeline_access(
         )
 
 
+async def _attach_stage_quality(
+    db: AsyncSession, pipelines: list[AgentPipelineRun],
+) -> None:
+    """D-153: why each DEGRADED pipeline is degraded, in one query.
+
+    The row's tag had no explanation. Only pipelines whose metadata says
+    ``stage_quality == degraded`` are read; the latest attempt of each stage
+    counts. Nothing is queried when no listed pipeline is degraded.
+    """
+    degraded: list[uuid.UUID] = []
+    for pipeline in pipelines:
+        pipeline.stage_quality_detail = None  # type: ignore[attr-defined]
+        metadata = getattr(pipeline, "execution_metadata", None)
+        if isinstance(metadata, dict) and metadata.get("stage_quality") == DEGRADED:
+            degraded.append(pipeline.id)
+    if not degraded:
+        return
+    rows = (
+        await db.execute(
+            select(
+                AgentStageResult.pipeline_run_id,
+                AgentStageResult.stage_name,
+                AgentStageResult.status,
+                AgentStageResult.fallback_used,
+                AgentStageResult.fallback_reason,
+                AgentStageResult.error_category,
+            )
+            .where(AgentStageResult.pipeline_run_id.in_(degraded))
+            .order_by(
+                AgentStageResult.pipeline_run_id,
+                AgentStageResult.attempt,
+                AgentStageResult.started_at.asc().nulls_last(),
+                AgentStageResult.stage_name,
+            )
+        )
+    ).all()
+    latest: dict[uuid.UUID, dict[str, Any]] = {}
+    for row in rows:
+        latest.setdefault(row.pipeline_run_id, {})[row.stage_name] = row
+    for pipeline in pipelines:
+        if pipeline.id not in degraded:
+            continue
+        stages = list(latest.get(pipeline.id, {}).values())
+        pipeline.stage_quality_detail = {  # type: ignore[attr-defined]
+            "stages_run": sum(1 for s in stages if s.status in ("completed", "failed")),
+            "issues": [
+                {
+                    "stage_name": s.stage_name,
+                    "status": s.status,
+                    "fallback_reason": s.fallback_reason,
+                    "error_category": s.error_category,
+                }
+                for s in stages
+                if s.status == "failed" or s.fallback_used
+            ],
+        }
+
+
 @router.get("/catalog", response_model=list[agent_catalog.AgentCatalogEntry])
 async def list_agent_catalog(
     _: Any = Depends(get_current_active_user),
@@ -303,6 +362,7 @@ async def list_pipelines(
     _attach_public_status(pipelines)
     await _attach_run_context(db, pipelines)
     await _attach_review_summaries(db, pipelines)
+    await _attach_stage_quality(db, pipelines)
     return pipelines
 
 
@@ -348,6 +408,7 @@ async def get_pipeline(
     _attach_public_status([pipeline])
     await _attach_run_context(db, [pipeline])
     await _attach_review_summaries(db, [pipeline])
+    await _attach_stage_quality(db, [pipeline])
     return pipeline
 
 
@@ -1167,7 +1228,7 @@ async def get_pipeline_timeline(
         .order_by(AgentStageResult.started_at, AgentStageResult.stage_name)
     )
     stages = stage_result.scalars().all()
-    events = await _resolve_maybe_awaitable(get_pipeline_events(str(pipeline_id)))
+    events = await _resolve_maybe_awaitable(get_pipeline_events(str(pipeline_id), db=db))
     from app.services.pipeline_replay_service import build_replay_integrity_summary
 
     replay_integrity = build_replay_integrity_summary(pipeline, list(stages), list(events))
@@ -1234,6 +1295,7 @@ async def get_pipeline_timeline(
         ],
         "events": [
             PipelineTimelineEventResponse(
+                event_id=event.get("event_id"),
                 event_type=event.get("event_type", "unknown"),
                 stage_name=event.get("stage_name"),
                 test_case_id=event.get("test_case_id"),
@@ -1365,17 +1427,45 @@ async def get_agentic_runtime(
 
 @router.get("/event-log/health", response_model=PipelineEventLogHealthResponse)
 async def get_pipeline_event_log_health(
-    _: Any = Depends(require_role(UserRole.QA_LEAD)),
+    project_id: uuid.UUID | None = Query(None),
+    db: AsyncSession = Depends(get_db),
+    current_user: Any = Depends(require_role(UserRole.QA_LEAD)),
 ):
-    """Return write-health details for the pipeline audit event log."""
-    from app.services.pipeline_event_log import get_event_log_health
+    """Read shared delivery health within the caller's accessible projects."""
+    from app.services.pipeline_event_operational_metrics import read_event_log_health
 
-    health = get_event_log_health()
-    status = "degraded" if health.get("write_failure_count", 0) else "healthy"
-    return {
-        "status": status,
-        **health,
-    }
+    selected, accessible = await resolve_project_scope(db, current_user, str(project_id) if project_id else None)
+    projects = {selected} if selected is not None else (None if accessible is None else set(accessible))
+    return await read_event_log_health(db, project_ids=projects)
+
+
+@router.post("/event-log/{event_id}/replay", status_code=202)
+async def replay_pipeline_event_delivery(
+    event_id: uuid.UUID,
+    project_id: uuid.UUID = Query(...),
+    db: AsyncSession = Depends(get_db),
+    current_user: Any = Depends(require_role(UserRole.QA_LEAD)),
+):
+    """Requeue one failed delivery; never re-execute pipeline business work."""
+    from app.services.pipeline_event_delivery import requeue_failed_event
+
+    await resolve_project_scope(db, current_user, str(project_id))
+    try:
+        result = await requeue_failed_event(db, event_id, project_id=project_id)
+    except ValueError:
+        raise HTTPException(409, detail="Only failed event deliveries may be requeued.") from None
+    except RuntimeError:
+        raise HTTPException(409, detail="Event history is busy; retry later.") from None
+    if result is None:
+        raise HTTPException(404, detail="Event delivery not found.")
+    await record_activity(
+        db, project_id=project_id, event_type="analysis.event_delivery_requeued",
+        actor=ActorRef.from_user(current_user), entity_id=project_id,
+        entity_label="Pipeline event delivery",
+        context={"event_id": str(event_id), "previous_attempts": result["previous_attempts"]},
+    )
+    await db.commit()
+    return result
 
 
 @router.get("/pipelines/{pipeline_id}/replay", response_model=PipelineReplayResponse)

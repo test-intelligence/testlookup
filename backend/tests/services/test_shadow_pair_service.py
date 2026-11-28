@@ -153,7 +153,7 @@ async def test_outputs_are_re_sanitized_on_read_and_pending_rows_carry_their_exp
     created = datetime(2026, 10, 20, 8, 30, tzinfo=timezone.utc)
     stored = _pair(
         project_id=project, sample_key="root_cause:not-a-uuid", created_at=created,
-        incumbent={"root_cause_summary": "Login used token=Qw3rTy9Uiop1 from the vault", "failure_category": "PRODUCT_BUG"},
+        incumbent={"root_cause_summary": "Login used token=Qw3rTy9Uiop1 from the vault", "failure_category": "PRODUCT_BUG"}, # gitleaks:allow -- synthetic test credential, never production authority
         candidate={"failure_category": "FLAKY", "api_key": "Zx81Lm02Pq"},
     )
     db = _Session(_Result([(stored, 1, None)]), _Result([(1, True)]))
@@ -304,7 +304,7 @@ async def test_expiry_deletes_pending_pairs_older_than_thirty_days_from_now():
 async def test_the_labelled_corpus_keeps_verdicts_only_and_re_sanitizes():
     project = uuid.uuid4()
     human = _pair(project_id=project, status="human_labelled", label={"verdict": "candidate", "source": "human"},
-                  incumbent={"summary": "token=Ab12Cd34Ef56"})
+                  incumbent={"summary": "token=Ab12Cd34Ef56"}) # gitleaks:allow -- synthetic test credential, never production authority
     broken = _pair(project_id=project, status="golden_match", label={"source": "feedback"})
     db = _Session(_Result([human, broken]))
 

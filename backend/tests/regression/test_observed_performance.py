@@ -231,10 +231,30 @@ def test_prometheus_answers_are_parsed(monkeypatch):
 
     real = httpx.AsyncClient
     monkeypatch.setattr(httpx, "AsyncClient", lambda **k: real(transport=httpx.MockTransport(handler), **k))
+    monkeypatch.setattr(op.settings, "AI_OFFLINE_MODE", False)
     monkeypatch.setattr(op.settings, "PROMETHEUS_URL", "http://prometheus.internal:9090")
     result = asyncio.run(op.observed("1h", redis=FakeRedis()))
     row = next(r for r in result["budgets"] if r["operation"] == "run_list")
     assert result["source"] == "prometheus" and row["observed_p95_ms"] == 140.0 and row["count"] == 812
+
+
+def test_offline_mode_never_queries_prometheus_and_keeps_in_app_counts(monkeypatch):
+    import httpx
+
+    def unexpected_client(**_kwargs):
+        pytest.fail("offline observation constructed a Prometheus HTTP client")
+
+    redis = FakeRedis()
+    now = 1_800_000_000.0
+    op.record_latency("run_list", 120, now=now)
+    asyncio.run(op.flush(redis))
+    monkeypatch.setattr(httpx, "AsyncClient", unexpected_client)
+    monkeypatch.setattr(op.settings, "AI_OFFLINE_MODE", True)
+    monkeypatch.setattr(op.settings, "PROMETHEUS_URL", "http://prometheus.internal:9090")
+
+    result = asyncio.run(op.observed("1h", redis=redis, now=now + 1))
+    row = next(r for r in result["budgets"] if r["operation"] == "run_list")
+    assert result["source"] == "in_app" and row["count"] == 1 and row["measured"] is True
 
 
 def test_route_roles():

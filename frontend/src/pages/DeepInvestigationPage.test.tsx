@@ -449,6 +449,8 @@ describe('DeepInvestigationPage — only what it really does', () => {
     findings?: Record<string, unknown>[]
     /** Extra fields on the focused run (run-1). */
     focused?: Record<string, unknown>
+    /** Fields that replace the decision trail's (D-156: its stages). */
+    trail?: Record<string, unknown>
   } = {}) {
     const { useFailureClusters, useDeepFindings, usePipelineStatus } = await import('@/hooks/useDeepInvestigation')
     const { useRuns, useRun } = await import('@/hooks/useRuns')
@@ -488,7 +490,7 @@ describe('DeepInvestigationPage — only what it really does', () => {
       ((runId: string | null) => { data: Record<string, unknown> }) | undefined
     const base = impl?.('run-1') ?? { data: {} }
     ;(useDecisionTrail as ReturnType<typeof vi.fn>).mockReturnValue({
-      data: { ...base.data, completed_at: opts.trailCompletedAt ?? null },
+      data: { ...base.data, completed_at: opts.trailCompletedAt ?? null, ...opts.trail },
       isLoading: false,
     })
 
@@ -501,6 +503,54 @@ describe('DeepInvestigationPage — only what it really does', () => {
     )
     return screen.findByRole('region', { name: 'Investigation verdict' })
   }
+
+  // D-156: one model answer and three rules answers read "rules"; the stage now says "mixed" and the card
+  // prints the split in words.
+  it('D-156: Model routing prints a mixed stage\'s split, and one engine as before', async () => {
+    const stage = {
+      stage_name: 'root_cause_analysis', status: 'completed', started_at: null, completed_at: null,
+      duration_seconds: 4, fallback_used: true, fallback_reason: '3/4 tests fell back from requested engine',
+      route_rationale: null, error_category: null, skipped_reason: null, execution_path: null,
+      confidence_score: null, evidence_count: null, input_tokens: null, output_tokens: null, cost_usd: null,
+      decision_log: [],
+    }
+    await renderPage({
+      trail: {
+        stages: [
+          { ...stage, analysis_mode: 'mixed', mode_distribution: { rules: 3, llm: 1 } },
+          { ...stage, stage_name: 'failure_clustering', fallback_used: false, analysis_mode: 'ml', mode_distribution: null },
+        ],
+      },
+    })
+    const card = screen.getByRole('heading', { name: 'Model routing' }).closest('.card')
+    expect(within(card as HTMLElement).getByText('1 model · 3 rules')).toBeInTheDocument()
+    expect(within(card as HTMLElement).queryByText('mixed')).toBeNull()
+    expect(within(card as HTMLElement).getByText('ml')).toBeInTheDocument()
+    expect(within(card as HTMLElement).getByText('fallback')).toBeInTheDocument()
+  })
+
+  // Review F6: a QA lead's hint or a replayed human correction is not an engine. A rules-only stage with
+  // them still reads "rules"; a real model + rules split names the correction as "corrected".
+  it('D-156 F6: a hint or a correction never makes a stage mixed; a mixed split names it "corrected"', async () => {
+    const stage = {
+      status: 'completed', started_at: null, completed_at: null, duration_seconds: 4, fallback_used: false,
+      fallback_reason: null, route_rationale: null, error_category: null, skipped_reason: null,
+      execution_path: null, confidence_score: null, evidence_count: null, input_tokens: null,
+      output_tokens: null, cost_usd: null, decision_log: [],
+    }
+    await renderPage({
+      trail: {
+        stages: [
+          { ...stage, stage_name: 'root_cause_analysis', analysis_mode: 'rules', mode_distribution: { rules: 8, hint: 1, human_corrected: 1 } },
+          { ...stage, stage_name: 'summary', analysis_mode: 'mixed', mode_distribution: { human_corrected: 1, rules: 2, llm: 1 } },
+        ],
+      },
+    })
+    const card = screen.getByRole('heading', { name: 'Model routing' }).closest('.card') as HTMLElement
+    expect(within(card).getByText('rules')).toBeInTheDocument()
+    expect(within(card).queryByText(/hint/)).toBeNull()
+    expect(within(card).getByText('1 model · 2 rules · 1 corrected')).toBeInTheDocument()
+  })
 
   // W14 AGT-07: "Run on selection" is real now (the run configuration; the case below posts its failure ids).
   it('renders no stub control: History, Configure, Dry run, Open cluster, Swap, Decision trail', async () => {

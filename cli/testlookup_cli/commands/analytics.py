@@ -33,7 +33,7 @@ import typer
 from rich.console import Console
 
 from testlookup_cli import chart_render, client, output, release_resolver, timing_render
-from testlookup_cli.errors import EXIT_VALIDATION, exit_code_for
+from testlookup_cli.errors import EXIT_VALIDATION, diagnostic_message, exit_code_for
 
 analytics_app = typer.Typer(
     name="analytics", help="Chart data and execution time: the numbers the UI's charts draw",
@@ -146,7 +146,7 @@ def _run(params: dict, output_format: str, profile_name: Optional[str], title: s
             "GET", CHART_DATA_PATH, params=params, profile_name=profile_name,
         ))
     except Exception as e:
-        message = RATE_LIMITED if getattr(e, "status_code", None) == 429 else str(e)
+        message = diagnostic_message(RATE_LIMITED, getattr(e, "request_id", None)) if getattr(e, "status_code", None) == 429 else str(e)
         output.print_error(message)
         raise typer.Exit(exit_code_for(e))
     _render(body, output_format, params["metric"], title)
@@ -230,7 +230,7 @@ def execution(
     try:
         body = asyncio.run(client.request("GET", EXECUTION_PATH, params=params, profile_name=profile_name))
     except Exception as e:
-        message = RATE_LIMITED if getattr(e, "status_code", None) == 429 else str(e)
+        message = diagnostic_message(RATE_LIMITED, getattr(e, "request_id", None)) if getattr(e, "status_code", None) == 429 else str(e)
         output.print_error(message)
         raise typer.Exit(exit_code_for(e))
     if output_format == "json":

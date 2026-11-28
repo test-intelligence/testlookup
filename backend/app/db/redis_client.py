@@ -11,6 +11,8 @@ from app.core.config import REDIS_SOCKET_TIMEOUT_SECONDS, settings
 
 _pool: Optional[aioredis.ConnectionPool] = None
 _client: Optional[aioredis.Redis] = None
+_broker_pool: Optional[aioredis.ConnectionPool] = None
+_broker_client: Optional[aioredis.Redis] = None
 
 
 def _single_attempt_options(retry_class: type) -> dict[str, Any]:
@@ -48,13 +50,41 @@ def get_redis() -> aioredis.Redis:
     return _client
 
 
+def get_broker_redis() -> aioredis.Redis:
+    """Read the configured Celery broker, which may differ from application Redis.
+
+    Observation shares the application pool only when the complete URLs match;
+    a different database/server must not silently report an empty application
+    list as broker health. This client never publishes or consumes a task.
+    """
+    global _broker_pool, _broker_client
+    if settings.CELERY_BROKER_URL == settings.REDIS_URL:
+        return get_redis()
+    if _broker_pool is None:
+        _broker_pool = aioredis.ConnectionPool.from_url(
+            settings.CELERY_BROKER_URL,
+            max_connections=50,
+            decode_responses=True,
+            **_single_attempt_options(AsyncRetry),
+        )
+    if _broker_client is None:
+        _broker_client = aioredis.Redis(connection_pool=_broker_pool)
+    return _broker_client
+
+
 def sync_redis_from_url(url: str) -> redis.Redis:
     """A synchronous client with the same timeouts and single-attempt policy (semantic search's index cursor)."""
     return redis.Redis.from_url(url, **_single_attempt_options(SyncRetry))
 
 
 async def close_redis() -> None:
-    global _pool, _client
+    global _pool, _client, _broker_pool, _broker_client
+    if _broker_client is not None:
+        await _broker_client.aclose()
+        _broker_client = None
+    if _broker_pool is not None:
+        await _broker_pool.disconnect()
+        _broker_pool = None
     if _client is not None:
         await _client.aclose()
         _client = None

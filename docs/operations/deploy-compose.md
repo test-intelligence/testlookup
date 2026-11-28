@@ -11,6 +11,7 @@ Docker Compose runs the whole stack on one host. There are four Compose files yo
 | `docker-compose.release.yml` | Pulls prebuilt images from `ghcr.io/test-intelligence/testlookup` | A host that runs published images, installed with `install.sh` or by hand |
 | `docker-compose.airgap.yml` (override) | Re-points every image at your registry | Air-gapped hosts, layered on the release file |
 | `docker-compose.monitoring.yml` (override) | Pulls Prometheus, Grafana, Jaeger | Metrics, dashboards and traces next to the stack |
+| `docker-compose.telemetry.yml` (override) | Adds Collector, persistent Jaeger and Loki | [Durable logs and traces](durable-telemetry.md) |
 | `docker-compose.gcp-vm.yml` (override) | Production build targets | A cloud VM; see [single VM](deploy-single-vm.md) |
 
 ## Prerequisites
@@ -185,7 +186,24 @@ docker compose -f docker-compose.yml -f docker-compose.monitoring.yml up -d
 
 All of these listen on `127.0.0.1` only (`MONITORING_PUBLISH_ADDR`): Jaeger, the OTLP receivers and Prometheus have no authentication. Prometheus runs without `--web.enable-lifecycle`, so restart its container to reload the configuration.
 
+The optional objectives overlay records core API availability and latency for a named installation, with separate adoption and routing for burn alerts. [API objectives](api-objectives.md).
+
 The override sets `OTEL_ENABLED=true`, `OTEL_EXPORTER_OTLP_ENDPOINT=http://jaeger:4318` and `METRICS_ENABLED=true` on the backend. The same alert rules are rendered for Kubernetes in [`k8s/monitoring`](deploy-kubernetes.md#monitoring-podmonitor-and-prometheusrule). Metric and alert reference: [observability](../../architecture/OBSERVABILITY.md).
+
+The alert routing overlay delivers incident notifications and an independent watchdog over authenticated HTTPS. The monitoring guides cover required roles, broker backlog and worker progress. [Alert routing overlay](alert-routing.md), [telemetry contract](telemetry-contract.md), [Celery queue monitoring](celery-queue-monitoring.md).
+
+### Authenticate the API scrape
+
+Use `docker-compose.monitoring-auth.yml` after the monitoring file with either the source or release stack. Set `METRICS_API_TOKEN_SOURCE` and `METRICS_PROMETHEUS_TOKEN_SOURCE` to the absolute host paths of two protected files containing the same bearer token. Grant file read access to the corresponding container users and restrict access to the files on the host. Compose mounts each file only in the service that needs it. File-based Compose secrets use host file ownership and permissions. [Compose secrets](https://docs.docker.com/compose/how-tos/use-secrets/).
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.monitoring.yml \
+  -f docker-compose.monitoring-auth.yml up -d
+```
+
+Check that the `testlookup-backend` job is up and returns samples in Prometheus. From the private network, an API scrape with missing or mismatched credentials should return 401. Worker scrapes use the private Compose network on port 9100. Keep that port off published host and ingress routes. The bearer token crosses the private service network, so use a TLS scrape endpoint when crossing a trust boundary. [Prometheus scrape authorization](https://prometheus.io/docs/prometheus/latest/configuration/configuration/#http_config).
+
+Rotate by updating the two source files and recreating `backend` and `prometheus` with the same Compose file set. Recreation remounts files even if the secret manager atomically replaced them. Expect transient 401s while the two sides switch. Confirm the backend target is up with the new token and the old token returns 401 before ending the maintenance window.
 
 ## Backups, restore and upgrades
 

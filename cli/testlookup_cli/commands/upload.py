@@ -1,11 +1,13 @@
 """Upload test result files to TestLookup for ingestion and AI analysis."""
 import asyncio
 import json
+import re
 import time
 from datetime import UTC, datetime, timedelta
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import List, Optional
+from uuid import UUID, uuid4
 
 import typer
 
@@ -14,7 +16,7 @@ from testlookup_cli.ci_context import resolve_ci_context
 from testlookup_cli.commit_range import resolve_commit_range
 from testlookup_cli.config import get_profile
 from testlookup_cli.run_context import collect_run_context, locates_run_context, rejected_entries
-from testlookup_cli.errors import exit_code_for, map_connection_error, map_http_error
+from testlookup_cli.errors import CLIError, diagnostic_message, exit_code_for, map_connection_error, map_http_error, response_request_id, validated_request_id
 
 upload_app = typer.Typer(name="upload", help="Upload test result files")
 
@@ -57,14 +59,17 @@ WAIT_POLL_SECONDS = 2.0
 WAIT_MIN_RETRY_SECONDS = 1.0
 WAIT_NOT_FOUND_GRACE_SECONDS = 30.0
 TERMINAL_UPLOAD_STATES = frozenset({"succeeded", "failed"})
+UPLOAD_STATUS_PATH = "/api/v1/ingest/uploads/{task_id}"
+UPLOAD_STATUS_PREFIX = UPLOAD_STATUS_PATH.removesuffix("{task_id}")
 
 
-class UploadNotFinished(Exception):
+class UploadNotFinished(CLIError):
     """--wait ran out of time before the upload reached a terminal state."""
 
-    def __init__(self, message: str, state: str) -> None:
-        super().__init__(message)
+    def __init__(self, message: str, state: str, receipt: Optional[dict] = None, *, request_id: object = None) -> None:
+        super().__init__(message, request_id=request_id)
         self.state = state
+        self.receipt = receipt
 
 # Seams, so tests can run the retry and wait loops on a fake clock.
 _sleep = asyncio.sleep
@@ -125,6 +130,7 @@ def _outcome(accepted: dict, status: dict) -> dict:
         "state": status.get("state"),
         "result": status.get("result"),
         "error": status.get("error"),
+        **({"request_id": request_id} if (request_id := validated_request_id(status.get("request_id"))) else {}),
     }
 
 
@@ -134,7 +140,7 @@ def _raise_if_refused(data: dict) -> None:
     error = data.get("error") or {}
     code = error.get("code", "failed")
     message = error.get("message", "the server could not ingest this report")
-    raise Exception(f"Ingestion failed ({code}): {message}")
+    raise CLIError(f"Ingestion failed ({code}): {message}", request_id=data.get("request_id"))
 
 
 #: The W23b run-context flags, shared by ``upload file`` and ``upload dir``.
@@ -175,6 +181,33 @@ def _validate_format(value: str) -> str:
             f"Choose one of: {', '.join(SUPPORTED_UPLOAD_FORMATS)}."
         )
     return value
+
+
+def _validate_idempotency_key(value: Optional[str]) -> Optional[str]:
+    if value is not None and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}", value, flags=re.ASCII) is None:
+        raise typer.BadParameter("Idempotency key must be 1–128 ASCII letters/digits or _.:-, starting with a letter or digit")
+    return value
+
+
+def _unconfirmed_receipt(resp) -> Optional[dict]:
+    """Recover only explicit server identities; never follow a Location URL."""
+    if resp.status_code != 503:
+        return None
+    headers = {str(key).lower(): value for key, value in resp.headers.items()}
+    task, run = headers.get("x-upload-task-id"), headers.get("x-upload-run-id")
+    marked = task is not None or run is not None or UPLOAD_STATUS_PREFIX in str(headers.get("location", ""))
+    if not marked:
+        return None
+    try:
+        if not isinstance(task, str) or not isinstance(run, str) or str(UUID(task)) != task.lower() or str(UUID(run)) != run.lower():
+            raise ValueError
+    except (ValueError, TypeError, AttributeError):
+        raise map_http_error(503, "Upload outcome is uncertain and its polling receipt is incomplete. Do not resubmit with a new idempotency key.", request_id=response_request_id(resp)) from None
+    receipt = {"task_id": task.lower(), "run_id": run.lower(), "total_results": 0, "publication_confirmed": False}
+    request_id = response_request_id(resp)
+    if request_id:
+        receipt["request_id"] = request_id
+    return receipt
 
 
 #: How far back the server accepts an execution time (``MAX_BACKDATE`` in
@@ -298,6 +331,10 @@ def upload_file(
         600.0, "--wait-timeout", min=1.0,
         help="Seconds --wait waits before giving up",
     ),
+    idempotency_key: Optional[str] = typer.Option(
+        None, "--idempotency-key", callback=_validate_idempotency_key,
+        help="Reuse this key with identical file/fields after an uncertain response (receipt-aware servers)",
+    ),
     profile_name: Optional[str] = typer.Option(None, "--profile"),
     output_format: str = typer.Option("table", "--output", "-o"),
 ):
@@ -335,8 +372,10 @@ def upload_file(
     refuses the report (over the result cap, unparseable, empty), and says
     what became of the commit range (stored, ignored, not stored). While it
     waits, a 429, a 5xx or a dropped connection only means "not yet", until
-    --wait-timeout. An upload that meets a 429 or 503 is retried, honouring
-    Retry-After, for up to five minutes.
+    --wait-timeout. Admission 429/503 responses retry within five minutes.
+    A 503 carrying an upload receipt polls that original task instead of
+    posting again. --idempotency-key can resume an uncertain no-receipt attempt
+    with identical input on a receipt-aware server.
 
     Examples:
         testlookup upload file results.xml -p <project-id> -b build-42
@@ -363,8 +402,10 @@ def upload_file(
             format=format, profile_name=profile_name,
             run_context=run_context, environment=environment, run_ai=not no_ai,
             executed_at=executed_at,
+            idempotency_key=idempotency_key,
+            confirmation_timeout=min(wait_timeout, MAX_RETRY_TOTAL_SECONDS) if wait else MAX_RETRY_TOTAL_SECONDS,
         ))
-        if wait:
+        if wait and data.get("state") not in TERMINAL_UPLOAD_STATES:
             data = _outcome(data, asyncio.run(_wait_for_upload(
                 data["task_id"], profile_name=profile_name, timeout=wait_timeout,
             )))
@@ -378,6 +419,11 @@ def upload_file(
             verb = "Ingested" if data.get("state") == "succeeded" else "Ingestion queued"
             output.print_success(f"{verb} — run_id={run_id}")
             _print_commit_range_outcome(data)
+    except UploadNotFinished as e:
+        if e.receipt:
+            output.render({**e.receipt, "state": e.state}, output_format)
+        output.print_error(str(e))
+        raise typer.Exit(1)
     except Exception as e:
         output.print_error(str(e))
         raise typer.Exit(exit_code_for(e))
@@ -472,6 +518,7 @@ def upload_dir(
 
     results = []
     names: list[str] = []
+    reconciled: set[str] = set()
     errors = 0
     for f in files:
         try:
@@ -484,9 +531,20 @@ def upload_dir(
                 format=format, profile_name=profile_name,
                 run_context=run_context, environment=environment, run_ai=not no_ai,
                 executed_at=executed_at,
+                confirmation_timeout=min(wait_timeout, MAX_RETRY_TOTAL_SECONDS) if wait else MAX_RETRY_TOTAL_SECONDS,
             ))
             results.append(data)
             names.append(f.name)
+            if data.get("state") in TERMINAL_UPLOAD_STATES:
+                reconciled.add(f.name)
+            _raise_if_refused(data)
+        except UploadNotFinished as e:
+            if e.receipt:
+                results.append({**e.receipt, "state": e.state})
+                names.append(f.name)
+                reconciled.add(f.name)
+            output.print_error(f"Not finished: {f.name} — {e}")
+            errors += 1
         except Exception as e:
             output.print_error(f"Failed: {f.name} — {e}")
             errors += 1
@@ -502,6 +560,11 @@ def upload_dir(
         waited = []
         unfinished: list[str] = []
         for name, data in zip(names, results):
+            # A receipt-bearing 503 already used its bounded confirmation
+            # budget. Keep its identity/output and count any failure once.
+            if name in reconciled:
+                waited.append(data)
+                continue
             try:
                 data = _outcome(data, asyncio.run(_wait_for_upload(
                     data["task_id"], profile_name=profile_name, timeout=wait_timeout,
@@ -628,6 +691,8 @@ async def _upload_file(
     environment: Optional[str] = None,
     run_ai: bool = True,
     executed_at: str | None = None,
+    idempotency_key: Optional[str] = None,
+    confirmation_timeout: float = MAX_RETRY_TOTAL_SECONDS,
 ) -> dict:
     """Upload a single file via multipart POST to /api/v1/ingest/file.
 
@@ -639,7 +704,8 @@ async def _upload_file(
 
     profile = get_profile(profile_name)
     base_url = profile.get("url", "http://localhost:8000").rstrip("/")
-    headers = client._build_headers(profile)
+    key = _validate_idempotency_key(idempotency_key) or str(uuid4())
+    headers = {**client._build_headers(profile), "Idempotency-Key": key}
 
     form_data = _build_form_data(
         project=project, build=build, branch=branch, commit=commit,
@@ -665,15 +731,34 @@ async def _upload_file(
                         data=form_data,
                     )
 
+                receipt = _unconfirmed_receipt(resp)
+                if receipt is not None:
+                    output.print_warning(diagnostic_message(
+                        f"Queue confirmation is unavailable for run {receipt['run_id']}; "
+                        f"checking upload {receipt['task_id']} without resubmitting.", receipt.get("request_id"),
+                    ))
+                    deadline = min(started + MAX_RETRY_TOTAL_SECONDS, _clock() + confirmation_timeout)
+                    try:
+                        status = await _wait_for_upload(
+                            receipt["task_id"], profile_name=profile_name,
+                            timeout=max(0, deadline - _clock()), deadline=deadline,
+                            expected_run_id=receipt["run_id"],
+                        )
+                    except UploadNotFinished as exc:
+                        if exc.request_id:
+                            receipt = {**receipt, "request_id": exc.request_id}
+                        raise UploadNotFinished(exc.args[0], exc.state, receipt, request_id=exc.request_id or receipt.get("request_id")) from exc
+                    return {**_outcome(receipt, status), "publication_confirmed": status.get("state") == "succeeded"}
+
                 if resp.status_code in RETRYABLE_STATUSES:
                     delay = next_retry_delay(
                         resp.headers.get("Retry-After"), attempt, _clock() - started
                     )
                     if delay is not None:
-                        output.print_warning(
+                        output.print_warning(diagnostic_message(
                             f"HTTP {resp.status_code} for {path.name}: the server is "
-                            f"shedding load; retrying in {delay:.1f}s"
-                        )
+                            f"shedding load; retrying in {delay:.1f}s", response_request_id(resp),
+                        ))
                         await _sleep(delay)
                         continue
 
@@ -695,14 +780,18 @@ async def _upload_file(
                         if resp.status_code in RETRYABLE_STATUSES and attempt > 1
                         else ""
                     )
-                    raise map_http_error(resp.status_code, f"{detail}{gave_up}")
+                    raise map_http_error(resp.status_code, f"{detail}{gave_up}", request_id=response_request_id(resp))
 
                 return client._json_body(resp)
     except httpx.RequestError as exc:
         # Server unreachable / DNS failure / timeout on the primary ingest path
         # (the first thing a new self-hoster runs) — give an actionable hint
         # rather than a raw transport traceback.
-        raise map_connection_error(exc, base_url) from exc
+        error = map_connection_error(exc, base_url)
+        raise type(error)(
+            f"{error} Upload outcome may be uncertain. On a receipt-aware server, "
+            f"retry identical input with --idempotency-key {key}.", error.exit_code,
+        ) from exc
 
 
 def _blames_run_context(resp) -> bool:
@@ -727,6 +816,7 @@ async def _wait_for_upload(
     profile_name: Optional[str] = None,
     timeout: float = 600.0,
     deadline: Optional[float] = None,
+    expected_run_id: Optional[str] = None,
 ) -> dict:
     """Poll the upload's status until it succeeds or fails (re-audit N15).
 
@@ -749,12 +839,13 @@ async def _wait_for_upload(
     profile = get_profile(profile_name)
     base_url = profile.get("url", "http://localhost:8000").rstrip("/")
     headers = client._build_headers(profile)
-    url = f"{base_url}/api/v1/ingest/uploads/{task_id}"
+    url = base_url + UPLOAD_STATUS_PATH.format(task_id=task_id)
     started = _clock()
     if deadline is None:
         deadline = started + timeout
     state = "pending"
     problem: Optional[str] = None  # why the last poll told us nothing, if it did not
+    last_request_id = None
     async with httpx.AsyncClient(timeout=30.0) as http:
         while True:
             delay = WAIT_POLL_SECONDS
@@ -763,6 +854,7 @@ async def _wait_for_upload(
             except httpx.RequestError as exc:
                 problem = f"the last poll failed: {map_connection_error(exc, base_url)}"
             else:
+                last_request_id = response_request_id(resp)
                 code = resp.status_code
                 if code == 404 and _clock() - started < WAIT_NOT_FOUND_GRACE_SECONDS:
                     # The status record may not be written yet.
@@ -778,20 +870,29 @@ async def _wait_for_upload(
                     except Exception:
                         detail = resp.text
                     raise map_http_error(
-                        code, f"while waiting for upload {task_id}: {detail}"
+                        code, f"while waiting for upload {task_id}: {detail}", request_id=last_request_id,
                     )
                 else:
                     status = client._json_body(resp)
+                    if expected_run_id is not None and (
+                        status.get("task_id") != task_id
+                        or (status.get("run_id") and status["run_id"] != expected_run_id)
+                    ):
+                        raise map_http_error(503, f"Status identity differs from upload {task_id}; do not resubmit.", request_id=last_request_id)
                     if status.get("state") in TERMINAL_UPLOAD_STATES:
+                        if status.get("state") == "failed":
+                            status = {key: value for key, value in status.items() if key != "request_id"}
+                            if last_request_id:
+                                status["request_id"] = last_request_id
                         return status
                     state, problem = status.get("state", "pending"), None
             remaining = deadline - _clock()
             if remaining <= 0:
                 if problem is None:
                     raise UploadNotFinished(
-                        f"upload {task_id} is still {state} after {timeout:g}s", state
+                        f"upload {task_id} is still {state} after {timeout:g}s", state, request_id=last_request_id,
                     )
                 raise UploadNotFinished(
-                    f"no status for upload {task_id} after {timeout:g}s: {problem}", state
+                    f"no status for upload {task_id} after {timeout:g}s: {problem}", state, request_id=last_request_id,
                 )
             await _sleep(min(delay, remaining))

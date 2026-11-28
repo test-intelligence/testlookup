@@ -210,8 +210,8 @@ async def _undo(
     return row
 
 
-async def _emit_action_event(row: AgentActionLedger, status: str) -> None:
-    """Best-effort pipeline event AFTER the commit (the reviews' order)."""
+async def _stage_action_event(db: AsyncSession, row: AgentActionLedger, status: str) -> None:
+    """Stage the pipeline event alongside the action decision."""
     if row.pipeline_run_id is None:
         return
     try:
@@ -220,9 +220,10 @@ async def _emit_action_event(row: AgentActionLedger, status: str) -> None:
         await emit_event(
             str(row.pipeline_run_id),
             f"agent_action_{status}",
+            db=db,
             detail={"action_id": str(row.id), "action_type": row.action_type},
         )
-    except Exception as exc:  # noqa: BLE001 -- the decision is already committed
+    except Exception as exc:  # noqa: BLE001 - the action still has its authoritative SQL audit
         logger.warning("agent_action_event_not_logged", error_type=type(exc).__name__)
 
 
@@ -271,11 +272,11 @@ async def transition_agent_action(
             entity_id=row.id, entity_label=entity_label,
             context={**facts, "result_kind": _result_kind(row)},
         )
+    await _stage_action_event(db, row, body.status)
     await db.commit()
     if body.status == "rolled_back":
         await bump_analytics_epoch(project_id)  # the undone effect changed analytics data; after the commit
     await db.refresh(row)  # updated_at is onupdate: refresh before serialising
-    await _emit_action_event(row, body.status)
     try:
         return await queue.read_action(db, project_id=project_id, action_id=action_id, viewer=current_user)
     except LookupError:

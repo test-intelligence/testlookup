@@ -70,6 +70,42 @@ and a pending review older than 24 hours. Operators can inspect both Redis DLQ
 stores at `GET /api/v1/admin/dlq`; `POST /api/v1/admin/dlq/{id}/replay` accepts
 only the allowlisted Celery task shapes written by the application.
 
+### 2c. Logical Celery queue depths
+
+`worker/queue_inventory.py` defines the five base queues (`critical`,
+`ingestion`, `ai_analysis`, `agent_children`, `default`) and appends the
+configured ingestion shards. Celery declarations/routes, `/health/ingestion`
+and scrape collection share that inventory. Deployment worker `-Q`
+subscriptions still require profile-specific verification; declaring a queue
+does not establish that an active worker consumes it.
+
+`celery_queue_length{queue_name}` and the health response's existing `queues`
+map count broker-pending messages across **every Redis priority bin**, using
+the configured broker URL, separator, priority steps and global key prefix.
+The standard Redis transport uses four lists per logical queue; reading only
+the unsuffixed list misses nonzero-priority work. Collection uses one
+nontransactional read pipeline. A failed bin makes that logical queue unknown
+(`null` in health), preserves other readable queues, and fails the scrape
+collector's success/freshness contract. Retained metric values must be read
+with `testlookup_metric_collection_success{collector="queues"}` and collection
+freshness; they are not a current measurement after a failed read.
+
+The health endpoint's `status`, `redis_reachable` and memory/admission fields
+retain their existing meaning: **application admission Redis**. Queue counts
+refer to the separately configured broker; an `ok` admission status does not
+make a `null` queue count healthy. No new response fields are introduced.
+Pipeline work is linear in the declared inventory: with default priorities,
+`4 * (5 + LIVE_INGEST_SHARD_COUNT)` length reads. Large shard counts need
+profile sizing; the scrape's collection deadline is not a fixed command-count
+limit or a claim of unlimited throughput.
+
+These counts exclude active, prefetched/reserved and unacknowledged deliveries.
+They do not measure oldest pending age, consumption rate or durable completion.
+Those require producer timestamp and consumer/lifecycle contracts plus a
+disposable stopped-consumer/recovery check; no age is inferred from an arbitrary
+Redis list endpoint. SQL outbox lifecycle signals remain separate. See the
+[Celery Redis priority contract](https://docs.celeryq.dev/en/stable/userguide/routing.html#redis-message-priorities).
+
 ## 3. Traces (`core/tracing.py`)
 
 `setup_tracing(otlp_endpoint=…)` wires the OTEL SDK with an OTLP HTTP exporter

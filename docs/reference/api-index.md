@@ -30,6 +30,7 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | GET | `/api/v1/agents/catalog/{agent_id}` | Get Agent Catalog Entry | [Agents](api/agent-operations.md) |
 | POST | `/api/v1/agents/defect-command` | Defect Command | [Agents](api/agent-operations.md) |
 | GET | `/api/v1/agents/event-log/health` | Get Pipeline Event Log Health | [Agents](api/agent-operations.md) |
+| POST | `/api/v1/agents/event-log/{event_id}/replay` | Replay Pipeline Event Delivery | [Agents](api/agent-operations.md) |
 | GET | `/api/v1/agents/invocations/{invocation_id}` | Get Invocation | [Agent Invocations](api/agent-invocations.md) |
 | POST | `/api/v1/agents/invocations/{invocation_id}/cancel` | Cancel Invocation | [Agent Invocations](api/agent-invocations.md) |
 | GET | `/api/v1/agents/invocations/{invocation_id}/events` | Stream Invocation Events | [Agent Invocations](api/agent-invocations.md) |
@@ -204,10 +205,19 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | GET | `/api/v1/github/app/install-url` | Github App Install Url | [GitHub App](api/github-app.md) |
 | POST | `/api/v1/github/app/setup-callback` | Github App Setup Callback | [GitHub App](api/github-app.md) |
 | GET | `/api/v1/identity/events` | List Identity Events | [Identity & Audit](api/identity-audit.md) |
+| POST | `/api/v1/identity/retention/disable` | Disable Identity Retention Policy | [Identity & Audit](api/identity-audit.md) |
+| POST | `/api/v1/identity/retention/holds` | Place Identity Retention Hold | [Identity & Audit](api/identity-audit.md) |
+| POST | `/api/v1/identity/retention/holds/{hold_id}/release` | Release Identity Retention Hold | [Identity & Audit](api/identity-audit.md) |
+| GET | `/api/v1/identity/retention/policy` | Read Identity Retention Policy | [Identity & Audit](api/identity-audit.md) |
+| POST | `/api/v1/identity/retention/policy` | Approve Identity Retention Policy | [Identity & Audit](api/identity-audit.md) |
+| GET | `/api/v1/identity/retention/preview` | Preview Identity Retention | [Identity & Audit](api/identity-audit.md) |
+| POST | `/api/v1/identity/retention/purge` | Purge Identity Retention Batch | [Identity & Audit](api/identity-audit.md) |
 | GET | `/api/v1/identity/sync-status` | Get Identity Sync Status | [Identity & Audit](api/identity-audit.md) |
 | POST | `/api/v1/ingest` | Ingest test results (JSON batch) | [Ingest](api/ingest.md) |
 | POST | `/api/v1/ingest/file` | Upload test result file (JUnit/TestNG XML, Allure/Cypress/Playwright JSON) | [Ingest](api/ingest.md) |
 | GET | `/api/v1/ingest/uploads/{task_id}` | Poll the status of an uploaded report's async processing | [Ingest](api/ingest.md) |
+| POST | `/api/v1/ingest/uploads/{task_id}/cleanup` | Remove a terminal upload's temporary queued payload | [Ingest](api/ingest.md) |
+| POST | `/api/v1/ingest/uploads/{task_id}/retry` | Resume a retained upload using its original identity | [Ingest](api/ingest.md) |
 | GET | `/api/v1/integration-health/history/{provider}` | Get Provider History | [Integration Health](api/integration-health.md) |
 | POST | `/api/v1/integration-health/probe` | Trigger Probe | [Integration Health](api/integration-health.md) |
 | GET | `/api/v1/integration-health/status` | Get All Status | [Integration Health](api/integration-health.md) |
@@ -426,6 +436,7 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | GET | `/api/v1/release-gate-policies/history/{project_id}` | Get Policy History | [Release Gate Policies](api/release-gate-policies.md) |
 | POST | `/api/v1/release-gate-policies/simulate` | Simulate Policy | [Release Gate Policies](api/release-gate-policies.md) |
 | GET | `/api/v1/release-gate-policies/system-history` | Get System Policy History | [Release Gate Policies](api/release-gate-policies.md) |
+| DELETE | `/api/v1/release-gate-policies/{policy_id}` | Delete Policy | [Release Gate Policies](api/release-gate-policies.md) |
 | GET | `/api/v1/release-gate-policies/{policy_id}` | Get Policy | [Release Gate Policies](api/release-gate-policies.md) |
 | PATCH | `/api/v1/release-gate-policies/{policy_id}` | Update Policy | [Release Gate Policies](api/release-gate-policies.md) |
 | POST | `/api/v1/release-gate-policies/{policy_id}/deactivate` | Deactivate Policy | [Release Gate Policies](api/release-gate-policies.md) |
@@ -754,4 +765,4 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/webhooks/minio` | Minio Webhook | [Webhooks](api/webhooks.md) |
 | POST | `/ws/events/{run_id}` | Ingest Live Event | [Live Reporting](api/live-reporting.md) |
 
-Total: **745 HTTP operations**, **631 paths**, **93 domain pages**.
+Total: **756 HTTP operations**, **640 paths**, **93 domain pages**.

@@ -5335,6 +5335,16 @@
             ],
             "title": "Run Seq"
           },
+          "stage_quality_detail": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AgentPipelineStageQuality"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "started_at": {
             "anyOf": [
               {},
@@ -5408,6 +5418,69 @@
           "state"
         ],
         "title": "AgentPipelineReviewSummary",
+        "type": "object"
+      },
+      "AgentPipelineStageIssue": {
+        "description": "One stage of a degraded pipeline that failed or fell back (D-153).",
+        "properties": {
+          "error_category": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Category"
+          },
+          "fallback_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Fallback Reason"
+          },
+          "stage_name": {
+            "title": "Stage Name",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "stage_name",
+          "status"
+        ],
+        "title": "AgentPipelineStageIssue",
+        "type": "object"
+      },
+      "AgentPipelineStageQuality": {
+        "description": "Why a pipeline is DEGRADED, for the tag's title (D-153).\n\n``stages_run`` counts the stages that started (completed or failed, the\nlatest attempt of each); ``issues`` are the failed ones and the ones that\nused their fallback, in run order.",
+        "properties": {
+          "issues": {
+            "items": {
+              "$ref": "#/components/schemas/AgentPipelineStageIssue"
+            },
+            "title": "Issues",
+            "type": "array"
+          },
+          "stages_run": {
+            "title": "Stages Run",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "stages_run",
+          "issues"
+        ],
+        "title": "AgentPipelineStageQuality",
         "type": "object"
       },
       "AgentRunSummaryResponse": {
@@ -20080,6 +20153,376 @@
         "title": "IdentityEventType",
         "type": "string"
       },
+      "IdentityRetentionApproval": {
+        "properties": {
+          "confirmation": {
+            "title": "Confirmation",
+            "type": "string"
+          },
+          "observed_at": {
+            "format": "date-time",
+            "title": "Observed At",
+            "type": "string"
+          },
+          "preview_hash": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Preview Hash",
+            "type": "string"
+          },
+          "reason": {
+            "maxLength": 500,
+            "minLength": 3,
+            "title": "Reason",
+            "type": "string"
+          },
+          "retention_days": {
+            "maximum": 3650.0,
+            "minimum": 365.0,
+            "title": "Retention Days",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "retention_days",
+          "observed_at",
+          "preview_hash",
+          "confirmation",
+          "reason"
+        ],
+        "title": "IdentityRetentionApproval",
+        "type": "object"
+      },
+      "IdentityRetentionHold": {
+        "additionalProperties": false,
+        "properties": {
+          "audit_id": {
+            "format": "uuid",
+            "title": "Audit Id",
+            "type": "string"
+          },
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "placed_at": {
+            "format": "date-time",
+            "title": "Placed At",
+            "type": "string"
+          },
+          "reason": {
+            "maxLength": 500,
+            "minLength": 3,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "reason",
+          "placed_at",
+          "audit_id"
+        ],
+        "title": "IdentityRetentionHold",
+        "type": "object"
+      },
+      "IdentityRetentionHoldCreate": {
+        "properties": {
+          "expires_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires At"
+          },
+          "reason": {
+            "maxLength": 500,
+            "minLength": 3,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "IdentityRetentionHoldCreate",
+        "type": "object"
+      },
+      "IdentityRetentionHoldRelease": {
+        "properties": {
+          "confirmation": {
+            "title": "Confirmation",
+            "type": "string"
+          },
+          "reason": {
+            "maxLength": 500,
+            "minLength": 3,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason",
+          "confirmation"
+        ],
+        "title": "IdentityRetentionHoldRelease",
+        "type": "object"
+      },
+      "IdentityRetentionPreview": {
+        "properties": {
+          "active_hold_count": {
+            "title": "Active Hold Count",
+            "type": "integer"
+          },
+          "counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Counts",
+            "type": "object"
+          },
+          "cutoff": {
+            "format": "date-time",
+            "title": "Cutoff",
+            "type": "string"
+          },
+          "enable_confirmation": {
+            "title": "Enable Confirmation",
+            "type": "string"
+          },
+          "enabled": {
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "max_batch_size": {
+            "default": 500,
+            "title": "Max Batch Size",
+            "type": "integer"
+          },
+          "observed_at": {
+            "format": "date-time",
+            "title": "Observed At",
+            "type": "string"
+          },
+          "preview_hash": {
+            "title": "Preview Hash",
+            "type": "string"
+          },
+          "purge_confirmation": {
+            "title": "Purge Confirmation",
+            "type": "string"
+          },
+          "retention_days": {
+            "title": "Retention Days",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "observed_at",
+          "cutoff",
+          "retention_days",
+          "enabled",
+          "active_hold_count",
+          "counts",
+          "preview_hash",
+          "enable_confirmation",
+          "purge_confirmation"
+        ],
+        "title": "IdentityRetentionPreview",
+        "type": "object"
+      },
+      "IdentityRetentionPurge": {
+        "properties": {
+          "batch_size": {
+            "default": 500,
+            "maximum": 500.0,
+            "minimum": 1.0,
+            "title": "Batch Size",
+            "type": "integer"
+          },
+          "confirmation": {
+            "title": "Confirmation",
+            "type": "string"
+          },
+          "observed_at": {
+            "format": "date-time",
+            "title": "Observed At",
+            "type": "string"
+          },
+          "preview_hash": {
+            "pattern": "^[a-f0-9]{64}$",
+            "title": "Preview Hash",
+            "type": "string"
+          },
+          "reason": {
+            "maxLength": 500,
+            "minLength": 3,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "observed_at",
+          "preview_hash",
+          "confirmation",
+          "reason"
+        ],
+        "title": "IdentityRetentionPurge",
+        "type": "object"
+      },
+      "IdentityRetentionPurgeResult": {
+        "properties": {
+          "batch_full": {
+            "title": "Batch Full",
+            "type": "boolean"
+          },
+          "batch_size": {
+            "title": "Batch Size",
+            "type": "integer"
+          },
+          "cutoff": {
+            "format": "date-time",
+            "title": "Cutoff",
+            "type": "string"
+          },
+          "deleted": {
+            "title": "Deleted",
+            "type": "integer"
+          },
+          "policy_revision": {
+            "title": "Policy Revision",
+            "type": "integer"
+          },
+          "status": {
+            "const": "completed",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "deleted",
+          "batch_size",
+          "batch_full",
+          "cutoff",
+          "policy_revision"
+        ],
+        "title": "IdentityRetentionPurgeResult",
+        "type": "object"
+      },
+      "IdentityRetentionRead": {
+        "additionalProperties": false,
+        "properties": {
+          "active_hold_count": {
+            "default": 0,
+            "title": "Active Hold Count",
+            "type": "integer"
+          },
+          "approved_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Approved At"
+          },
+          "eligible_event_types": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Eligible Event Types",
+            "type": "array"
+          },
+          "enabled": {
+            "default": false,
+            "title": "Enabled",
+            "type": "boolean"
+          },
+          "holds": {
+            "items": {
+              "$ref": "#/components/schemas/IdentityRetentionHold"
+            },
+            "maxItems": 100,
+            "title": "Holds",
+            "type": "array"
+          },
+          "protected_authority_event_types": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Protected Authority Event Types",
+            "type": "array"
+          },
+          "protected_identity_events": {
+            "default": "All other identity event types, including unknown future types, remain retained.",
+            "title": "Protected Identity Events",
+            "type": "string"
+          },
+          "retention_days": {
+            "default": 2555,
+            "maximum": 3650.0,
+            "minimum": 365.0,
+            "title": "Retention Days",
+            "type": "integer"
+          },
+          "revision": {
+            "default": 0,
+            "minimum": 0.0,
+            "title": "Revision",
+            "type": "integer"
+          },
+          "schema_version": {
+            "const": 1,
+            "default": 1,
+            "title": "Schema Version",
+            "type": "integer"
+          },
+          "scope": {
+            "const": "instance",
+            "default": "instance",
+            "title": "Scope",
+            "type": "string"
+          }
+        },
+        "title": "IdentityRetentionRead",
+        "type": "object"
+      },
+      "IdentityRetentionReason": {
+        "properties": {
+          "reason": {
+            "maxLength": 500,
+            "minLength": 3,
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "IdentityRetentionReason",
+        "type": "object"
+      },
       "IdentitySyncStatus": {
         "description": "Aggregated sync health for the admin dashboard.",
         "properties": {
@@ -30343,6 +30786,16 @@
       },
       "PipelineEventLogHealthResponse": {
         "properties": {
+          "backlog_count": {
+            "default": 0,
+            "title": "Backlog Count",
+            "type": "integer"
+          },
+          "capacity": {
+            "default": 0,
+            "title": "Capacity",
+            "type": "integer"
+          },
           "dead_letter_count": {
             "default": 0,
             "title": "Dead Letter Count",
@@ -30351,6 +30804,16 @@
           "dead_letter_limit": {
             "default": 0,
             "title": "Dead Letter Limit",
+            "type": "integer"
+          },
+          "oldest_pending_age_seconds": {
+            "default": 0,
+            "title": "Oldest Pending Age Seconds",
+            "type": "number"
+          },
+          "outbox_total_count": {
+            "default": 0,
+            "title": "Outbox Total Count",
             "type": "integer"
           },
           "recent_dead_letters": {
@@ -30365,6 +30828,13 @@
             "default": "healthy",
             "title": "Status",
             "type": "string"
+          },
+          "status_counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Status Counts",
+            "type": "object"
           },
           "write_failure_count": {
             "default": 0,
@@ -30726,6 +31196,18 @@
             "additionalProperties": true,
             "title": "Detail",
             "type": "object"
+          },
+          "event_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Event Id"
           },
           "event_type": {
             "title": "Event Type",
@@ -34297,6 +34779,23 @@
       "ReleaseCouncilResponse": {
         "description": "Extended release decision with council context.",
         "properties": {
+          "analysis_changed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Analysis Changed At"
+          },
+          "analysis_changed_since": {
+            "default": false,
+            "title": "Analysis Changed Since",
+            "type": "boolean"
+          },
           "band_downgrades": {
             "default": [],
             "items": {
@@ -34304,6 +34803,11 @@
             },
             "title": "Band Downgrades",
             "type": "array"
+          },
+          "band_held_back": {
+            "default": false,
+            "title": "Band Held Back",
+            "type": "boolean"
           },
           "band_policy_id": {
             "anyOf": [
@@ -34508,6 +35012,18 @@
               }
             ],
             "title": "Pass Rate"
+          },
+          "pass_rate_bands": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pass Rate Bands"
           },
           "policy_id": {
             "anyOf": [
@@ -43469,6 +43985,20 @@
             ],
             "title": "Input Tokens"
           },
+          "mode_distribution": {
+            "anyOf": [
+              {
+                "additionalProperties": {
+                  "type": "integer"
+                },
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Mode Distribution"
+          },
           "output_tokens": {
             "anyOf": [
               {
@@ -51587,6 +52117,30 @@
       "UploadStatusResponse": {
         "description": "Async status of an uploaded report (GET /api/v1/ingest/uploads/{task_id}).\n\nstate: pending | parsing | ingesting | succeeded | failed.",
         "properties": {
+          "accepted_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Accepted At"
+          },
+          "completed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Completed At"
+          },
           "error": {
             "anyOf": [
               {
@@ -51598,6 +52152,34 @@
               }
             ],
             "title": "Error"
+          },
+          "payload_ready_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payload Ready At"
+          },
+          "payload_state": {
+            "anyOf": [
+              {
+                "enum": [
+                  "reserved",
+                  "ready",
+                  "deleted"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Payload State"
           },
           "progress": {
             "anyOf": [
@@ -54757,9 +55339,26 @@
     },
     "/api/v1/agents/event-log/health": {
       "get": {
-        "description": "Return write-health details for the pipeline audit event log.",
+        "description": "Read shared delivery health within the caller's accessible projects.",
         "operationId": "get_pipeline_event_log_health_api_v1_agents_event_log_health_get",
         "parameters": [
+          {
+            "in": "query",
+            "name": "project_id",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "uuid",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Project Id"
+            }
+          },
           {
             "in": "header",
             "name": "X-API-Key",
@@ -54805,6 +55404,79 @@
           }
         ],
         "summary": "Get Pipeline Event Log Health",
+        "tags": [
+          "Agents"
+        ]
+      }
+    },
+    "/api/v1/agents/event-log/{event_id}/replay": {
+      "post": {
+        "description": "Requeue one failed delivery; never re-execute pipeline business work.",
+        "operationId": "replay_pipeline_event_delivery_api_v1_agents_event_log__event_id__replay_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "event_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Event Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "project_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Project Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Replay Pipeline Event Delivery",
         "tags": [
           "Agents"
         ]
@@ -68819,6 +69491,467 @@
         ]
       }
     },
+    "/api/v1/identity/retention/disable": {
+      "post": {
+        "description": "Disable future identity expiry without releasing any hold.",
+        "operationId": "disable_identity_retention_policy_api_v1_identity_retention_disable_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IdentityRetentionReason"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IdentityRetentionRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Disable Identity Retention Policy",
+        "tags": [
+          "Identity & Audit"
+        ]
+      }
+    },
+    "/api/v1/identity/retention/holds": {
+      "post": {
+        "description": "Place an independent instance identity hold; all live holds block expiry.",
+        "operationId": "place_identity_retention_hold_api_v1_identity_retention_holds_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IdentityRetentionHoldCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IdentityRetentionHold"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Place Identity Retention Hold",
+        "tags": [
+          "Identity & Audit"
+        ]
+      }
+    },
+    "/api/v1/identity/retention/holds/{hold_id}/release": {
+      "post": {
+        "description": "Release only this hold with a reason; overlapping holds remain absolute.",
+        "operationId": "release_identity_retention_hold_api_v1_identity_retention_holds__hold_id__release_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "hold_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Hold Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IdentityRetentionHoldRelease"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IdentityRetentionRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Release Identity Retention Hold",
+        "tags": [
+          "Identity & Audit"
+        ]
+      }
+    },
+    "/api/v1/identity/retention/policy": {
+      "get": {
+        "description": "Read the separate, default-off instance identity policy and its holds.",
+        "operationId": "read_identity_retention_policy_api_v1_identity_retention_policy_get",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IdentityRetentionRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Read Identity Retention Policy",
+        "tags": [
+          "Identity & Audit"
+        ]
+      },
+      "post": {
+        "description": "Approve routine-event expiry with a fresh preview and typed confirmation.\n\nRequires an interactive instance administrator. Existing project retention\nenablement never authorizes this separate policy.",
+        "operationId": "approve_identity_retention_policy_api_v1_identity_retention_policy_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IdentityRetentionApproval"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IdentityRetentionRead"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Approve Identity Retention Policy",
+        "tags": [
+          "Identity & Audit"
+        ]
+      }
+    },
+    "/api/v1/identity/retention/preview": {
+      "get": {
+        "description": "Count aged record classes without reading event content or deleting rows.",
+        "operationId": "preview_identity_retention_api_v1_identity_retention_preview_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "retention_days",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maximum": 3650,
+                  "minimum": 365,
+                  "type": "integer"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Retention Days"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IdentityRetentionPreview"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Preview Identity Retention",
+        "tags": [
+          "Identity & Audit"
+        ]
+      }
+    },
+    "/api/v1/identity/retention/purge": {
+      "post": {
+        "description": "Execute one approved, unheld batch of at most 500 routine events.",
+        "operationId": "purge_identity_retention_batch_api_v1_identity_retention_purge_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IdentityRetentionPurge"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IdentityRetentionPurgeResult"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Purge Identity Retention Batch",
+        "tags": [
+          "Identity & Audit"
+        ]
+      }
+    },
     "/api/v1/identity/sync-status": {
       "get": {
         "description": "Get aggregated identity sync health (ADMIN only).",
@@ -68897,6 +70030,26 @@
         "operationId": "ingest_batch_api_v1_ingest_post",
         "parameters": [
           {
+            "description": "Reuse for identical logical upload retries within receipt retention.",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 128,
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Reuse for identical logical upload retries within receipt retention.",
+              "title": "Idempotency-Key"
+            }
+          },
+          {
             "in": "header",
             "name": "X-API-Key",
             "required": false,
@@ -68934,6 +70087,9 @@
             },
             "description": "Successful Response"
           },
+          "409": {
+            "description": "The upload identity conflicts with existing content or a deleted run."
+          },
           "422": {
             "content": {
               "application/json": {
@@ -68943,6 +70099,29 @@
               }
             },
             "description": "Validation Error"
+          },
+          "503": {
+            "description": "Upload admission or queue confirmation unavailable. If Location and X-Upload-Task-ID are present, processing may still start: poll the existing upload before resubmitting.",
+            "headers": {
+              "Location": {
+                "description": "Existing upload status URL, when dispatch is unconfirmed",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Upload-Run-ID": {
+                "description": "Existing run identifier, when dispatch is unconfirmed",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Upload-Task-ID": {
+                "description": "Existing upload task identifier, when dispatch is unconfirmed",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -68961,6 +70140,26 @@
         "description": "Upload a test result file for async parsing and ingestion.\n\nSupported formats: ``junit`` | ``testng`` | ``allure`` | ``cypress`` |\n``playwright`` | ``pytest`` | ``robot`` | ``cucumber`` | ``nunit`` |\n``trx`` | ``xunit``. Use\n``format=auto`` (default) for content-based detection.\nThe Cypress and Playwright parsers are gated behind the ``cypress_ingest``\nand ``playwright_ingest`` feature flags respectively — 503 is returned if\na disabled format is requested.",
         "operationId": "ingest_file_api_v1_ingest_file_post",
         "parameters": [
+          {
+            "description": "Reuse for identical logical upload retries within receipt retention.",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "maxLength": 128,
+                  "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Reuse for identical logical upload retries within receipt retention.",
+              "title": "Idempotency-Key"
+            }
+          },
           {
             "in": "header",
             "name": "X-API-Key",
@@ -68999,6 +70198,9 @@
             },
             "description": "Successful Response"
           },
+          "409": {
+            "description": "The upload identity conflicts with existing content or a deleted run."
+          },
           "422": {
             "content": {
               "application/json": {
@@ -69008,6 +70210,29 @@
               }
             },
             "description": "Validation Error"
+          },
+          "503": {
+            "description": "Upload admission or queue confirmation unavailable. If Location and X-Upload-Task-ID are present, processing may still start: poll the existing upload before resubmitting.",
+            "headers": {
+              "Location": {
+                "description": "Existing upload status URL, when dispatch is unconfirmed",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Upload-Run-ID": {
+                "description": "Existing run identifier, when dispatch is unconfirmed",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Upload-Task-ID": {
+                "description": "Existing upload task identifier, when dispatch is unconfirmed",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           }
         },
         "security": [
@@ -69080,6 +70305,156 @@
           }
         ],
         "summary": "Poll the status of an uploaded report's async processing",
+        "tags": [
+          "Ingest"
+        ]
+      }
+    },
+    "/api/v1/ingest/uploads/{task_id}/cleanup": {
+      "post": {
+        "operationId": "cleanup_upload_api_v1_ingest_uploads__task_id__cleanup_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Remove a terminal upload's temporary queued payload",
+        "tags": [
+          "Ingest"
+        ]
+      }
+    },
+    "/api/v1/ingest/uploads/{task_id}/retry": {
+      "post": {
+        "operationId": "retry_upload_api_v1_ingest_uploads__task_id__retry_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "task_id",
+            "required": true,
+            "schema": {
+              "title": "Task Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IngestResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "409": {
+            "description": "The upload identity conflicts with existing content or a deleted run."
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "503": {
+            "description": "Upload admission or queue confirmation unavailable. If Location and X-Upload-Task-ID are present, processing may still start: poll the existing upload before resubmitting.",
+            "headers": {
+              "Location": {
+                "description": "Existing upload status URL, when dispatch is unconfirmed",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Upload-Run-ID": {
+                "description": "Existing run identifier, when dispatch is unconfirmed",
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Upload-Task-ID": {
+                "description": "Existing upload task identifier, when dispatch is unconfirmed",
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Resume a retained upload using its original identity",
         "tags": [
           "Ingest"
         ]
@@ -85902,6 +87277,62 @@
       }
     },
     "/api/v1/release-gate-policies/{policy_id}": {
+      "delete": {
+        "description": "Delete a draft that was never published (ADMIN only) (D-141).\n\nA version that was ever published stays: past verdicts and the version\nhistory name it, so it is deactivated instead (409). A draft a stored\nrelease decision points at is kept too (409). Records ``policy.updated``\nwith ``changed: draft deleted`` in the same transaction, the way\ndeactivate records its edit of the active flag.",
+        "operationId": "delete_policy_api_v1_release_gate_policies__policy_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "policy_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Policy Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-API-Key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Api-Key"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "security": [
+          {
+            "JWT": []
+          }
+        ],
+        "summary": "Delete Policy",
+        "tags": [
+          "Release Gate Policies"
+        ]
+      },
       "get": {
         "description": "Get a single release gate policy by ID.",
         "operationId": "get_policy_api_v1_release_gate_policies__policy_id__get",

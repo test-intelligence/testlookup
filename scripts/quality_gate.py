@@ -2744,9 +2744,9 @@ _AI_WORD_ALLOWED: dict[tuple[str, str], str] = {
         'generation, review and plan creation run only on a language model (row 17 keeps "AI Create Plan")',
     ('frontend/src/pages/TestManagementPage.tsx', 'AI generated'):
         'generation, review and plan creation run only on a language model (row 17 keeps "AI Create Plan")',
-    ('frontend/src/pages/TestManagementPage.tsx', 'AI is building the test plan in the background — refresh the list in a moment.'):
+    ('frontend/src/pages/TestManagementPage.tsx', 'AI is building the test plan…'):
         'generation, review and plan creation run only on a language model (row 17 keeps "AI Create Plan")',
-    ('frontend/src/pages/TestManagementPage.tsx', 'AI plan creation failed'):
+    ('frontend/src/pages/TestManagementPage.tsx', 'AI built the test plan.'):
         'generation, review and plan creation run only on a language model (row 17 keeps "AI Create Plan")',
     ('frontend/src/pages/TestManagementPage.tsx', 'AI Create Plan'):
         'generation, review and plan creation run only on a language model (row 17 keeps "AI Create Plan")',

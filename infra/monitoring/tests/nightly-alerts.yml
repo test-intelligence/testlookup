@@ -1,0 +1,69 @@
+rule_files:
+- ../prometheus-rules/testlookup-alerts.yml
+evaluation_interval: 30s
+tests:
+- name: fresh overdue maintenance fires and stale replicas cannot block recovery
+  interval: 30s
+  input_series:
+  - series: testlookup_nightly_job_overdue{job="testlookup-backend",namespace="team",instance="api-a",schedule="quarantine_maintenance"}
+    values: '1x25'
+  - series: testlookup_metric_collection_success{job="testlookup-backend",namespace="team",instance="api-a",collector="nightly"}
+    values: '1x25'
+  - series: testlookup_metric_collection_last_success_timestamp_seconds{job="testlookup-backend",namespace="team",instance="api-a",collector="nightly"}
+    values: '0+30x12 360x12'
+  - series: testlookup_nightly_job_overdue{job="testlookup-backend",namespace="team",instance="api-b",schedule="quarantine_maintenance"}
+    values: '1x16 0x8'
+  - series: testlookup_metric_collection_success{job="testlookup-backend",namespace="team",instance="api-b",collector="nightly"}
+    values: '1x25'
+  - series: testlookup_metric_collection_last_success_timestamp_seconds{job="testlookup-backend",namespace="team",instance="api-b",collector="nightly"}
+    values: '0+30x25'
+  alert_rule_test:
+  - eval_time: 4m30s
+    alertname: TestLookupFlakyQuarantineMaintenanceFailing
+    exp_alerts: []
+  - eval_time: 5m
+    alertname: TestLookupFlakyQuarantineMaintenanceFailing
+    exp_alerts:
+    - exp_labels:
+        namespace: team
+        schedule: quarantine_maintenance
+        severity: warning
+        tier: '1-3'
+        feature: flaky_auto_quarantine
+      exp_annotations:
+        summary: Flaky quarantine maintenance missed its completion deadline
+        description: The enabled nightly quarantine slot has no durable success after its one-hour completion margin. Compare the schedule's last attempt and success to distinguish missing dispatch from incomplete work, then inspect worker and Beat health.
+  - eval_time: 8m30s
+    alertname: TestLookupFlakyQuarantineMaintenanceFailing
+    exp_alerts: []
+- name: the baseline alert uses its own fresh deadline and recovers
+  interval: 30s
+  input_series:
+  - series: testlookup_nightly_job_overdue{job="testlookup-backend",cluster="local",namespace="team",instance="api-a",schedule="perf_baseline_refresh"}
+    values: '0x1 1x11 0x8'
+  - series: testlookup_nightly_job_overdue{job="testlookup-backend",cluster="local",namespace="team",instance="api-a",schedule="quarantine_maintenance"}
+    values: '0x22'
+  - series: testlookup_metric_collection_success{job="testlookup-backend",cluster="local",namespace="team",instance="api-a",collector="nightly"}
+    values: '1x22'
+  - series: testlookup_metric_collection_last_success_timestamp_seconds{job="testlookup-backend",cluster="local",namespace="team",instance="api-a",collector="nightly"}
+    values: '0+30x22'
+  alert_rule_test:
+  - eval_time: 6m
+    alertname: TestLookupPerfBaselineRefreshFailing
+    exp_alerts:
+    - exp_labels:
+        cluster: local
+        namespace: team
+        schedule: perf_baseline_refresh
+        severity: warning
+        tier: '2-10'
+        feature: perf_regression_detection
+      exp_annotations:
+        summary: Performance baseline refresh missed its completion deadline
+        description: The enabled nightly baseline refresh has no durable success after its one-hour completion margin. Check the schedule's last attempt and success, Beat dispatch and worker logs. Release gating may use stale baselines.
+  - eval_time: 6m
+    alertname: TestLookupFlakyQuarantineMaintenanceFailing
+    exp_alerts: []
+  - eval_time: 7m
+    alertname: TestLookupPerfBaselineRefreshFailing
+    exp_alerts: []

@@ -36,7 +36,7 @@ from bson.json_util import RELAXED_JSON_OPTIONS
 from app.db.mongo import Collections
 from app.services.project_export_vocab import MONGO_DOC_MAX_BYTES, MONGO_MAX_DEPTH
 
-#: == ``retention_service._PIPELINE_EVENT_LOG`` (asserted) — not a ``Collections`` member; the
+#: == ``retention_service._PIPELINE_EVENT_LOG`` (asserted). The
 #: literal is repeated here so this pure module never imports the purge.
 PIPELINE_EVENT_LOG = "pipeline_event_log"
 
@@ -92,8 +92,10 @@ MONGO_COLLECTIONS: tuple[MongoSpec, ...] = (
               unique_key=("project_id", "test_run_id", "pipeline_run_id")),
     # M-7: keyed by case only; the import ADDS test_run_id (the new run) so the copy is removable by run
     MongoSpec(Collections.AI_ANALYSIS_PAYLOADS, key="test_case_id", key_map=_CASES, added_fields={"test_run_id": _RUNS}),
-    # M-8: the writer (pipeline_event_log.emit_event) sets pipeline_run_id + test_case_id (open point 4)
-    MongoSpec(PIPELINE_EVENT_LOG, key="pipeline_run_id", key_map=_PIPELINES, id_fields={"test_case_id": _CASES}),
+    # M-8: remap run and case references while retaining the audit event's own ID.
+    MongoSpec(PIPELINE_EVENT_LOG, key="pipeline_run_id", key_map=_PIPELINES,
+              id_fields={"test_case_id": _CASES, "test_run_id": _RUNS},
+              project_field="project_id", kept_ids=("event_id",)),
     MongoSpec(Collections.DECISION_REPORTS, key="test_run_id", key_map=_RUNS, id_fields={"pipeline_run_id": _PIPELINES},
               project_field="project_id", unique_key=("test_run_id", "report_version"),
               kept_ids=("report_id", "supersedes_report_id", "evidence_snapshot_id"),

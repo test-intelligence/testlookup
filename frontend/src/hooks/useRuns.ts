@@ -197,7 +197,9 @@ export function useRunStepFlips(runId?: string) {
  * Deliberately NOT polled. A verdict is composed from a nightly score, a
  * nightly cluster and the run's own commit range — none of which move while
  * someone reads the page — so re-fetching would cost queries and change
- * nothing.
+ * nothing. The one exception is a run whose pipeline is still writing
+ * categories: the Run page's Tests tab calls ``mutate`` when a test on screen
+ * gets a new category (D-72, ``RunTestsTab.tsx``).
  */
 export function useRunAttribution(runId?: string) {
   return useSWR(

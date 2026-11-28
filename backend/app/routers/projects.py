@@ -36,6 +36,7 @@ from app.services.project_reset_service import (
     ConfirmationMismatch,
     ProjectNotFound,
     ResetBlockedByHold,
+    ResetBlockedByUpload,
     reset_project,
 )
 from app.services import retention_hold_service
@@ -470,6 +471,8 @@ async def reset_project_data(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except ResetBlockedByHold as exc:
         raise HTTPException(status_code=409, detail={"blockers": exc.reasons}) from exc
+    except ResetBlockedByUpload as exc:
+        raise HTTPException(status_code=409, detail={"blockers": [str(exc)]}) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return result

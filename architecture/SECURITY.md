@@ -8,8 +8,8 @@
 ## 1. Identity & tokens
 
 - **JWT access + refresh** — the SPA holds a short-lived access token and
-  refreshes it through a single-flight refresh flow (one refresh even when
-  many requests 401 together). API clients use **API keys** (Bearer / 
+  refreshes it through a single-flight refresh flow within and across browser
+  tabs (one rotation even when many requests 401 together). API clients use **API keys** (Bearer /
   `X-API-Key`), created per user under Settings → API Keys; streaming SDKs use
   project-scoped keys plus per-session tokens.
 - **Revocation** — `core/token_revocation.py`: token validation consults a
@@ -78,14 +78,15 @@ the policy on. `mfa_service.mfa_gate_applies` is written as
 falls out of the "interactive" bucket rather than being assumed to be one.
 The corollary is stated in §7.
 
-**SSO-managed accounts are exempt from the requirement.** `/api/v1/sso/acs`
-does not consult the MFA policy at all: the IdP has already asserted the
-identity and, per the customer's own policy, performed its own MFA. A local
-second factor on top would mean every federated user holding a seed we control
-and the IdP knows nothing about — a lockout risk for no added assurance. The
-exemption is from the *requirement* only; an SSO-managed user who enrolls
-voluntarily is still challenged on the local password path.
-`mfa_service.is_sso_managed` checks two signals, because
+**SSO-authenticated sessions are exempt from the local requirement.**
+`/api/v1/sso/acs` and the OIDC callback do not consult the MFA policy: the IdP
+has already asserted the identity and, per the customer's own policy,
+performed its own MFA. Account linkage alone grants no exemption, so a linked
+or SCIM-provisioned user who submits a local password must still enroll or
+verify local MFA when policy covers the role. Refresh tokens carry a signed
+`auth_assurance` claim, and rotation preserves it; a legacy token without the
+claim is treated as password-only. `mfa_service.is_sso_managed` still checks
+two account-management signals, because
 `scim_service.scim_create_user` only creates the `federated_identities` link
 `if sso_config_id and external_id` — a SCIM user provisioned without either
 looks purely local. The unconditional `SCIM_USER_CREATED` identity event on
@@ -103,7 +104,7 @@ session is. Note that `IdentityEventType.ADMIN_FALLBACK_LOGIN` is **not** this
 — that is the SSO fallback in `routers/auth.py` and says nothing about a second
 factor.
 
-## 2. Authorization — the guard family and the signed cache
+## 2. Authorization — the guard family and PostgreSQL authority
 
 Every router whose path carries a resource id (`{project_id}`, `{run_id}`,
 `{release_id}`, …) depends on the matching `require_*_access` guard from
@@ -113,33 +114,41 @@ gates "no id supplied" leaves the direct-object reference wide open. The IDOR
 sweeps hit exactly this on several routers; the convention plus its
 architectural test now enforce the correct shape.)
 
-Membership lookups are cached in Redis — and because an authorization cache is
-itself an attack surface, entries are **HMAC-signed**:
+Project membership is authorization state. For user membership scopes,
+`get_accessible_project_ids` queries the current `project_members` rows in
+PostgreSQL on every request; no Redis value is accepted as authority. The
+existing ADMIN bypass, project-bound API-key confinement, and project-role
+floors still apply before the selected project scope reaches a report or other
+tenant query.
 
 ```mermaid
 sequenceDiagram
     participant RQ as Request ({project_id})
-    participant G as require_project_access
-    participant R as Redis (membership cache)
-    participant PG as Postgres
+    participant G as Authorization guard
+    participant PG as PostgreSQL (membership authority)
+    participant M as Membership change / erasure
+    participant R as Redis (legacy cleanup only)
 
     RQ->>G: id + JWT/API key
-    G->>R: get membership entry
-    alt cache hit
-        R-->>G: entry + HMAC
-        G->>G: verify HMAC (forged/tampered entry fails → treated as miss)
-        G-->>RQ: allow / 403
-    else miss or bad signature
-        G->>PG: real membership query
-        PG-->>G: project ids
-        G->>R: store entry signed with _sign_membership_cache
-        G-->>RQ: allow / 403
+    G->>G: apply ADMIN, API-key binding, and role-floor rules
+    alt user membership must be resolved
+        G->>PG: SELECT current project_members rows
+        PG-->>G: current project ids / roles
     end
+    G-->>RQ: allow with scoped query / 403
+
+    M->>PG: commit membership mutation or erasure
+    M->>R: delete membership:{user_id}
+    Note over M,R: This cleanup serves older replicas. New authorization reads ignore the key.
 ```
 
-A Redis compromise (or a bug writing to the wrong key) therefore cannot mint
-authorization: an unsigned or mis-signed entry simply fails HMAC and falls
-through to the database.
+`invalidate_membership_cache` remains best-effort so membership mutations and
+subject erasure can remove keys written by an older replica during a rolling
+deployment. That deletion is compatibility cleanup, not an access control: a
+failed delete or a stale writer cannot widen the scope returned by new code.
+Deploy this change to **all read-serving replicas before relying on the new
+authorization path**; until then, an older replica can still accept its legacy
+Redis membership cache.
 
 ### Roles, ranks and permissions (enterprise roles E00)
 
@@ -249,8 +258,10 @@ produce an insecure install:
   random local secrets and re-enable dev conveniences deliberately.
 - **Dev auto-login** is a 404 unless explicitly enabled — the endpoint that
   mints an admin JWT for local demos cannot exist in a default deployment.
-- **Redis is authenticated** and the authz cache signed (above), closing the
-  "internal service, no auth needed" gap.
+- **Redis is authenticated**, closing the "internal service, no auth needed"
+  gap, but it is not project-membership authority. PostgreSQL supplies current
+  membership on authorization reads; `membership:*` deletion is legacy cleanup
+  for rolling deployments and erasure.
 
 ## 5. Offline-first as a security property
 
@@ -474,11 +485,12 @@ an auditor will ask about:
   per-user, listed under Settings → API Keys, revocable, and can be pinned to
   one project. There is currently no policy switch to forbid key creation for
   MFA-required roles.
-- **Sessions minted before the policy changed are not retroactively
-  challenged.** Turning the requirement on is enforced at `/auth/login` and,
-  since 0117, re-evaluated on every `/auth/refresh` — so a live session is
-  bounced to enrollment within one access-token lifetime rather than one
-  refresh-token lifetime (7 days). It is not enforced per request.
+- **Password-only sessions minted before the policy changed are challenged on
+  refresh.** Turning the requirement on is enforced at `/auth/login` and
+  re-evaluated against signed session assurance on every `/auth/refresh` — so
+  a password-only session is bounced to enrollment within one access-token
+  lifetime, while sessions established by MFA or SSO continue rotating. It is
+  not enforced per request.
 - **Lockout is per account, not per source.** An attacker who knows a username
   can lock its owner out for the cooldown by failing enough times. The window
   is bounded (default 15 minutes), failures while already locked do not extend

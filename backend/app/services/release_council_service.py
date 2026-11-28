@@ -37,11 +37,8 @@ from app.models.schemas import (
 from app.services.criticality_service import (
     HARD_FLOOR_FACTOR as _HARD_FLOOR_FACTOR,
     SCORE_MODEL_VERSION,
-    apply_verdict_floor,
-    compute_composite,
     compute_dimension_scores,
     score_cluster,
-    score_to_recommendation,
 )
 from app.core.config import settings
 
@@ -121,8 +118,26 @@ async def _apply_band_floor(
     previously passed an all-severities total and a dead ``severity == "P0"``
     zero respectively, so the cap either over-counted or never fired.
     """
+    final, band, downgrades, band_policy, _bands = await _band_floor_detail(
+        db, project_id, recommendation, pass_rate,
+    )
+    return final, band, downgrades, band_policy
+
+
+async def _band_floor_detail(
+    db: AsyncSession,
+    project_id: Optional[uuid.UUID],
+    recommendation: str,
+    pass_rate: float,
+) -> tuple[str, Optional[str], list[str], Optional[tuple[str, int, str]], Optional[dict]]:
+    """``_apply_band_floor`` plus the band edges it applied (batch 8 review F1).
+
+    The gate card states the numbers that can decide the verdict; the
+    pass-rate bands are among them, and they come from the policy in force at
+    read time, which a stored decision's frozen snapshot does not carry.
+    """
     if project_id is None:
-        return recommendation, None, [], None
+        return recommendation, None, [], None, None
 
     # Local import to keep release_council_service free of metrics-service
     # coupling at module level — _resolve_policy_for_project also depends on
@@ -133,18 +148,40 @@ async def _apply_band_floor(
 
     resolved = await _resolve_active_policy_for_project(db, str(project_id))
     if resolved is None:
-        return recommendation, None, [], None
+        return recommendation, None, [], None, None
     policy_doc, band_policy_id, band_policy_version, band_policy_level = resolved
 
+    bands = policy_doc.get("pass_rate_bands") or {}
     final, band, downgrades = await apply_policy_band_floor(
         db,
         project_id,
         recommendation,
         pass_rate,
-        bands=policy_doc.get("pass_rate_bands") or {},
+        bands=bands,
         hard_caps=policy_doc.get("hard_caps") or {},
     )
-    return final, band, downgrades, (band_policy_id, band_policy_version, band_policy_level)
+    return (
+        final, band, downgrades,
+        (band_policy_id, band_policy_version, band_policy_level),
+        _effective_bands(bands),
+    )
+
+
+def _effective_bands(bands: dict) -> dict:
+    """The band edges ``classify_with_policy`` applies: its defaults (orange 90,
+    yellow 95, green 99) for any edge the document leaves out. Under orange is
+    red (No-Go); orange is Conditional; yellow and green are Go."""
+    return {
+        "orange_min": float(bands.get("orange_min", 90.0)),
+        "yellow_min": float(bands.get("yellow_min", 95.0)),
+        "green_min": float(bands.get("green_min", 99.0)),
+    }
+
+
+def _band_held_back(before: str, after: str, downgrades: list[str]) -> bool:
+    """True when the pass-rate band itself made the verdict stricter. A hard
+    cap also pins the band red, but ``band_downgrades`` already names it."""
+    return not downgrades and _normalize_verdict(after) != _normalize_verdict(before)
 
 
 async def apply_policy_band_floor(
@@ -390,9 +427,11 @@ async def _synthesize_release_council(
       * A persisted row. The synthesis runs at read time only; the
         next deep run still writes the real ReleaseDecision and
         supersedes this view.
-      * A policy evaluator. We fall back to the hardcoded thresholds
-        in ``settings`` so the synth never blocks on policy table
-        gaps. A real deep run picks up the project-scoped policy.
+      * A full policy evaluation. It goes through the same evaluator as
+        the stored decision with the project's effective policy (D-142),
+        but only the rules whose inputs it has are checked; the others
+        are named in ``input_snapshot.rules_not_checked``. With no policy
+        it uses the built-in thresholds in ``settings``.
 
     Returns ``None`` (caller maps to 404) only when the run itself
     doesn't exist — that's a genuine "not found" the user should see.
@@ -416,7 +455,21 @@ async def _synthesize_release_council(
     open_defects = int(signals["open_defects"])
 
     pass_rate = float(run.pass_rate)
-    threshold = float(settings.RELEASE_PASS_RATE_THRESHOLD)
+
+    # D-142: the project's effective policy, applied whole. The quick look used
+    # to score with the built-in thresholds (``policy_level="hardcoded"``) and
+    # then layer the published policy's bands and P0 cap on top, so a policy
+    # was half applied and the footer named both. One resolution now feeds the
+    # policy evaluator (thresholds, weights, the rules a quick look can check)
+    # and the band floor. No policy: the built-in numbers, as before.
+    from app.services.metrics_service import _resolve_active_policy_for_project
+
+    resolved = (
+        await _resolve_active_policy_for_project(db, str(run.project_id))
+        if run.project_id is not None
+        else None
+    )
+    policy_obj, policy_level, rules_not_checked = _quick_look_policy(resolved)
 
     # With no per-test analyses available (those are produced by the
     # offline pipeline's analysis stage, which has already run by the
@@ -434,26 +487,69 @@ async def _synthesize_release_council(
         failure_clusters=[],
         open_defects=signals["open_defects_by_severity"] or open_defects,
     )
-    composite = compute_composite(dim_scores)
-    if pass_rate < threshold * _HARD_FLOOR_FACTOR:
-        # Mirror the agent's hard floor: a run that drops below 70% of
-        # the configured pass-rate threshold is NO_GO regardless of
-        # the composite score. Bump composite so the recommendation
-        # function reaches NO_GO via the standard mapping.
-        composite = max(composite, 60.0)
-    recommendation = score_to_recommendation(composite, pass_rate, threshold)
-    recommendation, floor_reasons = apply_verdict_floor(
-        recommendation,
-        blocking_failures=int(signals["blocking_failures"]),
-        blocking_defects=int(signals["blocking_defects"]),
-    )
+    # The evaluator the stored decision uses: the policy's weights and
+    # thresholds, the verdict floor (D-04), then the rules. Called with the
+    # resolved policy as an override, so it reads no table of its own and
+    # counts no decision (a page read is not a gate decision).
+    from app.services.policy_evaluator_service import evaluate_policy
 
-    # Layer the active ReleaseGatePolicy's pass-rate bands over the composite
-    # so /release-gate honours the same colours /overview renders. Fail-closed:
-    # the band can downgrade the verdict but never soften it.
-    recommendation, band, band_downgrades, band_policy = await _apply_band_floor(
-        db, run.project_id, recommendation, pass_rate,
+    evaluation = await evaluate_policy(
+        run.project_id,
+        dim_scores,
+        pass_rate,
+        {
+            "open_defects": open_defects,
+            "open_defects_by_severity": signals["open_defects_by_severity"],
+            "blocking_failures": int(signals["blocking_failures"]),
+            "blocking_defects": int(signals["blocking_defects"]),
+        },
+        db,
+        policy_override=policy_obj,
     )
+    thresholds = evaluation.effective_thresholds
+    threshold = float(thresholds["pass_rate_minimum"])
+    hard_floor_factor = float(thresholds["pass_rate_hard_floor_factor"])
+    composite = evaluation.effective_composite
+    if pass_rate < threshold * hard_floor_factor:
+        # Mirror the agent's hard floor: a run under the floor is NO_GO
+        # whatever the composite says (``score_to_recommendation`` rule 1).
+        # Raise the shown score to the No-Go band so it agrees with the
+        # verdict: 60 with the built-in No-Go line of 55.
+        composite = max(composite, 60.0, float(thresholds["no_go_threshold"]))
+    recommendation = evaluation.recommendation
+    floor_reasons = list((evaluation.verdict_floor or {}).get("reasons") or [])
+    policy_blocking = [
+        f"[Policy] {ev.message}" for ev in evaluation.rule_evaluations
+        if not ev.passed and ev.action == "BLOCK"
+    ]
+    policy_conditions = [
+        f"[Policy] {ev.message}" for ev in evaluation.rule_evaluations
+        if not ev.passed and ev.action == "WARN"
+    ]
+
+    # Layer the same policy's pass-rate bands and P0 cap over the verdict so
+    # /release-gate honours the colours /overview renders. Fail-closed: the
+    # band can downgrade the verdict but never soften it.
+    band: Optional[str] = None
+    band_downgrades: list[str] = []
+    band_policy: Optional[tuple[str, int, str]] = None
+    bands_applied: Optional[dict] = None
+    band_held_back = False
+    if resolved is not None:
+        policy_doc, band_policy_id, band_policy_version, band_policy_level = resolved
+        before_band = recommendation
+        policy_bands = policy_doc.get("pass_rate_bands") or {}
+        recommendation, band, band_downgrades = await apply_policy_band_floor(
+            db,
+            run.project_id,
+            recommendation,
+            pass_rate,
+            bands=policy_bands,
+            hard_caps=policy_doc.get("hard_caps") or {},
+        )
+        band_policy = (band_policy_id, band_policy_version, band_policy_level)
+        bands_applied = _effective_bands(policy_bands)
+        band_held_back = _band_held_back(before_band, recommendation, band_downgrades)
 
     defects_noun = "open defect" if open_defects == 1 else "open defects"
     reasoning = (
@@ -465,7 +561,7 @@ async def _synthesize_release_council(
     )
 
     conditions = _quick_look_conditions(recommendation, pass_rate, threshold)
-    conditions = [f"Resolve: {reason}" for reason in floor_reasons] + conditions
+    conditions = [f"Resolve: {reason}" for reason in floor_reasons] + policy_conditions + conditions
 
     return ReleaseCouncilResponse(
         run_id=str(run_id),
@@ -473,12 +569,14 @@ async def _synthesize_release_council(
         recommendation=recommendation,
         release_readiness_band=band,
         band_downgrades=band_downgrades,
+        pass_rate_bands=bands_applied,
+        band_held_back=band_held_back,
         # Floor, not round (D-96): a composite of 19.6 decided as "under 20"
         # must not be shown as 20.
         risk_score=int(math.floor(composite)),
         composite_risk=composite,
         dimension_scores=_build_dimension_scores(dim_scores),
-        blocking_issues=[],
+        blocking_issues=policy_blocking,
         conditions_for_go=conditions,
         reasoning=reasoning,
         score_model_version=SCORE_MODEL_VERSION,
@@ -489,20 +587,30 @@ async def _synthesize_release_council(
             "open_defects_by_severity": signals["open_defects_by_severity"],
             "blocking_failures": signals["blocking_failures"],
             "blocking_defects": signals["blocking_defects"],
-            # The CONFIGURED target (RELEASE_PASS_RATE_THRESHOLD). Reporting it
+            # The pass-rate target applied: the policy's ``pass_rate_minimum``,
+            # or RELEASE_PASS_RATE_THRESHOLD with no policy. Reporting it
             # alone was actively misleading: a run at 83% sat next to
             # "threshold: 90.0" and a GO verdict, which reads as a contradiction.
             "threshold": threshold,
             # ...because `threshold` is NOT the GO cutoff. Pass rate only forces
-            # a verdict when it falls under `hard_floor_factor` (0.7) of the
+            # a verdict when it falls under `hard_floor_factor` (0.7, the
+            # built-in _HARD_FLOOR_FACTOR, unless a policy sets its own) of the
             # threshold; above that the composite risk score decides. Publish the
             # number actually applied so the verdict is explicable from its own
             # snapshot instead of appearing to contradict it.
-            "no_go_floor_pct": round(threshold * _HARD_FLOOR_FACTOR, 2),
-            "hard_floor_factor": _HARD_FLOOR_FACTOR,
+            "no_go_floor_pct": round(threshold * hard_floor_factor, 2),
+            "hard_floor_factor": hard_floor_factor,
+            # D-104: the two risk lines too, so the gate card can state every
+            # number the verdict used.
+            "go_threshold": float(thresholds["go_threshold"]),
+            "no_go_threshold": float(thresholds["no_go_threshold"]),
+            # Policy rules whose inputs a quick look does not have (flaky
+            # counts, duration regressions, per-test dimensions). Named, not
+            # passed as zeros: an unmeasured input must not read as a pass.
+            "rules_not_checked": rules_not_checked,
             "verdict_driver": (
                 "pass_rate_floor"
-                if pass_rate < threshold * _HARD_FLOOR_FACTOR
+                if pass_rate < threshold * hard_floor_factor
                 # Above the floor but under the configured bar -> CONDITIONAL_GO.
                 # Named distinctly so the reader can tell "your own threshold
                 # held this back" from "the risk model held this back".
@@ -518,16 +626,84 @@ async def _synthesize_release_council(
         override_audit=[],
         pass_rate=pass_rate,
         build_number=run.build_number,
-        policy_level="hardcoded",
-        # No stored decision on this path, so ``policy_level`` is honestly
-        # "hardcoded" — but the band floor above may still have applied a
-        # policy and changed the verdict, so name it.
+        # The policy this verdict was evaluated with (D-142): "hardcoded"
+        # only when no policy is active, and then the band fields stay None.
+        policy_id=evaluation.policy_id,
+        policy_version=evaluation.policy_version,
+        policy_level=policy_level,
         band_policy_id=band_policy[0] if band_policy else None,
         band_policy_version=band_policy[1] if band_policy else None,
         band_policy_level=band_policy[2] if band_policy else None,
-        rule_evaluations=[],
+        rule_evaluations=[
+            RuleEvaluationResponse(
+                rule_id=ev.rule_id,
+                rule_name=ev.rule_name,
+                rule_type=ev.rule_type,
+                passed=ev.passed,
+                action=ev.action,
+                message=ev.message,
+                actual_value=ev.actual_value,
+                threshold_value=ev.threshold_value,
+            )
+            for ev in evaluation.rule_evaluations
+        ],
         synthesized=True,
     )
+
+
+# Policy rule types a quick look can check from the run's aggregates: the open
+# defect count is the one rule input it has. Flaky counts, duration
+# regressions and the per-test dimensions come from deep investigation.
+_QUICK_LOOK_RULE_TYPES = frozenset({"open_defect_limit"})
+
+
+def _quick_look_policy(
+    resolved: Optional[tuple[dict, str, int, str]],
+) -> tuple[Any, str, list[dict]]:
+    """The policy the quick look evaluates, its level, and the rules it skips.
+
+    ``resolved`` is ``_resolve_active_policy_for_project``'s answer. With no
+    policy, a frozen copy of the built-in numbers (as the release-risk agent
+    freezes its own fallback), so the verdict and score are exactly what the
+    quick look produced before D-142. With a policy, its whole document minus
+    the rules whose inputs a quick look does not have; those are returned so
+    the page can say they were not checked.
+    """
+    from types import SimpleNamespace
+
+    from app.services.criticality_service import _GO_THRESHOLD, _NO_GO_THRESHOLD, _weights
+
+    if resolved is None:
+        frozen = SimpleNamespace(
+            id=None,
+            version=None,
+            rules={
+                "thresholds": {
+                    "go_threshold": float(_GO_THRESHOLD),
+                    "no_go_threshold": float(_NO_GO_THRESHOLD),
+                    "pass_rate_minimum": float(settings.RELEASE_PASS_RATE_THRESHOLD),
+                    "pass_rate_hard_floor_factor": _HARD_FLOOR_FACTOR,
+                },
+                "dimension_weights": _weights(),
+                "rules": [],
+            },
+        )
+        return frozen, "hardcoded", []
+
+    policy_doc, policy_id, policy_version, policy_level = resolved
+    rules = [r for r in (policy_doc.get("rules") or []) if isinstance(r, dict)]
+    checked = [r for r in rules if r.get("type") in _QUICK_LOOK_RULE_TYPES]
+    not_checked = [
+        {"id": r.get("id"), "name": r.get("name") or r.get("type"), "type": r.get("type")}
+        for r in rules
+        if r.get("enabled", True) and r.get("type") not in _QUICK_LOOK_RULE_TYPES
+    ]
+    policy = SimpleNamespace(
+        id=policy_id,
+        version=policy_version,
+        rules={**policy_doc, "rules": checked},
+    )
+    return policy, policy_level, not_checked
 
 
 async def get_release_council(
@@ -654,16 +830,25 @@ async def get_release_council(
     # Initialised here, not only inside the branch below: an overridden
     # decision skips the band floor entirely, and the response reads this.
     band_policy: Optional[tuple[str, int, str]] = None
+    bands_applied: Optional[dict] = None
+    band_held_back = False
     if decision.human_override is None:
         # The open-CRITICAL defect count for the P0 hard cap is resolved
         # inside _apply_band_floor via the shared helper — the old inline
         # ``severity == "P0"`` count matched nothing, so the cap never fired.
-        final_recommendation, band, band_downgrades, band_policy = await _apply_band_floor(
+        (
+            final_recommendation, band, band_downgrades, band_policy, bands_applied,
+        ) = await _band_floor_detail(
             db, project_id, decision.recommendation, run.pass_rate if run else 0.0,
+        )
+        band_held_back = band_policy is not None and _band_held_back(
+            decision.recommendation, final_recommendation, band_downgrades,
         )
 
     return ReleaseCouncilResponse(
         run_id=str(run_id),
+        pass_rate_bands=bands_applied,
+        band_held_back=band_held_back,
         project_id=str(project_id) if project_id else None,
         recommendation=final_recommendation,
         risk_score=decision.risk_score,
@@ -706,6 +891,118 @@ async def get_release_council(
         created_at=getattr(decision, "created_at", None),
         updated_at=getattr(decision, "updated_at", None),
     )
+
+
+# A person set a test's category: one correction (``human_correction``, also
+# written when a correction is edited) or a bulk reclassify of uncategorised
+# failures (``bulk_reclassify``). ``ai_history_core.TEST_TRIGGERS`` names both.
+_HUMAN_CATEGORY_TRIGGERS = ("human_correction", "bulk_reclassify")
+# The pipeline stage that reads a run's analyses and human corrections for the
+# decision (``AnalysisAgent.stage_name``).
+_ANALYSIS_READ_STAGE = "root_cause_analysis"
+
+
+def decision_evaluated_at(council: ReleaseCouncilResponse) -> Optional[datetime]:
+    """The fallback time a stored decision was evaluated, or None.
+
+    ``input_snapshot.assembled_at`` is written each time the release-risk agent
+    evaluates (a re-run rewrites it, an override does not). It is NOT when the
+    decision's analyses were read: the root-cause stage read them (and the
+    corrections) minutes earlier, so ``analysis_changed_since`` prefers that
+    stage's start and uses this only when the pipeline has no such row (review
+    F3). A row without ``assembled_at`` falls back to ``created_at``;
+    ``updated_at`` is not used because an override moves it.
+    """
+    snapshot = council.input_snapshot if isinstance(council.input_snapshot, dict) else {}
+    raw = snapshot.get("assembled_at")
+    when: Optional[datetime] = None
+    if isinstance(raw, str):
+        try:
+            when = datetime.fromisoformat(raw)
+        except ValueError:
+            when = None
+    if when is None:
+        when = council.created_at
+    if when is not None and when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    return when
+
+
+async def analysis_changed_since(
+    db: AsyncSession,
+    run_id: uuid.UUID,
+    decided_at: datetime,
+    pipeline_run_id: Optional[uuid.UUID] = None,
+) -> Optional[datetime]:
+    """The newest human category change in ``run_id`` saved after the stored
+    decision's analyses were read.
+
+    The read time is the start of ``pipeline_run_id``'s root-cause stage (that
+    stage loads the analyses and the human corrections the decision scores,
+    ``analysis_agent``), capped at ``decided_at``; with no such stage row it is
+    ``decided_at`` itself (``decision_evaluated_at``). A correction saved while
+    the deep run was in flight is therefore reported (review F3).
+
+    D-97: a correction now counts in the score, but a decision stored before
+    the correction still reads the old category, and a signed decision must not
+    be recomputed silently. This only reports that the run's analysis changed,
+    so the gate can say "re-evaluate"; the stored row is not touched.
+
+    Two records, either enough: the analysis version a correction or bulk
+    reclassify stages (it also covers an edited correction), and the
+    correction's own ``ai_feedback`` row (it survives a history write that
+    failed, which never fails the correction). Read-only; one statement.
+    """
+    from sqlalchemy import DateTime, bindparam
+
+    from app.models.postgres import (
+        AgentStageResult,
+        AIAnalysisVersion,
+        AIFeedback,
+        FeedbackRating,
+        TestCase,
+    )
+
+    fallback = bindparam("decided_at", decided_at, type_=DateTime(timezone=True))
+    if pipeline_run_id is not None:
+        stage_start = (
+            select(sa_func.min(AgentStageResult.started_at))
+            .where(
+                AgentStageResult.pipeline_run_id == pipeline_run_id,
+                AgentStageResult.stage_name == _ANALYSIS_READ_STAGE,
+            )
+            .scalar_subquery()
+        )
+        # LEAST skips a NULL (no stage row, or a stage never started) on
+        # PostgreSQL, so this is the stage start when known, else decided_at.
+        read_at: Any = sa_func.least(stage_start, fallback)
+    else:
+        read_at = fallback
+
+    versions = (
+        select(sa_func.max(AIAnalysisVersion.created_at))
+        .where(
+            AIAnalysisVersion.test_run_id == run_id,
+            AIAnalysisVersion.trigger.in_(_HUMAN_CATEGORY_TRIGGERS),
+            AIAnalysisVersion.created_at > read_at,
+        )
+        .scalar_subquery()
+    )
+    corrections = (
+        select(sa_func.max(AIFeedback.created_at))
+        .select_from(AIFeedback)
+        .join(TestCase, TestCase.id == AIFeedback.test_case_id)
+        .where(
+            TestCase.test_run_id == run_id,
+            AIFeedback.rating == FeedbackRating.INCORRECT.value,
+            AIFeedback.corrected_category.isnot(None),
+            AIFeedback.created_at > read_at,
+        )
+        .scalar_subquery()
+    )
+    # GREATEST skips NULLs on PostgreSQL: NULL only when neither found one.
+    value = (await db.execute(select(sa_func.greatest(versions, corrections)))).scalar_one_or_none()
+    return value if isinstance(value, datetime) else None
 
 
 async def apply_override(

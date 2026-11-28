@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,10 +23,143 @@ from app.models.schemas import (
     IdentitySyncStatus,
 )
 from app.services.sso_service import get_sync_status
+from app.models.identity_retention import (
+    IdentityRetentionApproval,
+    IdentityRetentionHold,
+    IdentityRetentionHoldCreate,
+    IdentityRetentionHoldRelease,
+    IdentityRetentionPreview,
+    IdentityRetentionPurge,
+    IdentityRetentionPurgeResult,
+    IdentityRetentionRead,
+    IdentityRetentionReason,
+)
+from app.services import identity_retention_service
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/identity", tags=["Identity & Audit"])
+
+
+def _retention_error(exc: identity_retention_service.IdentityRetentionError) -> HTTPException:
+    return HTTPException(status_code=exc.status_code, detail={"code": exc.code, "message": str(exc)})
+
+
+@router.get("/retention/policy", response_model=IdentityRetentionRead)
+async def read_identity_retention_policy(
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+):
+    """Read the separate, default-off instance identity policy and its holds."""
+    try:
+        return await identity_retention_service.read_policy(db, now=datetime.now(timezone.utc))
+    except identity_retention_service.IdentityRetentionError as exc:
+        raise _retention_error(exc) from exc
+
+
+@router.get("/retention/preview", response_model=IdentityRetentionPreview)
+async def preview_identity_retention(
+    retention_days: Optional[int] = Query(default=None, ge=365, le=3650),
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+):
+    """Count aged record classes without reading event content or deleting rows."""
+    try:
+        return await identity_retention_service.preview(
+            db, now=datetime.now(timezone.utc), retention_days=retention_days,
+        )
+    except identity_retention_service.IdentityRetentionError as exc:
+        raise _retention_error(exc) from exc
+
+
+@router.post("/retention/policy", response_model=IdentityRetentionRead)
+async def approve_identity_retention_policy(
+    payload: IdentityRetentionApproval,
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+):
+    """Approve routine-event expiry with a fresh preview and typed confirmation.
+
+    Requires an interactive instance administrator. Existing project retention
+    enablement never authorizes this separate policy.
+    """
+    try:
+        await identity_retention_service.approve_policy(
+            db, actor=current_user, **payload.model_dump(), now=datetime.now(timezone.utc),
+        )
+        await db.commit()
+        return await identity_retention_service.read_policy(db, now=datetime.now(timezone.utc))
+    except identity_retention_service.IdentityRetentionError as exc:
+        raise _retention_error(exc) from exc
+
+
+@router.post("/retention/disable", response_model=IdentityRetentionRead)
+async def disable_identity_retention_policy(
+    payload: IdentityRetentionReason,
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+):
+    """Disable future identity expiry without releasing any hold."""
+    try:
+        await identity_retention_service.disable_policy(db, actor=current_user, reason=payload.reason)
+        await db.commit()
+        return await identity_retention_service.read_policy(db, now=datetime.now(timezone.utc))
+    except identity_retention_service.IdentityRetentionError as exc:
+        raise _retention_error(exc) from exc
+
+
+@router.post("/retention/holds", response_model=IdentityRetentionHold, status_code=201)
+async def place_identity_retention_hold(
+    payload: IdentityRetentionHoldCreate,
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+):
+    """Place an independent instance identity hold; all live holds block expiry."""
+    try:
+        hold = await identity_retention_service.place_hold(
+            db, actor=current_user, **payload.model_dump(), now=datetime.now(timezone.utc),
+        )
+        await db.commit()
+        return hold
+    except identity_retention_service.IdentityRetentionError as exc:
+        raise _retention_error(exc) from exc
+
+
+@router.post("/retention/holds/{hold_id}/release", response_model=IdentityRetentionRead)
+async def release_identity_retention_hold(
+    hold_id: uuid.UUID,
+    payload: IdentityRetentionHoldRelease,
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+):
+    """Release only this hold with a reason; overlapping holds remain absolute."""
+    try:
+        await identity_retention_service.release_hold(
+            db, actor=current_user, hold_id=hold_id, **payload.model_dump(), now=datetime.now(timezone.utc),
+        )
+        await db.commit()
+        return await identity_retention_service.read_policy(db, now=datetime.now(timezone.utc))
+    except identity_retention_service.IdentityRetentionError as exc:
+        raise _retention_error(exc) from exc
+
+
+@router.post("/retention/purge", response_model=IdentityRetentionPurgeResult)
+async def purge_identity_retention_batch(
+    payload: IdentityRetentionPurge,
+    current_user: User = Depends(require_role(UserRole.ADMIN)),
+    db: AsyncSession = Depends(get_db),
+):
+    """Execute one approved, unheld batch of at most 500 routine events."""
+    from app.services.retention_service import purge_identity_events_batch
+
+    try:
+        result = await purge_identity_events_batch(
+            db, actor=current_user, **payload.model_dump(), now=datetime.now(timezone.utc),
+        )
+        await db.commit()
+        return result
+    except identity_retention_service.IdentityRetentionError as exc:
+        raise _retention_error(exc) from exc
 
 
 @router.get("/events", response_model=IdentityEventListResponse)

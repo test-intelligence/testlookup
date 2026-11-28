@@ -186,7 +186,15 @@ def get_ai_task_status(task_id: str) -> dict:
     if result.state == "SUCCESS":
         return {"task_id": task_id, "status": "success", "result": result.result}
     if result.state in ("FAILURE", "REVOKED"):
-        return {"task_id": task_id, "status": "failure", "error": str(result.info)}
+        # D-58 review: the page shows ``error``. Only a task's own plain
+        # sentence (``AIPlanNotBuilt``) is passed on; any other exception's
+        # text can carry a host, a URL or a driver message, so it is logged
+        # here and the answer carries no text (the page says it generically).
+        # Matched by name: the result backend may rebuild the class.
+        if type(result.info).__name__ == "AIPlanNotBuilt":
+            return {"task_id": task_id, "status": "failure", "error": str(result.info)}
+        logger.warning("ai_task_failed", task_id=task_id, error=str(result.info))
+        return {"task_id": task_id, "status": "failure", "error": None}
     return {"task_id": task_id, "status": "pending"}
 
 

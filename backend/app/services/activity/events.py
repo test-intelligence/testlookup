@@ -233,6 +233,7 @@ def _spec(
 _SPECS: tuple[ActivityEventSpec, ...] = (
     # ── runs ────────────────────────────────────────────────────────────────
     _spec("run.received", "runs", "run", "Report received for {entity_label}", "attempt"),
+    _spec("run.upload_resumed", "runs", "run", "Upload delivery resumed for {entity_label}", "attempt"),
     _spec("run.completed", "runs", "run", "{entity_label} completed — {failed} failed of {total}"),
     _spec("run.ingest_failed", "runs", "run", "Ingestion failed for {entity_label}: {error}", "attempt"),
     _spec("run.deleted", "runs", "run", "{entity_label} was deleted", "attempt"),
@@ -269,6 +270,7 @@ _SPECS: tuple[ActivityEventSpec, ...] = (
     # fails. A cancel in particular must leave a trace precisely when it did
     # NOT tidily succeed.
     _spec("analysis.retried", "analysis", "run", "Analysis for {entity_label} was retried ({mode})", "attempt"),
+    _spec("analysis.event_delivery_requeued", "analysis", "project", "{entity_label} was requeued", "outcome"),
     _spec("analysis.cancelled", "analysis", "run", "Analysis for {entity_label} was cancelled", "attempt"),
     # W14 AGT-12: a tracked bulk job was cancelled (one row per project of the
     # job). An attempt write, like the bulk trigger it cancels: the cancel
@@ -366,10 +368,11 @@ _SPECS: tuple[ActivityEventSpec, ...] = (
     _spec("project.imported", "configuration", "project", "Project {entity_label} was imported from {source}", "outcome"),
     _spec("policy.created", "configuration", "policy", "Release gate policy {entity_label} was created"),
     _spec("policy.updated", "configuration", "policy", "Release gate policy {entity_label} changed: {changed}"),
-    # W21 ACT-01: no ``policy.deleted`` -- gate policies are versioned and
-    # never deleted (a superseded version is deactivated, which records
-    # ``policy.updated``), so the name was removed rather than left as a
-    # filter that matches nothing.
+    # W21 ACT-01: no ``policy.deleted`` -- a published gate policy is never
+    # deleted (a superseded version is deactivated, which records
+    # ``policy.updated``). Since D-141 a never-published draft can be deleted;
+    # that also records ``policy.updated`` ("draft deleted"), so the feed's
+    # policy filter keeps one name for every change.
     _spec("policy.activated", "configuration", "policy", "Release gate policy {entity_label} was activated"),
     _spec("agent_config.updated", "configuration", "project", "Agent {entity_label} configuration changed to version {config_version}: {changed}", "outcome", _HUMAN_OR_KEY),
     _spec("workflow.created", "configuration", "workflow", "Workflow {entity_label} version {version} was created", "outcome", _HUMAN_OR_KEY),

@@ -50,12 +50,12 @@ test('a qai_ key passed as token is still sent as X-API-Key', async () => {
 })
 
 test('a JWT is sent as Bearer', async () => {
-  const [create] = await openAndClose({ token: 'eyJhbGciOiJIUzI1NiJ9.e30.sig' })
+  const [create] = await openAndClose({ token: 'eyJhbGciOiJIUzI1NiJ9.e30.sig' }) // gitleaks:allow -- synthetic test credential, never production authority
   assert.deepEqual(authOf(create), { apiKey: undefined, authorization: 'Bearer eyJhbGciOiJIUzI1NiJ9.e30.sig' })
 })
 
 test('the apiKey wins when both are given', async () => {
-  const [create] = await openAndClose({ token: 'eyJhbGciOiJIUzI1NiJ9.e30.sig', apiKey: FAKE_KEY })
+  const [create] = await openAndClose({ token: 'eyJhbGciOiJIUzI1NiJ9.e30.sig', apiKey: FAKE_KEY }) // gitleaks:allow -- synthetic test credential, never production authority
   assert.equal(authOf(create).apiKey, FAKE_KEY)
 })
 
@@ -162,7 +162,7 @@ for (const [name, sessionCreate] of [['Jest', jestSessionCreate], ['Mocha', moch
 test('a token in the environment beats an API key left in the file', async () => {
   const restore = inProjectDir(PROPERTIES.replace(FAKE_KEY, 'qai_REPLACE_ME'))
   try {
-    process.env.TESTLOOKUP_TOKEN = 'eyJhbGciOiJIUzI1NiJ9.e30.env'
+    process.env.TESTLOOKUP_TOKEN = 'eyJhbGciOiJIUzI1NiJ9.e30.env' // gitleaks:allow -- synthetic test credential, never production authority
     const create = await jestSessionCreate()
     assert.equal(create.headers.Authorization, 'Bearer eyJhbGciOiJIUzI1NiJ9.e30.env')
     assert.equal(create.headers['X-API-Key'], undefined)
@@ -178,7 +178,7 @@ test('an explicit token option beats an API key from the environment', async () 
     process.env.TESTLOOKUP_API_KEY = FAKE_KEY
     const handlers = {}
     const runner = { on(event, fn) { handlers[event] = fn; return this } }
-    const reporter = new MochaReporter(runner, { reporterOptions: { testlookupToken: 'eyJhbGciOiJIUzI1NiJ9.e30.opt' } })
+    const reporter = new MochaReporter(runner, { reporterOptions: { testlookupToken: 'eyJhbGciOiJIUzI1NiJ9.e30.opt' } }) // gitleaks:allow -- synthetic test credential, never production authority
     handlers.start()
     await new Promise((resolve) => reporter.done(0, resolve))
     assert.equal(server.sessionCreate().headers.Authorization, 'Bearer eyJhbGciOiJIUzI1NiJ9.e30.opt')

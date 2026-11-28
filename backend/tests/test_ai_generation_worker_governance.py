@@ -92,4 +92,4 @@ def test_async_ai_worker_stages_snapshot_audit_and_postcommit_state_refresh(monk
     assert audits[0].action == "ai_generated"
     assert audits[0].actor_id == author_id
     assert calls == ["commit", "emit"]
-    assert session.info["test_management_state_metric_projects"] == {project_id}
+    assert "test_management_state_metric_projects" not in session.info

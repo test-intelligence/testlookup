@@ -55,6 +55,10 @@ on:
         description: "Also bundle Ollama + ChromaDB (adds ~4 GB)"
         type: boolean
         default: false
+      with_telemetry:
+        description: "Include durable Compose telemetry configuration and redistributable images"
+        type: boolean
+        default: false
       version:
         description: "Release version without the v (for example 0.1.0): bundle the images that release promoted instead of building them. Leave empty for a CI check build."
         type: string
@@ -69,6 +73,8 @@ permissions:
 env:
   BUNDLE_VERSION: ${{ inputs.version || format('ci-{0}', github.sha) }}
   RELEASE_TAG: ${{ inputs.version && format('v{0}', inputs.version) || '' }}
+  WITH_LLM: ${{ inputs.with_llm || false }}
+  WITH_TELEMETRY: ${{ inputs.with_telemetry || false }}
 
 jobs:
   # ───────────────────────────────────────────────────────────────
@@ -173,9 +179,11 @@ jobs:
 
       - name: Show the bundle plan
         run: |
-          bash scripts/release/offline-bundle.sh --dry-run \
-            --version "${BUNDLE_VERSION}" \
-            --created-at "${{ steps.meta.outputs.created_at }}"
+          set -euo pipefail
+          args=(--dry-run --version "$BUNDLE_VERSION" --created-at "${{ steps.meta.outputs.created_at }}")
+          if [ "$WITH_LLM" = true ]; then args+=(--with-llm); fi
+          if [ "$WITH_TELEMETRY" = true ]; then args+=(--with-telemetry); fi
+          bash scripts/release/offline-bundle.sh "${args[@]}"
 
       # syft is intentionally NOT installed here: the released images carry
       # BuildKit SBOM attestations in the registry, which `docker save` cannot
@@ -187,15 +195,11 @@ jobs:
       - name: Build the offline bundle
         run: |
           set -euo pipefail
-          ARGS="--version ${BUNDLE_VERSION} --created-at ${{ steps.meta.outputs.created_at }}"
-          if [ "${{ github.event.inputs.with_llm }}" = "true" ]; then
-            ARGS="$ARGS --with-llm"
-          fi
-          if [ -n "$RELEASE_TAG" ]; then
-            ARGS="$ARGS --skip-build"
-          fi
-          # shellcheck disable=SC2086
-          bash scripts/release/offline-bundle.sh $ARGS
+          args=(--version "$BUNDLE_VERSION" --created-at "${{ steps.meta.outputs.created_at }}")
+          if [ "$WITH_LLM" = true ]; then args+=(--with-llm); fi
+          if [ "$WITH_TELEMETRY" = true ]; then args+=(--with-telemetry); fi
+          if [ -n "$RELEASE_TAG" ]; then args+=(--skip-build); fi
+          bash scripts/release/offline-bundle.sh "${args[@]}"
 
       # The bundle must carry the pulled digests, not a local build:
       # MANIFEST.json records each app image's registry digest.

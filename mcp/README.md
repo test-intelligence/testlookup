@@ -405,6 +405,104 @@ Prompts are reusable investigation workflows that expand into sequences of tool 
 - **Concurrency**: stdio serves one client. SSE validates every request and binds each connection to its access token's `jti` and user.
 - **Rate limiting**: the server itself does not rate-limit. The packaged Kubernetes ingress and OpenShift route for MCP (`k8s/base/ingress.yaml`, `k8s/overlays/openshift/route.yaml`) set connection and request-rate limits; apply equivalent controls at any other public gateway.
 
+## Tool observability
+
+The pinned MCP 2.3 central middleware observes `tools/call` for stdio and SSE.
+It records each completed call once using a registered tool name, a closed
+outcome and its transport. `success` describes the tool response. A tool that
+queues asynchronous work still needs its normal task or durable record readback
+to establish business completion.
+
+Operational tool events are sanitized JSON on stderr. Stdout remains the stdio
+JSON-RPC channel. Library diagnostics omit message arguments, exception text,
+URLs and stacks. The selected `mcp_tool_execution` event contains `tool`,
+`outcome`, `transport`, bounded `duration_ms`, a SHA-256 request-ID digest and
+valid trace/span IDs when tracing is enabled. It contains no tool arguments,
+results, credentials or JSON-RPC request IDs.
+
+The packaged `run_stdio` and `run_sse` entrypoints configure the sanitized
+process logger. Direct ASGI mounts retain their host application's logger
+configuration and receive the same safe OTLP projections. Embedders can opt into
+`diagnostics.configure_diagnostic_logging()` for the stderr policy.
+
+Optional signal destinations use full OTLP/HTTP URLs:
+
+| Variable | Default | Contract |
+|----------|---------|----------|
+| `TESTLOOKUP_OTLP_TRACES_ENDPOINT` | empty | Private or HTTPS `/v1/traces` endpoint |
+| `TESTLOOKUP_OTLP_METRICS_ENDPOINT` | empty | Private or HTTPS `/v1/metrics` endpoint |
+| `TESTLOOKUP_OTLP_LOGS_ENDPOINT` | empty | Private or HTTPS `/v1/logs` endpoint for selected HTTP/tool events |
+| `TESTLOOKUP_TELEMETRY_TRACE_SAMPLE_RATIO` | `1.0` | Root trace sampling ratio, from 0 through 1 |
+| `TESTLOOKUP_TELEMETRY_ENVIRONMENT` | `production` | `development`, `staging` or `production` resource scope |
+| `TESTLOOKUP_TELEMETRY_INSTALLATION` | empty | Validated installation scope for the reference pipeline |
+
+Empty endpoints disable export. The private HTTP allowance covers loopback and
+the isolated reference service `otel-collector`. Cross-host destinations use
+HTTPS. Export sessions disable ambient proxies and redirects. Providers are
+local to this sanitized projection. The SDK's default middleware projection is
+replaced through its public middleware list while its request-state and
+authentication boundaries remain in place. SDK upgrades must reverify that
+pinned chain.
+
+The meter scope is `testlookup.mcp`. `testlookup.mcp.tool.calls` is a counter
+with unit `1`. `testlookup.mcp.tool.duration` is a seconds histogram with bounds
+0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60 and 120. Both use only
+`tool`, `outcome` and `transport` labels. The inventory freezes registered
+`[a-z][a-z0-9_]{0,63}` names at first observation, capped at 256 with `other` for
+unrecognized names. Outcomes are `success`, `tool_error`, `request_error`,
+`cancelled` and `internal_error`. A surfaced backend failure is `request_error`.
+A handled protected health response with HTTP 401 followed by a successful public health fallback
+remains `success`. Durations include awaited downstream work. In-flight calls
+that disappear with a killed process have no completion observation.
+
+The fixed server span is `mcp.tool`. Its attributes contain only the RPC system
+and method, bounded tool/outcome and transport. Trace context accepts a valid
+W3C version 00 `traceparent` from request metadata or the HTTP request. Baggage
+and tracestate are excluded from downstream propagation. Other request metadata
+and caller credentials keep their existing contracts. A generated per-process
+`service.instance.id` separates cumulative streams over process replacement.
+All signals share service name/namespace `testlookup`, role `mcp`, normal
+application version and validated build/installation/environment resources.
+
+Metrics export every 30 seconds in batches of at most 128 points. Trace/log
+queues cap at 512 records and export batches at 64, with HTTP timeouts of two seconds
+and request limits of 64 KiB. Telemetry failures preserve the tool's response.
+Normal stdio/SSE entrypoints and the ASGI lifespan explicitly drain providers.
+A daemon drain worker gives the whole provider set one wait budget of two seconds.
+Pending telemetry can be lost at that boundary. ASGI embeddings must run the
+provided application's lifespan. The implementation starts no threads during
+Python's `atexit` phase.
+
+Tests include actual SDK dispatch, two concurrent authenticated loopback SSE
+clients, a real candidate stdio subprocess with every stdout line parsed as
+JSON-RPC, loopback OTLP trace reception, payload canaries, exporter failures and
+bounded shutdown. The reference Collector and deployment wiring have their own
+acceptance checks. Production delivery, backend retention and alert policy
+remain deployment responsibilities.
+
+## Backend error request IDs
+
+Structured tool errors add an optional `request_id` from the backend response's
+`X-Request-ID`. Human errors append `[request_id=<id>]`. Valid IDs contain
+1–128 ASCII letters, digits or `._:-`. Missing, duplicate and malformed IDs are
+omitted. The final response after a permitted stdio authentication retry supplies
+the error ID. A transport failure with no response has no backend-generated ID.
+Successful REST bodies and existing error fields keep their contracts.
+Uncaught backend HTTP failures use fixed status-and-ID text at the SDK's
+anticipated-error boundary, so ordinary read tools preserve correlation too.
+
+When tool telemetry binds an operation context, each outbound REST call carries
+that context's validated `X-Request-ID` and locally created `traceparent`.
+Authorization continues to come from that caller's bearer credential or the
+local stdio session. Diagnostic headers cannot override credentials. Concurrent
+operations reset their own context and share no diagnostic header dictionary.
+
+For support lookup, use the ID, approximate time and operation. The reference
+OTLP log exporter stores the SHA-256 ASCII digest of the ID as `request_id`
+metadata. Filter that digest within the selected service/environment and narrow
+time range in [Loki](../docs/operations/log-storage.md). The request ID identifies
+an HTTP call and is independent of a task/run identity or an authorization claim.
+
 ## Tests
 
 ```bash

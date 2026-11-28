@@ -10,7 +10,7 @@ import httpx
 import structlog
 
 from app.core.config import settings
-from app.core.http_client import get_http_client
+from app.core.http_client import get_integration_http_client
 from app.services.connectors.base import (
     ConnectorFetchError,
     ConnectorScopeRefused,
@@ -92,6 +92,14 @@ class ConfluenceKnowledgeConnector(KnowledgeConnectorBase):
         )
 
     async def test_connection(self) -> dict:
+        if settings.AI_OFFLINE_MODE:
+            return {
+                "success": False,
+                "latency_ms": 0,
+                "error": "offline_mode",
+                "detail": "AI_OFFLINE_MODE is enabled — outbound calls are disabled",
+            }
+
         t_start = time.monotonic()
         try:
             domain = settings.CONFLUENCE_DOMAIN or settings.JIRA_DOMAIN
@@ -107,7 +115,7 @@ class ConfluenceKnowledgeConnector(KnowledgeConnectorBase):
 
             # Use v2 API to check connectivity
             url = f"{self._base_url()}/wiki/api/v2/spaces?limit=1"
-            client = get_http_client()
+            client = get_integration_http_client()
             resp = await client.get(url, headers=self._headers(), timeout=10.0)
             latency = int((time.monotonic() - t_start) * 1000)
             if resp.status_code == 200:
@@ -159,7 +167,7 @@ class ConfluenceKnowledgeConnector(KnowledgeConnectorBase):
         params = {"expand": "body.storage,version,space,ancestors"}
 
         try:
-            client = get_http_client()
+            client = get_integration_http_client()
             resp = await client.get(
                 url, headers=self._headers(), params=params,
                 timeout=float(settings.KNOWLEDGE_SYNC_TIMEOUT_SECONDS),

@@ -123,6 +123,82 @@ async def test_rebind_after_preflight_never_dials_private_peer(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_integration_rebind_never_dials_blocked_peer(monkeypatch):
+    answers = iter([["93.184.216.34"], ["127.0.0.1"]])
+    monkeypatch.setattr(
+        socket,
+        "getaddrinfo",
+        lambda *_args, **_kwargs: [_answer(a) for a in next(answers)],
+    )
+    assert await url_safety.egress_block_reason("https://rebind.example") is None
+    raw = FakeBackend(FakeStream("93.184.216.34"))
+    with pytest.raises(url_safety.UnsafeTargetError, match="blocked"):
+        await url_safety.IntegrationEgressNetworkBackend(raw).connect_tcp(
+            "rebind.example", 443, timeout=1
+        )
+    assert raw.connects == []
+
+
+@pytest.mark.asyncio
+async def test_integration_dns_failure_never_opens_socket(monkeypatch):
+    def fail_dns(*_args, **_kwargs):
+        raise socket.gaierror("missing")
+
+    monkeypatch.setattr(socket, "getaddrinfo", fail_dns)
+    raw = FakeBackend(FakeStream("10.0.0.5"))
+    with pytest.raises(url_safety.UnsafeTargetError, match="DNS resolution failed"):
+        await url_safety.IntegrationEgressNetworkBackend(raw).connect_tcp(
+            "missing.example", 443, timeout=1
+        )
+    assert raw.connects == []
+
+
+@pytest.mark.asyncio
+async def test_private_integration_is_pinned_and_keeps_tls_hostname(monkeypatch):
+    monkeypatch.setattr(
+        url_safety, "resolve_integration_addresses", lambda *_args: ["10.0.0.5"]
+    )
+    stream = FakeStream(
+        "10.0.0.5",
+        b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+    )
+    raw = FakeBackend(stream)
+    transport = url_safety.IntegrationEgressAsyncHTTPTransport(network_backend=raw)
+    async with httpx.AsyncClient(transport=transport, trust_env=False) as client:
+        response = await client.get("https://ghe.corp.example/api/v3")
+    assert response.status_code == 200
+    assert raw.connects == [("10.0.0.5", 443)]
+    assert stream.tls_hostnames in [["ghe.corp.example"], [b"ghe.corp.example"]]
+
+
+@pytest.mark.asyncio
+async def test_integration_peer_mismatch_is_closed(monkeypatch):
+    monkeypatch.setattr(
+        url_safety, "resolve_integration_addresses", lambda *_args: ["10.0.0.5"]
+    )
+    stream = FakeStream("10.0.0.6")
+    with pytest.raises(url_safety.UnsafeTargetError, match="did not match"):
+        await url_safety.IntegrationEgressNetworkBackend(FakeBackend(stream)).connect_tcp(
+            "ghe.corp.example", 443, timeout=1
+        )
+    assert stream.closed is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("address", ["::ffff:127.0.0.1", "::ffff:169.254.169.254"])
+async def test_mapped_integration_targets_never_reach_socket(monkeypatch, address):
+    monkeypatch.setattr(
+        socket, "getaddrinfo", lambda *_args, **_kwargs: [_answer(address)]
+    )
+    raw = FakeBackend(FakeStream(address))
+    with pytest.raises(url_safety.UnsafeTargetError, match="blocked"):
+        await url_safety.IntegrationEgressNetworkBackend(raw).connect_tcp(
+            "mapped.example", 443, timeout=1
+        )
+    assert raw.connects == []
+
+
+@pytest.mark.asyncio
 async def test_public_answer_is_pinned_and_origin_hostname_reaches_tls(monkeypatch):
     monkeypatch.setattr(
         url_safety, "resolve_public_addresses", lambda *_args: ["93.184.216.34"]
@@ -216,6 +292,37 @@ async def test_public_transport_uses_safe_backend_and_ignores_proxy_environment(
         await client.get("http://origin.example/path")
     await http_client.close_http_client()
     assert raw.connects == [("93.184.216.34", 80)]
+
+
+@pytest.mark.asyncio
+async def test_integration_client_ignores_proxy_environment(monkeypatch):
+    monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:9")
+    monkeypatch.setenv("HTTPS_PROXY", "http://127.0.0.1:9")
+    monkeypatch.setenv("ALL_PROXY", "http://127.0.0.1:9")
+    monkeypatch.setattr(
+        url_safety, "resolve_integration_addresses", lambda *_args: ["10.0.0.5"]
+    )
+    raw = FailingBackend(FakeStream("10.0.0.5"))
+    transport_type = url_safety.IntegrationEgressAsyncHTTPTransport
+
+    def build_transport(**kwargs):
+        return transport_type(network_backend=raw, **kwargs)
+
+    monkeypatch.setattr(
+        url_safety, "IntegrationEgressAsyncHTTPTransport", build_transport
+    )
+    client = http_client.create_integration_http_client(timeout=1.0)
+    transport = client._transport
+    assert isinstance(transport._pool, httpcore.AsyncConnectionPool)
+    assert isinstance(
+        transport._pool._network_backend,
+        url_safety.IntegrationEgressNetworkBackend,
+    )
+    assert not isinstance(transport._pool, httpcore.AsyncHTTPProxy)
+    with pytest.raises(url_safety.UnsafeTargetError, match="sentinel"):
+        await client.get("http://ghe.corp.example/path")
+    await client.aclose()
+    assert raw.connects == [("10.0.0.5", 80)]
 
 
 def test_httpx_httpcore_versions_match_guarded_transport_contract():

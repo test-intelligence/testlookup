@@ -254,7 +254,7 @@ async def build_pipeline_replay(
     )
     stages = sorted(stage_result.scalars().all(), key=_stage_sort_key)
 
-    events = [_normalize_event(event) for event in await get_pipeline_timeline(str(pipeline_id))]
+    events = [_normalize_event(event) for event in await get_pipeline_timeline(str(pipeline_id), db=db)]
     if not any(
         event.get("event_type") == "decision_made" and event.get("stage_name") == "workflow"
         for event in events

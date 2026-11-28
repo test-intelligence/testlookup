@@ -1134,7 +1134,7 @@ class TestStalenessService:
 class TestRedactionEdgeCases:
     def test_redact_jwt_token(self):
         from app.services.rag_redaction_service import redact_prompt
-        text = "Token: eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"
+        text = "Token: eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U" # gitleaks:allow -- synthetic test credential, never production authority
         result, was_redacted = redact_prompt(text)
         assert was_redacted is True
         assert "eyJ" not in result

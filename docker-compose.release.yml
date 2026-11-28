@@ -387,7 +387,7 @@ services:
     # Keep this subscription set in lockstep with celery_app routes and the
     # default LIVE_INGEST_SHARD_COUNT=8. Missing one queue leaves work pending
     # forever in a fresh release stack.
-    command: celery -A app.worker.celery_app worker --loglevel=info --concurrency=${CELERY_CONCURRENCY:-4} -Q default,critical,ingestion,ingestion.shard.0,ingestion.shard.1,ingestion.shard.2,ingestion.shard.3,ingestion.shard.4,ingestion.shard.5,ingestion.shard.6,ingestion.shard.7,ai_analysis --max-tasks-per-child=200
+    command: python -m app.worker.worker_process celery -A app.worker.celery_app worker --loglevel=info --concurrency=${CELERY_CONCURRENCY:-4} -Q default,critical,ingestion,ingestion.shard.0,ingestion.shard.1,ingestion.shard.2,ingestion.shard.3,ingestion.shard.4,ingestion.shard.5,ingestion.shard.6,ingestion.shard.7,ai_analysis --max-tasks-per-child=200
     tmpfs:
       - /tmp/prometheus-multiproc:mode=1777
     env_file:
@@ -415,11 +415,11 @@ services:
       - WORKER_METRICS_PORT=9100
     # The backend image's own HEALTHCHECK probes the API on :8000, which a
     # worker does not serve, so without this every worker read "unhealthy".
-    # The worker_ready signal writes this file once the worker is connected to
-    # the broker and consuming (the sentinel the Kubernetes readiness probe
-    # uses too); worker_shutdown removes it.
+    # The launcher clears prior state before imports. worker_ready publishes
+    # the current parent generation after consumer startup, and this cheap
+    # local probe rejects a preserved marker from a previous process.
     healthcheck:
-      test: ["CMD", "test", "-f", "/tmp/celery-worker-ready"]
+      test: ["CMD", "python", "-m", "app.worker.worker_process", "probe", "--mode=ready"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -439,7 +439,7 @@ services:
     <<: [*app-backend-image, *app-lockdown]
     container_name: testlookup_worker_children
     restart: unless-stopped
-    command: celery -A app.worker.celery_app worker --loglevel=info --concurrency=${CELERY_CHILDREN_CONCURRENCY:-1} --prefetch-multiplier=1 -Q agent_children --max-tasks-per-child=25
+    command: python -m app.worker.worker_process celery -A app.worker.celery_app worker --loglevel=info --concurrency=${CELERY_CHILDREN_CONCURRENCY:-1} --prefetch-multiplier=1 -Q agent_children --max-tasks-per-child=25
     tmpfs:
       - /tmp/prometheus-multiproc:mode=1777
     env_file:
@@ -466,7 +466,7 @@ services:
       - WORKER_METRICS_PORT=9100
     # See the worker's healthcheck: the image's default probes the API port.
     healthcheck:
-      test: ["CMD", "test", "-f", "/tmp/celery-worker-ready"]
+      test: ["CMD", "python", "-m", "app.worker.worker_process", "probe", "--mode=ready"]
       interval: 30s
       timeout: 5s
       retries: 3

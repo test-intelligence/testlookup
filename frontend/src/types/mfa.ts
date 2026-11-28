@@ -146,7 +146,7 @@ export interface MfaStatus {
   /** ISO-8601 with offset, or null when never enrolled. */
   enrolled_at: string | null
   recovery_codes_remaining: number
-  /** Already net of SSO — true only when the policy binds *and* SSO does not manage this user. */
+  /** Whether workspace policy requires MFA for this user's local password sign-in. */
   required_by_policy: boolean
   sso_managed: boolean
   /**

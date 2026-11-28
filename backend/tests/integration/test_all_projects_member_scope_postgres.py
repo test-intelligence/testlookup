@@ -10,6 +10,9 @@ CRITICAL defect in C. Through the real app, with no ``project_id``:
 * cache isolation: the admin's All Projects reads go FIRST (they warm the
   shared ``all`` entries and count A + B + C), and the member's reads that
   follow still return A + B, never the admin's entry;
+* ``/reports/summary`` allows the member to read A, then returns 403 on a new
+  request after A's membership is removed in a separate committed transaction;
+  the administrator remains able to read the same report;
 * the member naming C, and a user with no project at all, get the empty body.
 
 Uses ``tests/integration/defect_w06_world.py`` (projects, users, the ASGI
@@ -26,6 +29,7 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
+from sqlalchemy import delete
 
 from tests.integration.defect_w06_world import defect_world
 
@@ -157,6 +161,37 @@ async def test_a_cold_member_read_counts_only_their_projects(world):
     w = world
     _assert_member_summary(await _get(w, "/api/v1/metrics/summary", w.mine, days=7), w)
     assert _trend_sums(await _get(w, "/api/v1/metrics/trends", w.mine, days=7)).total == MEMBER_TOTAL
+
+
+async def test_report_read_rechecks_membership_after_committed_removal(world):
+    """A new report request observes revocation while an administrator retains access."""
+    from app.models.postgres import ProjectMember
+
+    w = world
+    path = "/api/v1/reports/summary"
+    params = {"project_id": str(w.A), "days": 7}
+
+    allowed = await w.client.get(path, params=params, headers=w.mine)
+    assert allowed.status_code == 200, allowed.text
+    assert allowed.json()["project_id"] == str(w.A)
+
+    # This transaction is independent of both HTTP request sessions and commits
+    # before the second read begins, matching an ordinary membership removal.
+    async with w.sessions.begin() as revocation:
+        removed = await revocation.execute(
+            delete(ProjectMember).where(
+                ProjectMember.project_id == w.A,
+                ProjectMember.user_id == w.mine_id,
+            )
+        )
+        assert removed.rowcount == 1
+
+    denied = await w.client.get(path, params=params, headers=w.mine)
+    assert denied.status_code == 403, denied.text
+
+    retained = await w.client.get(path, params=params, headers=w.admin)
+    assert retained.status_code == 200, retained.text
+    assert retained.json()["project_id"] == str(w.A)
 
 
 async def test_the_readiness_p0_count_never_sees_the_foreign_critical(world):

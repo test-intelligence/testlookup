@@ -9,6 +9,11 @@ from __future__ import annotations
 
 import client as api  # type: ignore[import]
 
+# D-156 (review F6): the per-test engines that answer (backend
+# analysis_agent._ANSWERING_ENGINES). "hint", "human_corrected" and "unknown"
+# are not engines.
+_ANSWERING_ENGINES = frozenset({"llm", "ml", "rules"})
+
 
 def register(mcp) -> None:  # noqa: ANN001
 
@@ -95,6 +100,16 @@ def register(mcp) -> None:  # noqa: ANN001
                 )
                 mode = stage.get("analysis_mode")
                 if mode:
+                    # D-156: a stage whose tests ran on more than one engine
+                    # is "mixed"; print the split the stage stored. Only an
+                    # answering engine counts (review F6): a hint, a human
+                    # correction or "unknown" is printed but never makes it
+                    # mixed. Same rule as the backend and the page.
+                    split = stage.get("mode_distribution") or {}
+                    if isinstance(split, dict) and len(
+                        [m for m, c in split.items() if m in _ANSWERING_ENGINES and c]
+                    ) > 1:
+                        mode = f"mixed ({', '.join(f'{m}×{c}' for m, c in split.items())})"
                     lines.append(f"- **Mode:** {mode}")
                 if stage.get("fallback_used"):
                     lines.append(

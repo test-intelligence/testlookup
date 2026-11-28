@@ -10,6 +10,7 @@ Source declarations only; no `.env` or running secrets are read. Compose/Helm/Ku
 |---|---|---|
 | `APP_NAME` | `str` | `'TestLookup'` |
 | `APP_ENV` | `Literal['development', 'staging', 'production']` | `'development'` |
+| `OBSERVABILITY_INSTALLATION` | `str` | `''` |
 | `APP_SECRET_KEY` | `str` | `'change-me-in-production'` |
 | `APP_SECRET_KEY_PREVIOUS` | `Optional[str]` | `None` |
 | `APP_DEBUG` | `bool` | `False` |
@@ -192,7 +193,6 @@ Source declarations only; no `.env` or running secrets are read. Compose/Helm/Ku
 | `JWT_ALGORITHM` | `str` | `'HS256'` |
 | `JWT_ACCESS_TOKEN_EXPIRE_MINUTES` | `int` | `30` |
 | `JWT_REFRESH_TOKEN_EXPIRE_DAYS` | `int` | `7` |
-| `JWT_REFRESH_REUSE_LEEWAY_SECONDS` | `int` | `Field(default=10, ge=0, le=60)` |
 | `AUTH_REVOCATION_FAIL_OPEN` | `bool` | `False` |
 | `REGISTRATION_ENABLED` | `bool` | `False` |
 | `DEMO_MODE` | `bool` | `False` |
@@ -287,8 +287,11 @@ Source declarations only; no `.env` or running secrets are read. Compose/Helm/Ku
 | `OTEL_ENABLED` | `bool` | `True` |
 | `OTEL_SERVICE_NAME` | `str` | `'testlookup'` |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | `Optional[str]` | `None` |
+| `OTEL_EXPORTER_OTLP_LOGS_ENDPOINT` | `str` | `''` |
+| `OTEL_LOGS_ROLE` | `Literal['api', 'worker', 'worker-children', 'beat']` | `'api'` |
 | `METRICS_ENABLED` | `bool` | `True` |
 | `METRICS_TOKEN` | `str` | `''` |
+| `METRICS_TOKEN_FILE` | `str` | `''` |
 | `API_DOCS_ENABLED` | `bool` | `True` |
 | `LOG_LEVEL` | `str` | `'INFO'` |
 | `LOG_FORMAT` | `Literal['json', 'text']` | `'json'` |

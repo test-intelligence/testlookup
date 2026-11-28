@@ -7,8 +7,8 @@ session open, its upsert on the helper's write session) and the real diff. The
 projects' GitHub integrations are real rows on a GHE base; the PATs come
 through ``secret_service.read_secret`` (patched to a dict: encryption is not
 under test) and the ``github_checks`` gate is a switch the test opens and
-shuts (the flag's own seeding is W19's). Every ``httpx`` client of the
-connector goes to the shared contract fake. What only PostgreSQL shows:
+shuts (the flag's own seeding is W19's). The connector's client factory routes
+requests to the shared contract fake. What only PostgreSQL shows:
 
 * the first view stores ONE ``run_commit_ranges`` row through the fake (the
   compare and the commit details on the GHE base, with the project's PAT) and
@@ -89,10 +89,11 @@ async def world():
                            created_at=now - timedelta(hours=1), end_time=now - timedelta(hours=1)))
 
     fake = FakeState()
-    real_async_client = httpx.AsyncClient
-    proxy = types.SimpleNamespace(**{k: getattr(httpx, k) for k in dir(httpx) if not k.startswith("_")})
-    proxy.AsyncClient = lambda *a, **k: real_async_client(transport=httpx.ASGITransport(app=create_app(fake)))
+    transport = httpx.ASGITransport(app=create_app(fake))
     gate = {"open": True}
+
+    def fake_integration_client(*, timeout: httpx.Timeout | float) -> httpx.AsyncClient:
+        return httpx.AsyncClient(transport=transport, timeout=timeout)
 
     async def read_secret(_db, scope, key):
         if scope == github_checks_service.SECRET_SCOPE and any(key == f"project:{p}:pat" for p in with_pat):
@@ -110,7 +111,7 @@ async def world():
     monkeypatch.setattr("app.db.postgres.AsyncSessionLocal", sessions)
     monkeypatch.setattr(cas, "AsyncSessionLocal", sessions)
     monkeypatch.setattr(commit_router, "AsyncSessionLocal", sessions)
-    monkeypatch.setattr(cas, "httpx", proxy)
+    monkeypatch.setattr(cas, "create_integration_http_client", fake_integration_client)
     monkeypatch.setattr(cas, "_post_allowed", post_allowed)
     monkeypatch.setattr(github_checks_service, "_post_allowed", post_allowed)
     monkeypatch.setattr(secret_service, "read_secret", read_secret)

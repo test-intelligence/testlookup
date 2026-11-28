@@ -1284,6 +1284,29 @@ function EvidenceSourcesCard({
 // execution_path per stage plus a fallback flag. No static model catalog
 // and no fabricated per-token rates: when the run has no trail yet, an
 // explanatory empty state renders instead.
+/**
+ * D-156: the words for a stage's split, in the order it is printed. Only the first three are engines
+ * (the backend's `_ANSWERING_ENGINES`); a QA lead's hint, a human correction and an unrecorded engine are
+ * printed in the split but never make a stage mixed (review F6).
+ */
+const ENGINE_WORDS: Record<string, string> = {
+  llm: 'model', ml: 'ML', rules: 'rules', hint: 'hint', human_corrected: 'corrected', unknown: 'unknown',
+}
+const ENGINE_ORDER = ['llm', 'ml', 'rules', 'hint', 'human_corrected', 'unknown']
+const ANSWERING_ENGINES = new Set(['llm', 'ml', 'rules'])
+
+/**
+ * D-156: "1 model · 3 rules" for a stage whose tests ran on more than one engine, else null (the stage
+ * prints its one engine as before).
+ */
+function engineSplit(dist: Record<string, number> | null | undefined): string | null {
+  const entries = Object.entries(dist ?? {}).filter(([, n]) => n > 0)
+  if (entries.filter(([m]) => ANSWERING_ENGINES.has(m)).length < 2) return null
+  const rank = (m: string) => (ENGINE_ORDER.includes(m) ? ENGINE_ORDER.indexOf(m) : ENGINE_ORDER.length)
+  entries.sort(([a], [b]) => rank(a) - rank(b))
+  return entries.map(([m, n]) => `${n} ${ENGINE_WORDS[m] ?? m.replace(/_/g, ' ')}`).join(' · ')
+}
+
 function ModelRoutingCard({
   trail, isLoading,
 }: { trail: DecisionTrailResponse | undefined; isLoading: boolean }) {
@@ -1299,7 +1322,9 @@ function ModelRoutingCard({
         </div>
       ) : (
         <div className="px-4 py-3 flex flex-col gap-1.5">
-          {stages.map((s, i) => (
+          {stages.map((s, i) => {
+            const split = engineSplit(s.mode_distribution)
+            return (
             <div key={i} className="flex items-baseline justify-between gap-2 text-xs">
               <span className="text-[var(--color-text-secondary)] capitalize">
                 {s.stage_name.replace(/_/g, ' ')}
@@ -1315,14 +1340,15 @@ function ModelRoutingCard({
                   </span>
                 )}
                 <code className="font-mono text-2xs px-1.5 py-px rounded" style={{ background: 'var(--color-bg-secondary)', color: 'var(--color-text-secondary)', border: '1px solid var(--color-border)' }}>
-                  {s.analysis_mode ?? s.execution_path}
+                  {split ?? s.analysis_mode ?? s.execution_path}
                 </code>
                 {s.analysis_mode && s.execution_path && s.execution_path !== s.analysis_mode && (
                   <span className="text-2xs text-[var(--color-text-muted)]">{s.execution_path}</span>
                 )}
               </span>
             </div>
-          ))}
+            )
+          })}
         </div>
       )}
     </Panel>

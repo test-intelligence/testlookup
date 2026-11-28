@@ -29,7 +29,7 @@ import pytest
 
 API = "https://products.demo.test"
 #: A sample bearer value shaped like a JWT -- never a real credential.
-SAMPLE_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkZW1vLXVzZXIifQ.ZGVtby1zaWduYXR1cmUtdmFsdWU"
+SAMPLE_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJkZW1vLXVzZXIifQ.ZGVtby1zaWduYXR1cmUtdmFsdWU" # gitleaks:allow -- synthetic test credential, never production authority
 CATALOGUE = {7: {"id": 7, "name": "Desk lamp", "price": 24.5, "currency": "EUR", "stock": 12}}
 
 

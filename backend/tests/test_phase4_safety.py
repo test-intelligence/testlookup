@@ -83,7 +83,7 @@ class TestInputSanitization:
         assert len(result) <= 128
 
     def test_error_message_redacts_bearer_token(self):
-        msg = "Auth failed: Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyIn0.signature123"
+        msg = "Auth failed: Bearer eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1c2VyIn0.signature123" # gitleaks:allow -- synthetic test credential, never production authority
         result = sanitize_error_message(msg)
         assert "eyJhbGciOiJIUzI1NiJ9" not in result
         assert "[REDACTED" in result
@@ -95,9 +95,9 @@ class TestInputSanitization:
         assert "[REDACTED]" in result
 
     def test_error_message_redacts_api_key(self):
-        msg = "Request failed, api_key=sk_live_abc123xyz456 was rejected"
+        msg = "Request failed, api_key=sk_live_abc123xyz456 was rejected" # gitleaks:allow -- synthetic test credential, never production authority
         result = sanitize_error_message(msg)
-        assert "sk_live_abc123xyz456" not in result
+        assert "sk_live_abc123xyz456" not in result # gitleaks:allow -- synthetic test credential, never production authority
         assert "[REDACTED]" in result
 
     def test_stack_trace_redacts_connection_string(self):
@@ -149,7 +149,7 @@ class TestInputSanitization:
 
     def test_jwt_redaction(self):
         # JWT embedded without a "token=" prefix — pure JWT pattern match
-        msg = "Decoded eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.validSignature in payload"
+        msg = "Decoded eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.validSignature in payload" # gitleaks:allow -- synthetic test credential, never production authority
         result = sanitize_error_message(msg)
         assert "eyJhbGciOiJSUzI1NiJ9" not in result
         assert "[REDACTED" in result

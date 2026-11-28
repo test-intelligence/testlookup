@@ -17,6 +17,8 @@ export interface StageDecisionSummary {
   completed_at: string | null
   duration_seconds: number | null
   analysis_mode: string | null
+  /** D-156: tests per engine for a stage that analysed tests; "mixed" means more than one key. */
+  mode_distribution?: Record<string, number> | null
   fallback_used: boolean | null
   fallback_reason: string | null
   route_rationale: string | null

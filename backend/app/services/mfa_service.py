@@ -61,7 +61,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.core.deps import _normalize_user_role
 from app.core.permissions import rank_index, user_roles
-from app.core.security import hash_token
+from app.core.security import AuthenticationAssurance, hash_token
 from app.models.postgres import (
     AppSetting,
     FederatedIdentity,
@@ -363,9 +363,8 @@ async def is_sso_managed(db: AsyncSession, user: User) -> bool:
        sense but looks purely local. The audit row is written unconditionally
        on the same code path, so it is the reliable signal.
 
-    Used only to decide whether the workspace MFA *requirement* applies. It
-    never suppresses MFA a user has voluntarily enrolled — an SSO-managed user
-    with ``mfa_enabled`` set is still challenged on the local password path.
+    Used by account-management endpoints to describe IdP ownership. Local MFA
+    policy is evaluated separately from account linkage.
     """
     linked = await db.execute(
         select(FederatedIdentity.id).where(FederatedIdentity.user_id == user.id).limit(1)
@@ -571,20 +570,30 @@ class LoginRequirement(str, Enum):
 
 
 async def evaluate_login_requirement(
-    db: AsyncSession, user: User, policy: Optional[MfaPolicy] = None
+    db: AsyncSession,
+    user: User,
+    policy: Optional[MfaPolicy] = None,
+    *,
+    authentication_assurance: AuthenticationAssurance = AuthenticationAssurance.PASSWORD,
 ) -> LoginRequirement:
-    """Decide the post-password step for a local (password) login.
+    """Decide whether the current authentication method satisfies local MFA.
 
-    Not consulted by ``/api/v1/sso/acs`` — see ``routers/sso.py`` and
-    ``architecture/SECURITY.md`` for why the IdP path is exempt.
+    Password login uses the fail-closed default. SSO callbacks do not call this
+    helper when the IdP authenticates the user, but their refresh sessions pass
+    signed SSO assurance here when policy is re-evaluated during rotation.
     """
     policy = policy if policy is not None else await load_policy(db)
+    # SSO assurance comes from the identity provider, independently of any
+    # local authenticator enrolled for password sign-in.
+    if authentication_assurance is AuthenticationAssurance.SSO:
+        return LoginRequirement.NONE
+    local_mfa_assurance = authentication_assurance is AuthenticationAssurance.MFA
     if user.mfa_enabled:
         loaded = await load_totp_secret(db, user)
         if not loaded.usable:
             return LoginRequirement.BROKEN
-        return LoginRequirement.CHALLENGE
-    if policy_requires_mfa(user, policy) and not await is_sso_managed(db, user):
+        return LoginRequirement.NONE if local_mfa_assurance else LoginRequirement.CHALLENGE
+    if policy_requires_mfa(user, policy) and not local_mfa_assurance:
         return LoginRequirement.ENROLL
     return LoginRequirement.NONE
 

@@ -54,7 +54,7 @@ describe('agentService (W14)', () => {
     await agentService.bulkTriggerFiltered(runFilter, 'offline', 'tok-12345678')
     expect(postData).toHaveBeenCalledWith(
       '/api/v1/agents/pipelines/bulk-trigger',
-      { run_filter: runFilter, workflow_type: 'offline', client_token: 'tok-12345678' },
+      { run_filter: runFilter, workflow_type: 'offline', client_token: 'tok-12345678' }, // gitleaks:allow -- synthetic test credential, never production authority
       { suppressToast: true },
     )
   })

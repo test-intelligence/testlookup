@@ -1,0 +1,19 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../monitoring
+patches:
+  - target:
+      kind: PodMonitor
+      name: testlookup-backend
+    patch: |-
+      - op: add
+        path: /spec/podMetricsEndpoints/0/authorization
+        value:
+          type: Bearer
+          credentials:
+            name: testlookup-metrics-auth
+            key: token
+      - op: add
+        path: /spec/podMetricsEndpoints/0/followRedirects
+        value: false

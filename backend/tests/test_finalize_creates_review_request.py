@@ -71,6 +71,7 @@ def _pipeline():
     requester = uuid.uuid4()
     return SimpleNamespace(
         id=uuid.uuid4(), test_run_id=uuid.uuid4(), workflow_type="offline",
+        attempt=1,
         requested_by=requester,
         status="running", started_at=datetime.now(timezone.utc), completed_at=None,
         error=None, execution_metadata={}, review_policy="human_required",

@@ -8,6 +8,10 @@ from __future__ import annotations
 
 import os
 import time
+from pathlib import Path
+import subprocess
+import sys
+import json
 
 import httpx
 import pytest
@@ -75,11 +79,29 @@ def test_every_target_is_up_and_known_work_has_exact_fleet_counts():
     celery = Celery("m08-acceptance", broker=broker, backend=result_backend)
     queues = ("default", "agent_children")
     task_count = len(queues)
-    task_query = 'sum(testlookup_celery_tasks_total{task_name="celery.ping",status="success"})'
-    runtime_query = 'sum(celery_task_runtime_seconds_count{task_name="celery.ping"})'
+    task_query = 'sum(testlookup_celery_tasks_total{task_name="app.worker.celery_app.queue_delivery_probe",status="success"})'
+    runtime_query = 'sum(celery_task_runtime_seconds_count{task_name="app.worker.celery_app.queue_delivery_probe"})'
     task_baseline = _scalar(task_query)
     runtime_baseline = _scalar(runtime_query)
-    results = [celery.send_task("celery.ping", queue=queue) for queue in queues]
-    assert [result.get(timeout=30) for result in results] == ["pong"] * task_count
+    correlation = "fleet-" + str(time.time_ns())
+    results = [celery.send_task("app.worker.celery_app.queue_delivery_probe", queue=queue,
+                                kwargs={"correlation_id": correlation}) for queue in queues]
+    for queue, result in zip(queues, results):
+        receipt = result.get(timeout=30)
+        assert receipt["correlation_id"] == correlation and receipt["routing_key"] == queue and receipt["worker"]
     _wait_for_delta(task_query, task_baseline, task_count)
     _wait_for_delta(runtime_query, runtime_baseline, task_count)
+
+
+@pytest.mark.skipif(os.getenv("TESTLOOKUP_FULL_SIGNAL_GATE") != "1", reason="full disposable signal profile is opt-in")
+def test_candidate_bound_durable_client_log_trace_signal_path(tmp_path):
+    """Reuse the release checker against the same real monitored fleet."""
+    root = Path(__file__).resolve().parents[3]
+    output = tmp_path / "release-signal-proof.json"
+    result = subprocess.run([
+        sys.executable, str(root / "scripts/monitoring/release_signal_gate.py"),
+        "--manifest", os.environ["TESTLOOKUP_SIGNAL_MANIFEST"],
+        "--runtime-proof", os.environ["TESTLOOKUP_SIGNAL_RUNTIME_PROOF"], "--out", str(output),
+    ], cwd=root, capture_output=True, text=True, timeout=900)
+    proof = json.loads(output.read_text(encoding="utf-8")) if output.exists() else {"status": "missing"}
+    assert result.returncode == 0 and proof["status"] == "passed", proof

@@ -129,8 +129,15 @@ export default function ProjectsPage() {
       closeForm('new')
       setForm(EMPTY_FORM)
       // Refresh the shared store so the TopBar dropdown updates immediately,
-      // then make the new project the active selection.
-      await load()
+      // then make the new project the active selection. D-125: a list request
+      // already in flight when the create committed is shared and answers the
+      // OLD list; then the new project is missing from the picker and a later
+      // refresh drops the selection. Read once more in that case.
+      let list = await refreshProjects().catch(() => null)
+      if (list && created?.id && !list.some((p) => p.id === created.id)) {
+        list = await refreshProjects().catch(() => list)
+      }
+      if (list) setProjects(list)
       if (created?.id) setActiveProject(created)
     } catch (err) {
       // W10 INT-03: a field-level 422 (an OpenShift namespace that is not a DNS label) shows under its field.

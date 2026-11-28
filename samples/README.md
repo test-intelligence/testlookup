@@ -28,7 +28,7 @@ testlookup upload file samples/allure/allure-results.json --project <project-uui
 # Or every .xml, .json and .trx file in one directory:
 testlookup upload dir samples/junit --project <project-uuid> --build demo-3
 
-# Via curl, with an API key (or -H "Authorization: Bearer <access token>"):
+# Via curl, with an API key (or -H "Authorization: Bearer <access token>"): <!-- gitleaks:allow -- documented identifier or placeholder, not a credential -->
 curl -X POST http://localhost:8000/api/v1/ingest/file \
     -H "X-API-Key: qai_your_api_key_here" \
     -F "file=@samples/junit/auth-suite.xml" \

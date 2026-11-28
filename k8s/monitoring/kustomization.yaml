@@ -35,3 +35,4 @@ namespace: testlookup
 resources:
   - prometheusrule.yaml
   - podmonitors.yaml
+  - telemetry-contract.yaml

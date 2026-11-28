@@ -1,4 +1,4 @@
-"""Redis-backed status for async report uploads.
+"""Upload status projection with legacy Redis compatibility.
 
 The ``ingest_uploaded_file`` Celery task processes an upload out-of-band, so the
 HTTP 202 can't report whether parsing/ingestion actually succeeded. This module
@@ -6,9 +6,9 @@ records a small per-task status record in Redis that the task updates at each
 stage and the ``GET /api/v1/ingest/uploads/{task_id}`` endpoint reads, so the UI
 can surface real success/parse-error feedback instead of a silent background run.
 
-The record is intentionally lightweight (a single JSON string with a TTL) — no
-schema migration, no durable table. ``project_id`` is stored so the read
-endpoint can authorize against project membership (no IDOR on task_id).
+Receipt-backed tasks commit status to PostgreSQL and avoid Redis. Legacy
+queued tasks keep their lightweight Redis string and TTL. The read endpoint
+prefers the durable receipt and authorizes using its project identity.
 """
 from __future__ import annotations
 
@@ -119,6 +119,13 @@ async def set_status(
         "result": result,
         "error": error,
     }
+    # New receipt-backed workers must commit their durable result first. Legacy
+    # queued tasks retain the historical best-effort Redis-only behaviour.
+    from app.worker.upload_receipts import active_receipt_id, persist_active_status
+
+    if active_receipt_id() is not None:
+        await persist_active_status(task_id, state=state, progress=progress, result=result, error=error)
+        return True
     try:
         # redis-py's mixed sync/async overloads make ``eval`` appear as a
         # union to mypy even though get_redis() always returns the async client.

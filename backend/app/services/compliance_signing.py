@@ -74,7 +74,7 @@ class SigningKey:
 
     key_id: str
     public_key_pem: str
-    private_key: Ed25519PrivateKey = field(repr=False, compare=False)
+    private_key: Ed25519PrivateKey = field(repr=False, compare=False) # gitleaks:allow -- field/event identifier, not credential material
 
 
 # ── Pure helpers (the CLI's offline verifier restates key_id_for / statement) ──

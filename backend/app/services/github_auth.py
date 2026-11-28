@@ -98,9 +98,7 @@ def _parse_expiry(value: Any) -> float:
 
 async def installation_token(api_base: str, installation_id: int, app: dict[str, Any]) -> str:
     """A cached or freshly minted installation token. Raises ``GitHubAppUnavailable``."""
-    import httpx
-
-    from app.core.http_client import http_verify
+    from app.core.http_client import create_integration_http_client
     from app.services.url_safety import egress_block_reason
 
     base = api_base.rstrip("/")
@@ -121,7 +119,7 @@ async def installation_token(api_base: str, installation_id: int, app: dict[str,
         "User-Agent": "TestLookup/1.0",
     }
     try:
-        async with httpx.AsyncClient(verify=http_verify(), timeout=10.0, follow_redirects=False) as client:
+        async with create_integration_http_client(timeout=10.0) as client:
             resp = await client.post(url, headers=headers)
     except Exception as exc:  # noqa: BLE001
         raise GitHubAppUnavailable(f"Network error minting an installation token: {type(exc).__name__}") from exc
@@ -156,9 +154,7 @@ async def verify_installation_repository(
     readable is not sufficient).  No token or remote error body leaves this
     boundary.
     """
-    import httpx
-
-    from app.core.http_client import http_verify
+    from app.core.http_client import create_integration_http_client
     from app.services.url_safety import egress_block_reason
 
     token = await installation_token(api_base, installation_id, app)
@@ -176,7 +172,7 @@ async def verify_installation_repository(
         if block:
             raise GitHubAppUnavailable(f"Target host is not allowed ({block})")
         try:
-            async with httpx.AsyncClient(verify=http_verify(), timeout=10.0, follow_redirects=False) as client:
+            async with create_integration_http_client(timeout=10.0) as client:
                 response = await client.get(url, headers=headers)
         except Exception as exc:  # noqa: BLE001
             raise GitHubAppUnavailable(

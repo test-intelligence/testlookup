@@ -10,7 +10,7 @@ List Policies
 
 List all release gate policies with optional filters.
 
-Source: [backend/app/routers/release_gate_policies.py:160](../../../backend/app/routers/release_gate_policies.py#L160).
+Source: [backend/app/routers/release_gate_policies.py:181](../../../backend/app/routers/release_gate_policies.py#L181).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -121,7 +121,7 @@ Create a new draft policy (ADMIN only).
 A project-bound API key may create drafts for its own project only, never
 for another project or the system default (re-audit N20).
 
-Source: [backend/app/routers/release_gate_policies.py:299](../../../backend/app/routers/release_gate_policies.py#L299).
+Source: [backend/app/routers/release_gate_policies.py:320](../../../backend/app/routers/release_gate_policies.py#L320).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -208,7 +208,7 @@ Get Effective Policy
 
 Get the resolved effective policy for a project (project → system → None).
 
-Source: [backend/app/routers/release_gate_policies.py:197](../../../backend/app/routers/release_gate_policies.py#L197).
+Source: [backend/app/routers/release_gate_policies.py:218](../../../backend/app/routers/release_gate_policies.py#L218).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`.
 
@@ -297,7 +297,7 @@ Get Policy History
 
 Get all policy versions for a project scope, ordered by version desc.
 
-Source: [backend/app/routers/release_gate_policies.py:245](../../../backend/app/routers/release_gate_policies.py#L245).
+Source: [backend/app/routers/release_gate_policies.py:266](../../../backend/app/routers/release_gate_policies.py#L266).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_project_access.<locals>._check`.
 
@@ -382,7 +382,7 @@ Simulate Policy
 
 Simulate a draft policy against a past run's decision data.
 
-Source: [backend/app/routers/release_gate_policies.py:511](../../../backend/app/routers/release_gate_policies.py#L511).
+Source: [backend/app/routers/release_gate_policies.py:603](../../../backend/app/routers/release_gate_policies.py#L603).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -470,7 +470,7 @@ Get System Policy History
 
 Get all system default policy versions, ordered by version desc.
 
-Source: [backend/app/routers/release_gate_policies.py:261](../../../backend/app/routers/release_gate_policies.py#L261).
+Source: [backend/app/routers/release_gate_policies.py:282](../../../backend/app/routers/release_gate_policies.py#L282).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -539,13 +539,101 @@ References such as `#/components/schemas/...` resolve in [schemas](../schemas.md
 }
 ```
 
+## DELETE `/api/v1/release-gate-policies/{policy_id}`
+
+Delete Policy
+
+Delete a draft that was never published (ADMIN only) (D-141).
+
+A version that was ever published stays: past verdicts and the version
+history name it, so it is deactivated instead (409). A draft a stored
+release decision points at is kept too (409). Records ``policy.updated``
+with ``changed: draft deleted`` in the same transaction, the way
+deactivate records its edit of the active flag.
+
+Source: [backend/app/routers/release_gate_policies.py:542](../../../backend/app/routers/release_gate_policies.py#L542).
+
+Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
+
+Declared Python handler arguments (includes exact role/guard options):
+
+```python
+policy_id: uuid.UUID, current_user: User=Depends(require_role(UserRole.ADMIN, allow_project_key=True)), db: AsyncSession=Depends(get_db)
+```
+
+Direct handler error branches (dependency/service errors can add others):
+
+```python
+HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Policy not found')
+HTTPException(status_code=status.HTTP_409_CONFLICT, detail=DELETE_PUBLISHED_DETAIL)
+HTTPException(status_code=status.HTTP_409_CONFLICT, detail=DELETE_REFERENCED_DETAIL)
+```
+
+### Declared wire contract
+
+References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
+
+```json
+{
+  "operationId": "delete_policy_api_v1_release_gate_policies__policy_id__delete",
+  "parameters": [
+    {
+      "in": "path",
+      "name": "policy_id",
+      "required": true,
+      "schema": {
+        "format": "uuid",
+        "title": "Policy Id",
+        "type": "string"
+      }
+    },
+    {
+      "in": "header",
+      "name": "X-API-Key",
+      "required": false,
+      "schema": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "title": "X-Api-Key"
+      }
+    }
+  ],
+  "responses": {
+    "204": {
+      "description": "Successful Response"
+    },
+    "422": {
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/HTTPValidationError"
+          }
+        }
+      },
+      "description": "Validation Error"
+    }
+  },
+  "security": [
+    {
+      "JWT": []
+    }
+  ]
+}
+```
+
 ## GET `/api/v1/release-gate-policies/{policy_id}`
 
 Get Policy
 
 Get a single release gate policy by ID.
 
-Source: [backend/app/routers/release_gate_policies.py:275](../../../backend/app/routers/release_gate_policies.py#L275).
+Source: [backend/app/routers/release_gate_policies.py:296](../../../backend/app/routers/release_gate_policies.py#L296).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`.
 
@@ -632,7 +720,7 @@ Update Policy
 
 Update a draft policy (ADMIN only). Fails if already published.
 
-Source: [backend/app/routers/release_gate_policies.py:360](../../../backend/app/routers/release_gate_policies.py#L360).
+Source: [backend/app/routers/release_gate_policies.py:381](../../../backend/app/routers/release_gate_policies.py#L381).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -646,6 +734,7 @@ Direct handler error branches (dependency/service errors can add others):
 
 ```python
 HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Policy not found')
+HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=DRAFT_DELETED_DETAIL)
 HTTPException(status_code=status.HTTP_409_CONFLICT, detail='Cannot edit a published policy. Create a new version instead.')
 ```
 
@@ -730,7 +819,7 @@ Deactivate Policy
 
 Deactivate a policy (falls back to system default or hardcoded).
 
-Source: [backend/app/routers/release_gate_policies.py:475](../../../backend/app/routers/release_gate_policies.py#L475).
+Source: [backend/app/routers/release_gate_policies.py:506](../../../backend/app/routers/release_gate_policies.py#L506).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -817,7 +906,7 @@ Publish Policy
 
 Publish a draft policy: deactivates any previous active policy for the same scope.
 
-Source: [backend/app/routers/release_gate_policies.py:403](../../../backend/app/routers/release_gate_policies.py#L403).
+Source: [backend/app/routers/release_gate_policies.py:429](../../../backend/app/routers/release_gate_policies.py#L429).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -831,6 +920,7 @@ Direct handler error branches (dependency/service errors can add others):
 
 ```python
 HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail='Policy not found')
+HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=DRAFT_DELETED_DETAIL)
 HTTPException(status_code=status.HTTP_409_CONFLICT, detail=ALREADY_PUBLISHED_DETAIL)
 HTTPException(status_code=status.HTTP_409_CONFLICT, detail=PUBLISH_RACE_DETAIL)
 ```

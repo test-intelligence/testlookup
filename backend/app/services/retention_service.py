@@ -1884,12 +1884,25 @@ async def execute_candidates(
     are derived from four independent clocks, and seven of them never
     reference a run.
     """
+    # Fence event relay before Mongo deletion while the source mapping is
+    # intact. In-flight relay finishes under the same per-project lock.
+    from app.services.pipeline_event_admission import as_uuid, purge_pipeline_event_intents
+
+    audit_runs = {run for item in cand.audit_run_strs if (run := as_uuid(item)) is not None}
+    await purge_pipeline_event_intents(
+        db, project_id,
+        pipeline_run_ids=set(cand.audit_pipeline_strs),
+        test_run_ids=set(cand.purge_run_ids) | audit_runs,
+    )
     # (2) Mongo deletes — while the Postgres mapping still exists.
     mongo_deleted: dict[str, int] = {}
     for collection, field, attr in _MONGO_PLANS:
         mongo_deleted[collection] = await _mongo_delete(
             mongo, collection, field, list(getattr(cand, attr))
         )
+    mongo_deleted[_PIPELINE_EVENT_LOG] += await _mongo_delete(
+        mongo, _PIPELINE_EVENT_LOG, "test_run_id", cand.audit_run_strs,
+    )
 
     # (3) MinIO deletes.
     minio_deleted = 0
@@ -2061,10 +2074,6 @@ async def execute_candidates(
     return counts
 
 
-#: The ``_Candidates`` attribute of the one case-keyed ``_MONGO_PLANS`` entry.
-_CASE_KEYED_ATTR = "purge_tc_strs"
-
-
 async def delete_project_run_documents(
     db: AsyncSession,
     mongo: Any,
@@ -2080,7 +2089,8 @@ async def delete_project_run_documents(
     a document whose run row is gone is never reached again (the nightly purge
     resolves its candidates FROM Postgres runs).
 
-    Reads only in Postgres (stages nothing, never commits). Returns
+    Cancels local pipeline-event intents before deleting Mongo history (the
+    caller commits). Returns
     ``{collection: deleted}`` with a key for EVERY ``_MONGO_PLANS`` collection
     (0 included). Driven from ``_MONGO_PLANS`` on purpose, so a collection
     added to that table later is reset too, by construction.
@@ -2102,6 +2112,7 @@ async def delete_project_run_documents(
     the job).
     """
     from app.services.stream_service import canonical_test_run_uuid
+    from app.services.pipeline_event_admission import purge_pipeline_event_intents
 
     counts: dict[str, int] = {collection: 0 for collection, _f, _a in _MONGO_PLANS}
 
@@ -2158,6 +2169,9 @@ async def delete_project_run_documents(
         audit_pipeline_strs=pipeline_strs,
         audit_run_strs=run_strs,
     )
+    await purge_pipeline_event_intents(
+        db, project_id, pipeline_run_ids=set(pipeline_strs), test_run_ids=run_set,
+    )
 
     case_plans: list[tuple[str, str]] = []
     for collection, field, attr in _MONGO_PLANS:
@@ -2167,6 +2181,9 @@ async def delete_project_run_documents(
         counts[collection] = await _mongo_delete(
             mongo, collection, field, list(getattr(cand, attr))
         )
+    counts[_PIPELINE_EVENT_LOG] += await _mongo_delete(
+        mongo, _PIPELINE_EVENT_LOG, "test_run_id", run_strs,
+    )
 
     if case_plans:
         stream = await db.stream_scalars(
@@ -2183,3 +2200,88 @@ async def delete_project_run_documents(
                 )
 
     return counts
+
+# Instance-scoped identity events have no project owner. This separate,
+# explicitly approved policy never inherits a project's enabled flag or clock.
+async def purge_identity_events_batch(
+    db: AsyncSession, *, now: datetime, batch_size: int = 500,
+    actor: Any = None, scheduled: bool = False, observed_at: Optional[datetime] = None,
+    preview_hash: Optional[str] = None, confirmation: Optional[str] = None,
+    reason: str = "Approved instance identity retention sweep",
+) -> dict[str, Any]:
+    """Stage one finite SQL-only batch plus its permanent audit atomically.
+
+    The policy row lock serializes this batch with enable/disable and EVERY
+    identity hold mutation. SCIM authority, other security/lifecycle events,
+    unknown types and unsuccessful routine events cannot match either the
+    candidate query or the final DELETE. The caller commits only on success.
+    """
+    from sqlalchemy import text
+
+    from app.models.identity_retention import MAX_BATCH_SIZE
+    from app.models.postgres import IdentityEvent
+    from app.services import identity_retention_service as identity
+
+    observed = identity.aware(now)
+    if type(batch_size) is not int or not 1 <= batch_size <= MAX_BATCH_SIZE:
+        raise identity.IdentityRetentionError("invalid_batch", 422)
+    if not scheduled:
+        identity.require_interactive_admin(actor)
+        reason = identity.clean_reason(reason)
+    # Keep a stalled DB/hold lock from becoming an unbounded maintenance job.
+    # These LOCAL settings disappear on the caller's commit or rollback.
+    if db.get_bind().dialect.name == "postgresql":
+        await db.execute(text("SET LOCAL lock_timeout = '2s'"))
+        await db.execute(text("SET LOCAL statement_timeout = '5s'"))
+    row = await identity.policy_row(db, lock=True)
+    policy = identity.document(row)
+    if not policy.enabled:
+        if not scheduled:
+            raise identity.IdentityRetentionError("retention_disabled")
+        return {"status": "disabled", "deleted": 0}
+    if identity.live_holds(policy, observed):
+        if not scheduled:
+            raise identity.IdentityRetentionError("retention_held")
+        return {"status": "held", "deleted": 0}
+    if scheduled:
+        cutoff = observed - timedelta(days=policy.retention_days)
+    else:
+        if observed_at is None or preview_hash is None:
+            raise identity.IdentityRetentionError("preview_stale")
+        snapshot = await identity.verify_preview(
+            db, policy=policy, observed_at=observed_at, now=observed,
+            retention_days=policy.retention_days, preview_hash=preview_hash,
+        )
+        if confirmation != identity.purge_confirmation(policy.retention_days):
+            raise identity.IdentityRetentionError("confirmation_mismatch", 422)
+        cutoff = snapshot["cutoff"]
+    candidates = (await db.execute(
+        select(IdentityEvent.id)
+        .where(identity.routine_event_clause(), IdentityEvent.created_at < cutoff)
+        .order_by(IdentityEvent.created_at, IdentityEvent.id)
+        .limit(batch_size)
+        .with_for_update(skip_locked=True)
+    )).scalars().all()
+    deleted = 0
+    if candidates:
+        deleted = len((await db.execute(
+            delete(IdentityEvent)
+            .where(
+                IdentityEvent.id.in_(candidates), identity.routine_event_clause(),
+                IdentityEvent.created_at < cutoff,
+            )
+            .returning(IdentityEvent.id)
+        )).all())
+    identity.audit(
+        db, actor=actor, action="purged", policy=policy, reason=reason,
+        details={"deleted": deleted, "cutoff": cutoff.isoformat(), "batch_size": batch_size,
+                 "scheduled": scheduled}, setting_key=identity.PURGE_AUDIT_KEY,
+    )
+    await db.flush()
+    return {"status": "completed", "deleted": deleted, "batch_size": batch_size,
+            "batch_full": deleted == batch_size, "cutoff": cutoff.isoformat(),
+            "policy_revision": policy.revision}
+
+
+#: The ``_Candidates`` attribute of the one case-keyed ``_MONGO_PLANS`` entry.
+_CASE_KEYED_ATTR = "purge_tc_strs"

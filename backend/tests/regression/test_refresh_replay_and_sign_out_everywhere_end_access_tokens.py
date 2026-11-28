@@ -11,12 +11,9 @@ The rules:
   again is refused, but it is not a replay: it must not end a session the user
   has opened since.
 * The default access-token lifetime is 30 minutes.
-* Two tabs of one browser can send the same refresh token at the same moment.
-  The second one arrives a moment after the first rotated it. Within a short
-  window (``JWT_REFRESH_REUSE_LEEWAY_SECONDS``, default 10) that is answered
-  with a new pair, not treated as theft: with 30-minute access tokens the race
-  comes round often, and signing the user out of every device for it would be
-  wrong. After the window, or once the session was ended, it is a replay.
+* A refresh token is single-use. Reusing it at any time is a replay and must
+  never mint a second successor; browser refreshes are single-flighted so
+  legitimate concurrent requests converge on the first rotated pair.
 
 The harness is SQLite, which has no durable revocation table, so the handler's
 ``revoke_all_user_tokens(user_id, db)`` call is forwarded to the real function
@@ -58,19 +55,6 @@ def cutoff_calls(monkeypatch):
 
     monkeypatch.setattr(auth_router, "revoke_all_user_tokens", _forward)
     return calls
-
-
-@pytest.fixture(autouse=True)
-def reuse_leeway(monkeypatch):
-    """No leeway unless a test asks for it: a replay here is a replay."""
-    from app.core.config import settings
-
-    monkeypatch.setattr(settings, "JWT_REFRESH_REUSE_LEEWAY_SECONDS", 0)
-
-    def _set(seconds: int) -> None:
-        monkeypatch.setattr(settings, "JWT_REFRESH_REUSE_LEEWAY_SECONDS", seconds)
-
-    return _set
 
 
 def _bearer(token: str) -> dict:
@@ -184,65 +168,35 @@ def test_the_default_access_token_lifetime_is_thirty_minutes():
     assert Settings.model_fields["JWT_ACCESS_TOKEN_EXPIRE_MINUTES"].default == 30
 
 
-# ── two tabs refreshing at the same moment ──────────────────────────────────
+# ── immediate duplicate redemption ──────────────────────────────────────────
 
 
-def test_the_default_leeway_is_ten_seconds():
+def test_refresh_token_reuse_leeway_is_not_configurable():
     from app.core.config import Settings
 
-    assert Settings.model_fields["JWT_REFRESH_REUSE_LEEWAY_SECONDS"].default == 10
+    assert "JWT_REFRESH_REUSE_LEEWAY_SECONDS" not in Settings.model_fields
 
 
-async def test_the_same_refresh_token_from_a_second_tab_right_away_is_not_a_replay(
-    db, client, cutoff_calls, reuse_leeway,
+async def test_immediate_reuse_cannot_create_a_second_renewable_branch(
+    db, client, cutoff_calls,
 ):
-    reuse_leeway(10)
     user = await make_user(db, username="twotabs")
     first = (await login(client, user=user)).json()
     tab_a = await _refresh(client, first["refresh_token"])
+    assert tab_a.status_code == 200
+    assert cutoff_calls == []
+    assert await _me(client, tab_a.json()["access_token"]) == 200
 
     tab_b = await _refresh(client, first["refresh_token"])
 
-    assert tab_a.status_code == 200 and tab_b.status_code == 200
-    assert cutoff_calls == []
-    assert tab_b.json()["refresh_token"] != tab_a.json()["refresh_token"]
-    for pair in (tab_a.json(), tab_b.json()):
-        assert await _me(client, pair["access_token"]) == 200
-        # Each tab's own token keeps rotating normally.
-        assert (await _refresh(client, pair["refresh_token"])).status_code == 200
-
-
-async def test_after_the_leeway_the_same_token_is_a_replay(db, client, cutoff_calls, reuse_leeway, session_factory):
-    from datetime import timedelta
-
-    from sqlalchemy import select
-
-    from app.models.postgres import RefreshTokenRecord
-
-    reuse_leeway(10)
-    user = await make_user(db, username="late")
-    first = (await login(client, user=user)).json()
-    assert (await _refresh(client, first["refresh_token"])).status_code == 200
-    # Age the rotation past the window.
-    async with session_factory() as session:
-        rows = (await session.execute(
-            select(RefreshTokenRecord).where(
-                RefreshTokenRecord.user_id == user.id, RefreshTokenRecord.rotated_to_id.is_not(None),
-            )
-        )).scalars().all()
-        assert len(rows) == 1
-        rows[0].revoked_at = rows[0].revoked_at - timedelta(seconds=11)
-        await session.commit()
-
-    late = await _refresh(client, first["refresh_token"])
-
-    assert late.status_code == 401
+    assert tab_b.status_code == 401
     assert [uid for uid, _db in cutoff_calls] == [user.id]
+    assert await _me(client, tab_a.json()["access_token"]) == 401
+    assert (await _refresh(client, tab_a.json()["refresh_token"])).status_code == 401
 
 
-async def test_the_leeway_does_not_revive_a_session_that_was_ended(db, client, cutoff_calls, reuse_leeway):
-    """After a logout the rotated token must not mint a new pair, window or not."""
-    reuse_leeway(10)
+async def test_reuse_does_not_revive_a_session_that_was_ended(db, client, cutoff_calls):
+    """After a logout the rotated token must not mint a new pair."""
     user = await make_user(db, username="ended")
     first = (await login(client, user=user)).json()
     rotated = (await _refresh(client, first["refresh_token"])).json()

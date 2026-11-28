@@ -228,6 +228,15 @@ export async function deactivatePolicy(id: string): Promise<PolicySummary> {
   return data;
 }
 
+/**
+ * D-141: delete a draft that was never published (204). The server refuses a
+ * published version, or a draft a stored decision names, with a 409 sentence;
+ * the page toasts that sentence itself, so the interceptor's toast is off.
+ */
+export async function deletePolicy(id: string): Promise<void> {
+  await api.delete(`/api/v1/release-gate-policies/${id}`, { suppressToast: true });
+}
+
 export async function simulatePolicy(runId: string, policyDocument: PolicyDocument): Promise<SimulateResponse> {
   const { data } = await api.post<SimulateResponse>('/api/v1/release-gate-policies/simulate', {
     run_id: runId,

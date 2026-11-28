@@ -31,7 +31,7 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
-import structlog
+from structlog.testing import CapturingLogger
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
 from app.core import metrics
@@ -307,19 +307,20 @@ async def test_the_row_and_the_file_must_agree(world):
     assert other_pack["signature"] == "invalid", "a signature.json copied from another pack"
 
 
-async def test_a_pack_from_before_signing_verifies_as_unsigned(world):
+async def test_a_pack_from_before_signing_verifies_as_unsigned(world, monkeypatch):
     world.key = None
-    with structlog.testing.capture_logs() as events:
-        before = metrics.compliance_pack_signing_failures_total._value.get()
-        row, stored, _ = await _generate(world)
-        after = metrics.compliance_pack_signing_failures_total._value.get()
+    logger = CapturingLogger()
+    monkeypatch.setattr(svc, "logger", logger)
+    before = metrics.compliance_pack_signing_failures_total._value.get()
+    row, stored, _ = await _generate(world)
+    after = metrics.compliance_pack_signing_failures_total._value.get()
 
     assert row.signature is None and row.signing_key_id is None
     assert "signature.json" not in dict(_members(stored))
     assert row.metadata_snapshot["signing"] == {"state": "unsigned", "reason": "key_unreadable"}
     assert after == before + 1
-    warning = next(e for e in events if e["event"] == "compliance_pack_generated_unsigned")
-    assert warning["log_level"] == "warning" and warning["reason"] == "key_unreadable"
+    [warning] = [call for call in logger.calls if call.args == ("compliance_pack_generated_unsigned",)]
+    assert warning.method_name == "warning" and warning.kwargs["reason"] == "key_unreadable"
 
     result = _check(row, stored, {})
     assert (result["result"], result["signature"]) == ("verified", "unsigned")

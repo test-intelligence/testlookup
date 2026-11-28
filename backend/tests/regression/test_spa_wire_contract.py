@@ -48,6 +48,10 @@ _NOT_REQUEST_PATHS: dict[str, str] = {
         "prefix constant in services/api.ts (NO_REFRESH_PREFIXES) — matched "
         "against outgoing URLs to skip the token refresh, never requested"
     ),
+    "/api/v1/ingest/uploads/": (
+        "receipt Location marker in reportUploadService.unconfirmedUploadReceipt, never fetched; "
+        "getStatus polls the real task-ID route"
+    ),
 }
 
 

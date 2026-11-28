@@ -113,6 +113,8 @@ REVIEWED_OPT_INS: dict[tuple[str, str], tuple[str, str]] = {
         "_enforce_policy_binding", "the stored policy's project; system default refused"),
     ("app/routers/release_gate_policies.py", "deactivate_policy"): (
         "_enforce_policy_binding", "the stored policy's project; system default refused"),
+    ("app/routers/release_gate_policies.py", "delete_policy"): (
+        "_enforce_policy_binding", "D-141: the stored draft's project; system default refused"),
     ("app/routers/release_gate_policies.py", "simulate_policy"): (
         "_enforce_api_key_project_binding", "against the body run's project"),
     # ── re-audit N26: require_role(UserRole.QA_LEAD, allow_project_key=True) ──
@@ -247,6 +249,11 @@ REVIEWED_INLINE_ADMIN_CHECKS: dict[tuple[str, str], str] = {
         "re-audit N33: its user is a digest subscription's owner loaded by id in "
         "dispatch_scheduled_digests, not the request principal, so it carries no API-key "
         "binding to consult; the ADMIN branch keeps the workspace-wide-digest rule"
+    ),
+    ("app/services/identity_retention_service.py", "require_interactive_admin"): (
+        "requires trusted credential_kind(actor) == CREDENTIAL_KIND_JWT as well as ADMIN, "
+        "so bound and unbound API keys and unknown credential kinds are refused; "
+        "mounted identity retention route tests cover both API-key cases"
     ),
 }
 

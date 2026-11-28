@@ -1,0 +1,110 @@
+rule_files:
+  - ../prometheus-rules/testlookup-alerts.yml
+evaluation_interval: 30s
+tests:
+  - name: fresh queue depth keeps tenant scope and ignores a failed lane or unreachable API
+    interval: 30s
+    input_series:
+      - series: 'celery_queue_length{cluster="lab",namespace="primary",telemetry_profile="kubernetes",job="testlookup-backend",instance="fresh",queue_name="agent_children"}'
+        values: '3x14'
+      - series: 'testlookup_celery_queue_depth_observed_timestamp_seconds{cluster="lab",namespace="primary",telemetry_profile="kubernetes",job="testlookup-backend",instance="fresh",queue_name="agent_children"}'
+        values: '0+30x14'
+      - series: 'celery_queue_length{cluster="lab",namespace="primary",telemetry_profile="kubernetes",job="testlookup-backend",instance="fresh",queue_name="critical"}'
+        values: '121x14'
+      - series: 'testlookup_celery_queue_depth_observed_timestamp_seconds{cluster="lab",namespace="primary",telemetry_profile="kubernetes",job="testlookup-backend",instance="fresh",queue_name="critical"}'
+        values: '0+30x14'
+      - series: 'up{cluster="lab",namespace="primary",telemetry_profile="kubernetes",job="testlookup-backend",instance="fresh"}'
+        values: '1x14'
+      - series: 'celery_queue_length{cluster="lab",namespace="primary",telemetry_profile="kubernetes",job="testlookup-backend",instance="bad-lane",queue_name="agent_children"}'
+        values: '900x14'
+      - series: 'testlookup_celery_queue_depth_observed_timestamp_seconds{cluster="lab",namespace="primary",telemetry_profile="kubernetes",job="testlookup-backend",instance="bad-lane",queue_name="agent_children"}'
+        values: '0x14'
+      - series: 'up{cluster="lab",namespace="primary",telemetry_profile="kubernetes",job="testlookup-backend",instance="bad-lane"}'
+        values: '1x14'
+      - series: 'celery_queue_length{cluster="lab",namespace="primary",telemetry_profile="kubernetes",job="testlookup-backend",instance="down-target",queue_name="agent_children"}'
+        values: '250x14'
+      - series: 'testlookup_celery_queue_depth_observed_timestamp_seconds{cluster="lab",namespace="primary",telemetry_profile="kubernetes",job="testlookup-backend",instance="down-target",queue_name="agent_children"}'
+        values: '0+30x14'
+      - series: 'up{cluster="lab",namespace="primary",telemetry_profile="kubernetes",job="testlookup-backend",instance="down-target"}'
+        values: '0x14'
+      - series: 'celery_queue_length{cluster="lab",namespace="primary",telemetry_profile="kubernetes",job="testlookup-backend",instance="future-clock",queue_name="agent_children"}'
+        values: '500x14'
+      - series: 'testlookup_celery_queue_depth_observed_timestamp_seconds{cluster="lab",namespace="primary",telemetry_profile="kubernetes",job="testlookup-backend",instance="future-clock",queue_name="agent_children"}'
+        values: '30+30x14'
+      - series: 'up{cluster="lab",namespace="primary",telemetry_profile="kubernetes",job="testlookup-backend",instance="future-clock"}'
+        values: '1x14'
+      - series: 'celery_queue_length{cluster="lab",namespace="primary",telemetry_profile="kubernetes",job="testlookup-backend",instance="stale-lane",queue_name="agent_children"}'
+        values: '400x14'
+      - series: 'testlookup_celery_queue_depth_observed_timestamp_seconds{cluster="lab",namespace="primary",telemetry_profile="kubernetes",job="testlookup-backend",instance="stale-lane",queue_name="agent_children"}'
+        values: '30x14'
+      - series: 'up{cluster="lab",namespace="primary",telemetry_profile="kubernetes",job="testlookup-backend",instance="stale-lane"}'
+        values: '1x14'
+    promql_expr_test:
+      - expr: 'testlookup:celery_queue_pending{queue_name="agent_children"}'
+        eval_time: 5m
+        exp_samples:
+          - labels: 'testlookup:celery_queue_pending{cluster="lab",namespace="primary",queue_name="agent_children",telemetry_profile="kubernetes"}'
+            value: 3
+      - expr: 'count by (cluster,namespace,queue_name,telemetry_profile) (ALERTS{alertname="TestLookupCeleryQueueBacklog",alertstate="firing"})'
+        eval_time: 5m30s
+        exp_samples:
+          - labels: '{cluster="lab",namespace="primary",queue_name="critical",telemetry_profile="kubernetes"}'
+            value: 1
+
+  - name: a missing child target with a small fresh backlog alerts and recovery drains it
+    interval: 30s
+    input_series:
+      - series: 'celery_queue_length{cluster="lab",namespace="primary",telemetry_profile="kubernetes",job="testlookup-backend",instance="backend",queue_name="agent_children"}'
+        values: '1x8 0x7'
+      - series: 'testlookup_celery_queue_depth_observed_timestamp_seconds{cluster="lab",namespace="primary",telemetry_profile="kubernetes",job="testlookup-backend",instance="backend",queue_name="agent_children"}'
+        values: '0+30x16'
+      - series: 'up{cluster="lab",namespace="primary",telemetry_profile="kubernetes",job="testlookup-backend",instance="backend"}'
+        values: '1x16'
+      - series: 'testlookup:telemetry_expected_role{cluster="lab",namespace="primary",telemetry_profile="kubernetes",job="testlookup-worker",telemetry_role="worker-children"}'
+        values: '1x16'
+      - series: 'up{cluster="lab",namespace="primary",telemetry_profile="kubernetes",job="testlookup-worker",telemetry_role="worker-children",instance="child"}'
+        values: '0x2 stale _x2 1x9'
+      - series: 'up{cluster="lab",namespace="other",telemetry_profile="kubernetes",job="testlookup-worker",telemetry_role="worker-children",instance="other-child"}'
+        values: '1x16'
+    promql_expr_test:
+      - expr: 'ALERTS{alertname="TestLookupChildQueueNoHealthyTarget",alertstate="firing"}'
+        eval_time: 2m
+        exp_samples: []
+      - expr: 'count by (cluster,namespace,queue_name,telemetry_profile) (ALERTS{alertname="TestLookupChildQueueNoHealthyTarget",alertstate="firing"})'
+        eval_time: 2m30s
+        exp_samples:
+          - labels: '{cluster="lab",namespace="primary",queue_name="agent_children",telemetry_profile="kubernetes"}'
+            value: 1
+      - expr: 'ALERTS{alertname=~"TestLookupChildQueueNoHealthyTarget|TestLookupChildQueueNoProgress",alertstate="firing"}'
+        eval_time: 4m30s
+        exp_samples: []
+
+  - name: healthy scrape with no task starts fires and a legacy-envelope start clears it
+    interval: 30s
+    input_series:
+      - series: 'celery_queue_length{cluster="lab",namespace="primary",telemetry_profile="kubernetes",job="testlookup-backend",instance="backend",queue_name="agent_children"}'
+        values: '3x20'
+      - series: 'testlookup_celery_queue_depth_observed_timestamp_seconds{cluster="lab",namespace="primary",telemetry_profile="kubernetes",job="testlookup-backend",instance="backend",queue_name="agent_children"}'
+        values: '0+30x20'
+      - series: 'up{cluster="lab",namespace="primary",telemetry_profile="kubernetes",job="testlookup-backend",instance="backend"}'
+        values: '1x20'
+      - series: 'testlookup:telemetry_expected_role{cluster="lab",namespace="primary",telemetry_profile="kubernetes",job="testlookup-worker",telemetry_role="worker-children"}'
+        values: '1x20'
+      - series: 'up{cluster="lab",namespace="primary",telemetry_profile="kubernetes",job="testlookup-worker",telemetry_role="worker-children",instance="child"}'
+        values: '1x20'
+      - series: 'celery_task_queue_wait_seconds_count{cluster="lab",namespace="primary",telemetry_profile="kubernetes",job="testlookup-worker",telemetry_role="worker-children",instance="child",queue_name="agent_children"}'
+        values: '0x20'
+      - series: 'celery_task_queue_wait_unavailable_total{cluster="lab",namespace="primary",telemetry_profile="kubernetes",job="testlookup-worker",telemetry_role="worker-children",instance="child",queue_name="agent_children",reason="missing_stamp"}'
+        values: '0x12 1x7'
+    promql_expr_test:
+      - expr: 'ALERTS{alertname="TestLookupChildQueueNoProgress",alertstate="firing"}'
+        eval_time: 5m
+        exp_samples: []
+      - expr: 'count by (cluster,namespace,queue_name,telemetry_profile) (ALERTS{alertname="TestLookupChildQueueNoProgress",alertstate="firing"})'
+        eval_time: 5m30s
+        exp_samples:
+          - labels: '{cluster="lab",namespace="primary",queue_name="agent_children",telemetry_profile="kubernetes"}'
+            value: 1
+      - expr: 'ALERTS{alertname="TestLookupChildQueueNoProgress",alertstate="firing"}'
+        eval_time: 6m30s
+        exp_samples: []

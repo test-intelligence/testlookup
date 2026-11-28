@@ -79,7 +79,7 @@ services:
       target: production
     profiles: ["async"]
     volumes: !reset []
-    command: celery -A app.worker.celery_app worker --loglevel=info --concurrency=${CELERY_WORKER_CONCURRENCY:-1} -Q default,critical,ingestion,ai_analysis
+    command: python -m app.worker.worker_process celery -A app.worker.celery_app worker --loglevel=info --concurrency=${CELERY_WORKER_CONCURRENCY:-1} -Q default,critical,ingestion,ai_analysis
 
   worker-children:
     image: gcr.io/${GCP_PROJECT_ID:?GCP_PROJECT_ID must be set}/testlookup-backend:${IMAGE_TAG:?IMAGE_TAG must be set}

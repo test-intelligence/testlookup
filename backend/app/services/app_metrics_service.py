@@ -33,7 +33,7 @@ from typing import Any, Mapping, Optional, Sequence
 import httpx
 import structlog
 
-from app.core.http_client import get_http_client
+from app.core.http_client import get_integration_http_client as get_http_client
 from app.services import prometheus_vocab as pv
 from app.services.integration_config_service import IntegrationRuntimeConfig
 from app.services.url_safety import egress_block_reason

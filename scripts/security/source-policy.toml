@@ -1,0 +1,9 @@
+# A narrow blocking complement to the repository's active CodeQL default setup.
+required-version = "==0.17.3"
+target-version = "py314"
+include = ["*.py", "*.pyi"]
+exclude = ["**/tests/**", "**/__pycache__/**", "**/.venv/**"]
+force-exclude = true
+
+[lint]
+select = ["S501", "S506"]

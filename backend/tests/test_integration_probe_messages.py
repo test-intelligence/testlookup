@@ -104,7 +104,11 @@ async def test_ollama_is_skipped_when_nothing_runs_on_it(monkeypatch):
 async def test_jira_down_without_errno_text(monkeypatch):
     config = {"jira_enabled": True, "jira_domain": "jira.internal.corp", "jira_email": "a@b.c", "jira_api_token": "t"}
     monkeypatch.setattr(settings, "AI_OFFLINE_MODE", False)
-    with patch.object(svc, "get_http_client", lambda: _client_raising(_httpx_connect_error_from(RESOLVER_ERROR))):
+    with patch.object(
+        svc,
+        "get_integration_http_client",
+        lambda: _client_raising(_httpx_connect_error_from(RESOLVER_ERROR)),
+    ):
         result = await svc.probe_jira(config)
     assert result.status == "down"
     assert "Errno" not in result.message and "jira.internal.corp" not in result.message

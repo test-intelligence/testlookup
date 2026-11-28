@@ -1,0 +1,23 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-telemetry-client
+  namespace: testlookup
+spec:
+  podSelector:
+    matchExpressions:
+      - key: app.kubernetes.io/component
+        operator: In
+        values: [api, worker, scheduler, mcp-server]
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: testlookup-telemetry
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: testlookup-otel
+      ports:
+        - protocol: TCP
+          port: 4318

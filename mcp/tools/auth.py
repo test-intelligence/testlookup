@@ -59,9 +59,13 @@ def register(mcp) -> None:  # noqa: ANN001
         resp = await _api._get_client().post(
             "/api/v1/auth/login",
             data={"username": username, "password": password},
+            headers=_api.outgoing_operation_headers(),
         )
         if resp.status_code != 200:
-            return f"Login failed (HTTP {resp.status_code}): {resp.text}"
+            _api.mark_backend_failure()
+            request_id = _api.backend_request_id(resp)
+            suffix = f" [request_id={request_id}]" if request_id else ""
+            return f"Login failed (HTTP {resp.status_code}): {resp.text}{suffix}"
 
         data = resp.json()
         try:
@@ -85,20 +89,21 @@ def register(mcp) -> None:  # noqa: ANN001
         except Exception as exc:
             status = getattr(getattr(exc, "response", None), "status_code", None)
             if status != 401:
-                return f"Backend unreachable at {settings.api_url}: {exc}"
+                return f"Backend unreachable at {settings.api_url}: {api.error_text(exc)}"
             # /health/details needs a sign-in. Without one the public probes
             # still give the version and the state of the three data stores.
             try:
                 data = await api.public_health()
             except Exception as public_exc:
-                return f"Backend unreachable at {settings.api_url}: {public_exc}"
+                return f"Backend unreachable at {settings.api_url}: {api.error_text(public_exc)}"
             if settings.username and settings.password and api._request_access_token() is None:
                 # O-16: with credentials configured, a 401 here means they were
                 # refused. The probes below are public and say nothing about that.
                 return (
                     f"{_render_health(data)}\n**API URL:** {settings.api_url}\n"
                     "**Sign-in:** the configured TestLookup credentials were not accepted (HTTP 401). "
-                    "Only the public health probes are shown; other tools will fail until the credentials are corrected."
+                    "Only the public health probes are shown; other tools will fail until the credentials are corrected. "
+                    f"{api.error_text(exc)}"
                 )
 
         return f"{_render_health(data)}\n**API URL:** {settings.api_url}"

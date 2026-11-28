@@ -350,28 +350,47 @@ def test_allowlist_entry_points_at_a_real_file(qg):
 
 
 def test_retention_purge_deletes_only_the_project_scoped_audit_tables(qg):
-    """The audit-clock deletes are the PROJECT-SCOPED audit tables only:
+    """The project audit clock deletes only the project-scoped audit tables:
     ``access_audit_logs``, ``test_case_audit_logs`` and (since epic ACT)
     ``project_activity_events``.
 
-    ``settings_audit_log`` must stay out of it — it holds the purge-audit rows
-    themselves, which is what the model docstring promises. ``identity_events``
-    stays out because it has no project scope to purge by.
+    The separately approved instance identity clock has its own entry point.
+    Settings audit rows remain permanent in both paths.
     """
     tree = ast.parse(RETENTION_SERVICE.read_text(encoding="utf-8"))
-    deleted: set[str] = set()
-    for node in ast.walk(tree):
-        if (
-            isinstance(node, ast.Call)
-            and qg._audit_call_name(node.func) == "delete"
-            and node.args
-        ):
-            deleted |= qg._audit_referenced_names(node.args[0]) & qg._AUDIT_MODELS
-    assert deleted == {
+    functions = {
+        node.name: node
+        for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    }
+    identity_purge = functions["purge_identity_events_batch"]
+
+    def deleted_models(scope):
+        deleted: set[str] = set()
+        for node in ast.walk(scope):
+            if (
+                isinstance(node, ast.Call)
+                and qg._audit_call_name(node.func) == "delete"
+                and node.args
+            ):
+                deleted |= qg._audit_referenced_names(node.args[0]) & qg._AUDIT_MODELS
+        return deleted
+
+    project_scope = ast.Module(
+        body=[node for node in tree.body if node is not identity_purge],
+        type_ignores=[],
+    )
+    assert deleted_models(project_scope) == {
         "AccessAuditLog",
         "TestCaseAuditLog",
         "ProjectActivityEvent",
-    }, deleted
+    }
+    assert deleted_models(identity_purge) == {"IdentityEvent"}
+    assert not any(
+        isinstance(node, ast.Call)
+        and qg._audit_call_name(node.func) == "purge_identity_events_batch"
+        for node in ast.walk(project_scope)
+    ), "project retention must not invoke the instance identity purge"
 
 
 # ── The docstrings match the enforcement ─────────────────────────────────────

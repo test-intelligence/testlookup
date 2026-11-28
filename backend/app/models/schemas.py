@@ -664,10 +664,9 @@ class MfaStatusResponse(BaseModel):
     enabled: bool
     enrolled_at: Optional[datetime] = None
     recovery_codes_remaining: int = 0
-    # Does workspace policy require this user to hold a second factor?
+    # Does workspace policy require MFA for this user's local password sign-in?
     required_by_policy: bool = False
-    # True when an external IdP owns this account, so the local requirement
-    # does not apply to it.
+    # True when the account is IdP-linked. It may also have a local factor.
     sso_managed: bool = False
     # True when the account is flagged as enrolled but the stored seed cannot
     # be read — MFA is broken, not off, and login is denied until it is fixed.
@@ -3401,6 +3400,27 @@ class AgentPipelineReviewSummary(BaseModel):
     settled_at: Optional[datetime] = None
 
 
+class AgentPipelineStageIssue(BaseModel):
+    """One stage of a degraded pipeline that failed or fell back (D-153)."""
+
+    stage_name: str
+    status: str
+    fallback_reason: Optional[str] = None
+    error_category: Optional[str] = None
+
+
+class AgentPipelineStageQuality(BaseModel):
+    """Why a pipeline is DEGRADED, for the tag's title (D-153).
+
+    ``stages_run`` counts the stages that started (completed or failed, the
+    latest attempt of each); ``issues`` are the failed ones and the ones that
+    used their fallback, in run order.
+    """
+
+    stages_run: int
+    issues: List[AgentPipelineStageIssue]
+
+
 class AgentPipelineResponse(BaseModel):
     id: uuid.UUID
     test_run_id: uuid.UUID
@@ -3437,6 +3457,8 @@ class AgentPipelineResponse(BaseModel):
     # pipeline has no report review (for example a deterministic non-report
     # invocation); it must not be presented as human-reviewed.
     review_summary: Optional[AgentPipelineReviewSummary] = None
+    # D-153: set only for a degraded pipeline (``stage_quality == degraded``).
+    stage_quality_detail: Optional[AgentPipelineStageQuality] = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -3483,6 +3505,7 @@ class AgentRunSummaryResponse(BaseModel):
 # ── Agent Workflow Timeline Schemas ─────────────────────────────────────────
 
 class PipelineTimelineEventResponse(BaseModel):
+    event_id: Optional[uuid.UUID] = None
     event_type: str
     stage_name: Optional[str] = None
     test_case_id: Optional[str] = None
@@ -3826,6 +3849,11 @@ class PipelineEventLogHealthResponse(BaseModel):
     dead_letter_count: int = 0
     dead_letter_limit: int = 0
     recent_dead_letters: List[Dict[str, Any]] = Field(default_factory=list)
+    backlog_count: int = 0
+    oldest_pending_age_seconds: float = 0
+    outbox_total_count: int = 0
+    capacity: int = 0
+    status_counts: Dict[str, int] = Field(default_factory=dict)
 
 
 # ── W15 AGT-01: the agent-action queue (enum-like fields are plain str; vocab in services/agent_action_types.py) ──
@@ -6285,6 +6313,10 @@ class UploadStatusResponse(BaseModel):
     progress: Optional[dict] = None
     result: Optional[dict] = None
     error: Optional[dict] = None
+    payload_state: Optional[Literal["reserved", "ready", "deleted"]] = None
+    accepted_at: Optional[datetime] = None
+    payload_ready_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
 
 
 class LiveSessionState(BaseModel):
@@ -7135,6 +7167,13 @@ class ReleaseCouncilResponse(BaseModel):
     # e.g. ``["p0_defects:2>0"]``.
     release_readiness_band: Optional[str] = None
     band_downgrades: List[str] = []
+    # Batch 8 review F1: the band edges the read-time band floor applied
+    # (``{orange_min, yellow_min, green_min}``, the classifier's defaults filled
+    # in): under orange is No-Go, orange is Conditional. ``None`` with no
+    # active policy. ``band_held_back`` is True when the pass-rate band itself
+    # made the verdict stricter (a hard cap is named in ``band_downgrades``).
+    pass_rate_bands: Optional[dict] = None
+    band_held_back: bool = False
     # E8.4: the human-review gate on the value CI reads (section 8.2). While
     # the gate is enforced, an unreviewed AI decision reads PENDING_REVIEW (or
     # ADVISORY_<value> with allow_advisory) and the model's value moves here.
@@ -7148,6 +7187,12 @@ class ReleaseCouncilResponse(BaseModel):
     # quick-look view: no decision has been stored, so there is no time.
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+    # D-97: a person changed a test's category in this run after the stored
+    # decision read its analyses. The decision is NOT recomputed (a signed
+    # decision must not change silently); the gate says "re-evaluate".
+    # Set by ``GET /release-readiness/{run_id}`` only; False on a quick look.
+    analysis_changed_since: bool = False
+    analysis_changed_at: Optional[datetime] = None
 
 
 class ReleaseCouncilOverrideRequest(BaseModel):
@@ -9683,6 +9728,9 @@ class StageDecisionSummary(BaseModel):
     completed_at: Optional[datetime] = None
     duration_seconds: Optional[float] = None
     analysis_mode: Optional[str] = None  # llm|ml|rules|auto|mixed
+    # D-156: tests per engine for a stage that analysed tests (root cause);
+    # "mixed" above means more than one key here. None for other stages.
+    mode_distribution: Optional[Dict[str, int]] = None
     fallback_used: Optional[bool] = None
     fallback_reason: Optional[str] = None
     route_rationale: Optional[str] = None
@@ -10259,6 +10307,13 @@ class GitHubIntegrationWrite(BaseModel):
     #: W19 INT-06: ``pat`` or ``app`` (a GitHub App installation). Omitted leaves it as stored.
     auth_kind: Optional[Literal["pat", "app"]] = None
 
+    @field_validator("api_base_url", mode="after")
+    @classmethod
+    def _api_base_is_an_origin(cls, value: str) -> str:
+        if integration_url_problem(value) is not None:
+            raise PydanticCustomError("integration_url", INTEGRATION_URL_SENTENCE)
+        return value
+
 
 class GitHubIntegrationRead(BaseModel):
     id: uuid.UUID
@@ -10364,6 +10419,13 @@ class GitLabConfigWrite(BaseModel):
     mr_comment_mode: Literal["off", "failures_only", "always"] = "failures_only"
     commit_status_enabled: bool = True
     token: Optional[str] = Field(None, max_length=200)
+
+    @field_validator("base_url", mode="after")
+    @classmethod
+    def _base_is_an_origin(cls, value: str) -> str:
+        if integration_url_problem(value) is not None:
+            raise PydanticCustomError("integration_url", INTEGRATION_URL_SENTENCE)
+        return value
 
 
 class GitLabConfigRead(BaseModel):

@@ -13,6 +13,10 @@ on:
         default: regression
         type: choice
         options: [smoke, regression, full]
+      verify_signals:
+        description: Verify a candidate that includes the disposable monitored profile
+        type: boolean
+        default: false
   workflow_call:
     inputs:
       source_sha:
@@ -21,6 +25,9 @@ on:
       tier:
         type: string
         default: regression
+      verify_signals:
+        type: boolean
+        default: false
     outputs:
       manifest_sha256:
         value: ${{ jobs.regression.outputs.manifest_sha256 }}
@@ -57,6 +64,7 @@ jobs:
       - name: Verify release journeys and previous-build upgrade on Podman
         env:
           TIER: ${{ inputs.tier }}
+          VERIFY_SIGNALS: ${{ inputs.verify_signals }}
           GH_TOKEN: ${{ github.token }}
           REPOSITORY: ${{ github.repository }}
         run: |
@@ -86,11 +94,20 @@ jobs:
           "$RUNNER_TEMP/tl-e2e/bin/pip" install --require-hashes -r e2e-runner/requirements-lock.txt
           "$RUNNER_TEMP/tl-e2e/bin/python" e2e-runner/release_campaign.py --repository "$REPOSITORY" \
             --manifest verified/release-manifest.json --tier "$TIER" --out release-results
+          if [[ "$VERIFY_SIGNALS" == "true" ]]; then
+            # The runtime proof resolves OCI descriptors with Buildx, which
+            # reads Docker's registry credentials.
+            printf '%s' "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+            "$RUNNER_TEMP/tl-e2e/bin/python" e2e-runner/monitored_ephemeral.py --engine podman \
+              --manifest verified/release-manifest.json --out release-results/signal-gate.json
+          fi
       - name: Show release decision
         if: always() && hashFiles('release-results/summary.md') != ''
         run: cat release-results/summary.md >> "$GITHUB_STEP_SUMMARY"
       - name: Bind the passing decision to the tested artifact
         id: attest
+        env:
+          VERIFY_SIGNALS: ${{ inputs.verify_signals }}
         run: |
           python3 - <<'PY'
           import hashlib, json, os
@@ -101,6 +118,12 @@ jobs:
           if (result["verdict"] != "GO" or result["manifest_hash"] != digest
                   or result["observed_build"]["revision"] != manifest["source_sha"]):
               raise SystemExit("Candidate and functional decision do not match")
+          if os.environ["VERIFY_SIGNALS"] == "true":
+              signal = json.loads(Path("release-results/signal-gate.json").read_bytes())
+              if (signal.get("status") != "passed" or signal.get("cleanup") != "completed"
+                      or signal.get("profile") != "compose" or signal.get("source_sha") != manifest["source_sha"]
+                      or signal.get("manifest_sha256") != digest):
+                  raise SystemExit("Candidate and disposable signal evidence do not match")
           with open(os.environ["GITHUB_OUTPUT"], "a") as output:
               print("manifest_sha256=" + digest, file=output)
           PY
@@ -115,3 +138,5 @@ jobs:
             release-results/summary.md
             release-results/results.json
             release-results/release-junit.xml
+            release-results/signal-gate.json
+            release-results/signal-gate-evidence/

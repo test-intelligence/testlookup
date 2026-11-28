@@ -91,6 +91,7 @@ jobs:
     uses: ./.github/workflows/release-e2e.yml
     with:
       source_sha: ${{ needs.resolve-tag.outputs.source_sha }}
+      verify_signals: ${{ vars.REQUIRE_RELEASE_SIGNAL_GATE == 'true' }}
 
   promote:
     name: Promote verified digest set to release aliases

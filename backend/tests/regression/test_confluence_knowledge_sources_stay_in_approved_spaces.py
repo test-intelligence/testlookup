@@ -215,7 +215,7 @@ async def _fetch(page: dict, **kwargs):
     with patch.object(settings, "CONFLUENCE_DOMAIN", "wiki.example.test"), \
          patch.object(settings, "CONFLUENCE_EMAIL", "bot@example.test"), \
          patch.object(settings, "CONFLUENCE_API_TOKEN", "not-a-real-token"), \
-         patch.object(confluence_connector, "get_http_client", return_value=client):
+         patch.object(confluence_connector, "get_integration_http_client", return_value=client):
         try:
             return await ConfluenceKnowledgeConnector().fetch_content(PAGE_URL, "12345", **kwargs), seen
         except ConnectorFetchError as refused:

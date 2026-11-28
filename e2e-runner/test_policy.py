@@ -1,5 +1,6 @@
 from policy import evaluate
-from run import client_evidence, main
+from run import client_evidence, main, security_evidence
+import pytest
 import json
 import sys
 import xml.etree.ElementTree as ET
@@ -58,6 +59,34 @@ def test_infra_and_empty_evidence_block():
         evaluate([case("P0", "PASSED", "a")], ["missing shard"], "regression")[0]
         == "NO_GO"
     )
+
+
+def test_isolated_security_controls_remain_required_when_unexecuted(monkeypatch, tmp_path):
+    directory = tmp_path / "security-report"
+    monkeypatch.setattr(sys, "argv", ["run.py", "--tier", "regression", "--out", str(directory)])
+    monkeypatch.setenv("TL_TARGET", "ephemeral")
+    monkeypatch.delenv("TL_MANIFEST", raising=False)
+    assert main() == 1
+    report = json.loads((directory / "results.json").read_bytes())
+    entry = next(row for row in report["cases"] if row["id"] == "TL-SEC-001")
+    assert (entry["status"], entry["priority"], entry["role"]) == ("BLOCKED", "P1", "viewer")
+    assert report["verdict"] == "NO_GO"
+
+
+def test_security_evidence_has_only_bound_results_and_cannot_claim_hsts_enforcement():
+    evidence = {
+        "schema_version": 1, "candidate_sha": "a" * 40, "profile": "ephemeral",
+        "controls": ["frame_options", "content_type_options", "referrer_policy", "hsts_header", "csp_frame_ancestors", "login_document_no_store", "meta_csp_baseline"],
+        "viewer_authenticated": True, "viewer_admin_read_denied": True, "admin_read_permitted": True,
+        "transport": "http:", "hsts_browser_enforcement": "not_measured",
+    }
+    assert security_evidence(evidence, "a" * 40) == evidence
+    for mutated in (
+        {**evidence, "candidate_sha": "b" * 40}, {**evidence, "authorization": "synthetic-private-token"},
+        {**evidence, "hsts_browser_enforcement": "verified"}, {**evidence, "viewer_admin_read_denied": 1},
+    ):
+        with pytest.raises(ValueError, match="bounded contract"):
+            security_evidence(mutated, "a" * 40)
 
 
 def test_required_priorities_and_real_waiver():

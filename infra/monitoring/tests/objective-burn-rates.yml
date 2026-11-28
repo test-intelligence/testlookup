@@ -1,0 +1,442 @@
+rule_files:
+- ../objectives/api-slos.yml
+evaluation_interval: 1m
+tests:
+- name: complete replicas aggregate before ratios and independently reset counters
+  interval: 1m
+  input_series:
+  - series: up{cluster="lab",namespace="prod",job="testlookup-backend",instance="a"}
+    values: 1x90
+  - series: testlookup_api_sli_configured{installation="site-a",environment="production",cluster="lab",namespace="prod",objective="api_availability",job="testlookup-backend",instance="a"}
+    values: 1x90
+  - series: testlookup_api_journey_events_total{installation="site-a",environment="production",cluster="lab",namespace="prod",objective="api_availability",job="testlookup-backend",instance="a",outcome="good"}
+    values: 0+100x29 100+100x60
+  - series: testlookup_api_journey_events_total{installation="site-a",environment="production",cluster="lab",namespace="prod",objective="api_availability",job="testlookup-backend",instance="a",outcome="bad"}
+    values: '0x90'
+  - series: up{cluster="lab",namespace="prod",job="testlookup-backend",instance="b"}
+    values: 1x90
+  - series: testlookup_api_sli_configured{installation="site-a",environment="production",cluster="lab",namespace="prod",objective="api_availability",job="testlookup-backend",instance="b"}
+    values: 1x90
+  - series: testlookup_api_journey_events_total{installation="site-a",environment="production",cluster="lab",namespace="prod",objective="api_availability",job="testlookup-backend",instance="b",outcome="good"}
+    values: 0+900x90
+  - series: testlookup_api_journey_events_total{installation="site-a",environment="production",cluster="lab",namespace="prod",objective="api_availability",job="testlookup-backend",instance="b",outcome="bad"}
+    values: 0+10x90
+  - series: up{cluster="lab",namespace="prod",job="testlookup-backend",instance="a"}
+    values: 1x90
+  - series: testlookup_api_sli_configured{installation="site-b",environment="production",cluster="lab",namespace="prod",objective="api_availability",job="testlookup-backend",instance="a"}
+    values: 1x90
+  - series: testlookup_api_journey_events_total{installation="site-b",environment="production",cluster="lab",namespace="prod",objective="api_availability",job="testlookup-backend",instance="a",outcome="good"}
+    values: '0x90'
+  - series: testlookup_api_journey_events_total{installation="site-b",environment="production",cluster="lab",namespace="prod",objective="api_availability",job="testlookup-backend",instance="a",outcome="bad"}
+    values: 0+1000x90
+  - series: up{cluster="other",namespace="prod",job="testlookup-backend",instance="a"}
+    values: 1x90
+  - series: testlookup_api_sli_configured{installation="site-a",environment="production",cluster="other",namespace="prod",objective="api_availability",job="testlookup-backend",instance="a"}
+    values: 1x90
+  - series: testlookup_api_journey_events_total{installation="site-a",environment="production",cluster="other",namespace="prod",objective="api_availability",job="testlookup-backend",instance="a",outcome="good"}
+    values: '0x90'
+  - series: testlookup_api_journey_events_total{installation="site-a",environment="production",cluster="other",namespace="prod",objective="api_availability",job="testlookup-backend",instance="a",outcome="bad"}
+    values: 0+1000x90
+  - series: up{cluster="lab",namespace="other",job="testlookup-backend",instance="a"}
+    values: 1x90
+  - series: testlookup_api_sli_configured{installation="site-a",environment="production",cluster="lab",namespace="other",objective="api_availability",job="testlookup-backend",instance="a"}
+    values: 1x90
+  - series: testlookup_api_journey_events_total{installation="site-a",environment="production",cluster="lab",namespace="other",objective="api_availability",job="testlookup-backend",instance="a",outcome="good"}
+    values: '0x90'
+  - series: testlookup_api_journey_events_total{installation="site-a",environment="production",cluster="lab",namespace="other",objective="api_availability",job="testlookup-backend",instance="a",outcome="bad"}
+    values: 0+1000x90
+  - series: up{cluster="lab",namespace="prod",job="testlookup-backend",instance="a"}
+    values: 1x90
+  - series: testlookup_api_sli_configured{installation="site-a",environment="staging",cluster="lab",namespace="prod",objective="api_availability",job="testlookup-backend",instance="a"}
+    values: 1x90
+  - series: testlookup_api_journey_events_total{installation="site-a",environment="staging",cluster="lab",namespace="prod",objective="api_availability",job="testlookup-backend",instance="a",outcome="good"}
+    values: '0x90'
+  - series: testlookup_api_journey_events_total{installation="site-a",environment="staging",cluster="lab",namespace="prod",objective="api_availability",job="testlookup-backend",instance="a",outcome="bad"}
+    values: 0+1000x90
+  promql_expr_test:
+  - expr: testlookup:api_sli_eligible_events{installation="site-a",environment="production",cluster="lab",namespace="prod",window="1h"}
+    eval_time: 61m
+    exp_samples:
+    - labels: testlookup:api_sli_eligible_events{installation="site-a",environment="production",cluster="lab",namespace="prod",objective="api_availability",window="1h"}
+      value: 60600
+  - expr: testlookup:api_sli_error_ratio{installation="site-a",environment="production",cluster="lab",namespace="prod",window="1h"}
+    eval_time: 61m
+    exp_samples:
+    - labels: testlookup:api_sli_error_ratio{installation="site-a",environment="production",cluster="lab",namespace="prod",objective="api_availability",window="1h"}
+      value: 0.009900990099009901
+  - expr: testlookup:api_sli_error_ratio{installation="site-a",environment="production",cluster="lab",namespace="prod",window="30d"}
+    eval_time: 61m
+    exp_samples: []
+  alert_rule_test:
+  - eval_time: 70m
+    alertname: TestLookupAPIObjectiveBudgetBurnPage
+    exp_alerts: []
+- name: quiet configured API has no fabricated success or burn and no missing-data alert
+  interval: 1m
+  input_series:
+  - series: up{cluster="lab",namespace="prod",job="testlookup-backend",instance="a"}
+    values: 1x90
+  - series: testlookup_api_sli_configured{installation="site-a",environment="production",cluster="lab",namespace="prod",objective="api_availability",job="testlookup-backend",instance="a"}
+    values: 1x90
+  - series: testlookup_api_journey_events_total{installation="site-a",environment="production",cluster="lab",namespace="prod",objective="api_availability",job="testlookup-backend",instance="a",outcome="good"}
+    values: '0x90'
+  - series: testlookup_api_journey_events_total{installation="site-a",environment="production",cluster="lab",namespace="prod",objective="api_availability",job="testlookup-backend",instance="a",outcome="bad"}
+    values: '0x90'
+  - series: testlookup:api_objective_adopted{installation="site-a",environment="production",cluster="lab",namespace="prod",objective="api_availability",owner="api-team"}
+    values: 1x500
+  promql_expr_test:
+  - expr: testlookup:api_sli_valid
+    eval_time: 70m
+    exp_samples:
+    - labels: testlookup:api_sli_valid{installation="site-a",environment="production",cluster="lab",namespace="prod",objective="api_availability"}
+      value: 1
+  - expr: testlookup:api_sli_error_ratio
+    eval_time: 70m
+    exp_samples: []
+  - expr: testlookup:api_sli_burn_rate
+    eval_time: 70m
+    exp_samples: []
+  alert_rule_test:
+  - eval_time: 70m
+    alertname: TestLookupAPIObjectiveBudgetBurnPage
+    exp_alerts: []
+  - eval_time: 70m
+    alertname: TestLookupAPIObjectiveDataUnavailable
+    exp_alerts: []
+- name: fast burn requires adopted scope and resolves on short-window recovery
+  interval: 1m
+  input_series:
+  - series: up{cluster="lab",namespace="prod",job="testlookup-backend",instance="a"}
+    values: 1x90
+  - series: testlookup_api_sli_configured{installation="site-a",environment="production",cluster="lab",namespace="prod",objective="api_availability",job="testlookup-backend",instance="a"}
+    values: 1x90
+  - series: testlookup_api_journey_events_total{installation="site-a",environment="production",cluster="lab",namespace="prod",objective="api_availability",job="testlookup-backend",instance="a",outcome="good"}
+    values: 0+980x65 64700+1000x24
+  - series: testlookup_api_journey_events_total{installation="site-a",environment="production",cluster="lab",namespace="prod",objective="api_availability",job="testlookup-backend",instance="a",outcome="bad"}
+    values: 0+20x65 1300x24
+  - series: testlookup:api_objective_adopted{installation="site-a",environment="production",cluster="lab",namespace="prod",objective="api_availability",owner="api-team"}
+    values: 1x500
+  alert_rule_test:
+  - eval_time: 59m
+    alertname: TestLookupAPIObjectiveBudgetBurnPage
+    exp_alerts: []
+  - eval_time: 63m
+    alertname: TestLookupAPIObjectiveBudgetBurnPage
+    exp_alerts: &id003
+    - exp_labels:
+        installation: site-a
+        environment: production
+        cluster: lab
+        namespace: prod
+        objective: api_availability
+        owner: api-team
+        severity: critical
+        category: objective
+      exp_annotations: &id001
+        summary: Adopted API objective is consuming error budget quickly
+        description: Both the long and short windows exceed the proposed page burn threshold with at least
+          three estimated bad attempts in the short window. Scope and owner come from the explicitly adopted
+          policy. This covers completed eligible API attempts; censored in-flight requests require independent
+          availability monitoring.
+        runbook_url: https://github.com/test-intelligence/testlookup/blob/main/docs/operations/api-objectives.md
+  - eval_time: 75m
+    alertname: TestLookupAPIObjectiveBudgetBurnPage
+    exp_alerts: []
+- name: unadopted placeholder owner and differently scoped policy never enable paging
+  interval: 1m
+  input_series:
+  - series: up{cluster="lab",namespace="prod",job="testlookup-backend",instance="a"}
+    values: 1x90
+  - series: testlookup_api_sli_configured{installation="site-a",environment="production",cluster="lab",namespace="prod",objective="api_availability",job="testlookup-backend",instance="a"}
+    values: 1x90
+  - series: testlookup_api_journey_events_total{installation="site-a",environment="production",cluster="lab",namespace="prod",objective="api_availability",job="testlookup-backend",instance="a",outcome="good"}
+    values: '0x90'
+  - series: testlookup_api_journey_events_total{installation="site-a",environment="production",cluster="lab",namespace="prod",objective="api_availability",job="testlookup-backend",instance="a",outcome="bad"}
+    values: 0+1000x90
+  - series: testlookup:api_objective_adopted{installation="site-a",environment="production",cluster="other",namespace="prod",objective="api_availability",owner="other-team"}
+    values: 1x500
+  - series: testlookup:api_objective_adopted{installation="site-a",environment="production",cluster="lab",namespace="prod",objective="api_availability",owner="UNASSIGNED"}
+    values: 1x500
+  alert_rule_test:
+  - eval_time: 70m
+    alertname: TestLookupAPIObjectiveBudgetBurnPage
+    exp_alerts: []
+- name: one estimated short-window failure cannot page a quiet fleet
+  interval: 1m
+  input_series:
+  - series: up{cluster="lab",namespace="prod",job="testlookup-backend",instance="a"}
+    values: 1x90
+  - series: testlookup_api_sli_configured{installation="site-a",environment="production",cluster="lab",namespace="prod",objective="api_availability",job="testlookup-backend",instance="a"}
+    values: 1x90
+  - series: testlookup_api_journey_events_total{installation="site-a",environment="production",cluster="lab",namespace="prod",objective="api_availability",job="testlookup-backend",instance="a",outcome="good"}
+    values: '0x90'
+  - series: testlookup_api_journey_events_total{installation="site-a",environment="production",cluster="lab",namespace="prod",objective="api_availability",job="testlookup-backend",instance="a",outcome="bad"}
+    values: 0+0.2x90
+  - series: testlookup:api_objective_adopted{installation="site-a",environment="production",cluster="lab",namespace="prod",objective="api_availability",owner="api-team"}
+    values: 1x500
+  alert_rule_test:
+  - eval_time: 70m
+    alertname: TestLookupAPIObjectiveBudgetBurnPage
+    exp_alerts: []
+- name: medium burn pages only after six-hour coverage and resolves
+  interval: 1m
+  input_series:
+  - series: up{cluster="lab",namespace="prod",job="testlookup-backend",instance="a"}
+    values: 1x420
+  - series: testlookup_api_sli_configured{installation="site-a",environment="production",cluster="lab",namespace="prod",objective="api_availability",job="testlookup-backend",instance="a"}
+    values: 1x420
+  - series: testlookup_api_journey_events_total{installation="site-a",environment="production",cluster="lab",namespace="prod",objective="api_availability",job="testlookup-backend",instance="a",outcome="good"}
+    values: 0+990x370 367300+1000x49
+  - series: testlookup_api_journey_events_total{installation="site-a",environment="production",cluster="lab",namespace="prod",objective="api_availability",job="testlookup-backend",instance="a",outcome="bad"}
+    values: 0+10x370 3700x49
+  - series: testlookup:api_objective_adopted{installation="site-a",environment="production",cluster="lab",namespace="prod",objective="api_availability",owner="api-team"}
+    values: 1x500
+  alert_rule_test:
+  - eval_time: 70m
+    alertname: TestLookupAPIObjectiveBudgetBurnPage
+    exp_alerts: []
+  - eval_time: 363m
+    alertname: TestLookupAPIObjectiveBudgetBurnPage
+    exp_alerts:
+    - exp_labels:
+        installation: site-a
+        environment: production
+        cluster: lab
+        namespace: prod
+        objective: api_availability
+        owner: api-team
+        severity: critical
+        category: objective
+      exp_annotations: *id001
+  - eval_time: 410m
+    alertname: TestLookupAPIObjectiveBudgetBurnPage
+    exp_alerts: []
+- name: one incomplete configured replica invalidates observations and recovery needs coverage
+  interval: 1m
+  input_series:
+  - series: up{cluster="lab",namespace="prod",job="testlookup-backend",instance="a"}
+    values: 1x90
+  - series: testlookup_api_sli_configured{installation="site-a",environment="production",cluster="lab",namespace="prod",objective="api_availability",job="testlookup-backend",instance="a"}
+    values: 1x90
+  - series: testlookup_api_journey_events_total{installation="site-a",environment="production",cluster="lab",namespace="prod",objective="api_availability",job="testlookup-backend",instance="a",outcome="good"}
+    values: 0+100x90
+  - series: testlookup_api_journey_events_total{installation="site-a",environment="production",cluster="lab",namespace="prod",objective="api_availability",job="testlookup-backend",instance="a",outcome="bad"}
+    values: '0x90'
+  - series: up{cluster="lab",namespace="prod",job="testlookup-backend",instance="b"}
+    values: 1x90
+  - series: testlookup_api_sli_configured{installation="site-a",environment="production",cluster="lab",namespace="prod",objective="api_availability",job="testlookup-backend",instance="b"}
+    values: 1x90
+  - series: testlookup_api_journey_events_total{installation="site-a",environment="production",cluster="lab",namespace="prod",objective="api_availability",job="testlookup-backend",instance="b",outcome="good"}
+    values: 0+100x90
+  - series: testlookup_api_journey_events_total{installation="site-a",environment="production",cluster="lab",namespace="prod",objective="api_availability",job="testlookup-backend",instance="b",outcome="bad"}
+    values: _x9 0x80
+  - series: testlookup:api_objective_adopted{installation="site-a",environment="production",cluster="lab",namespace="prod",objective="api_availability",owner="api-team"}
+    values: 1x500
+  promql_expr_test:
+  - expr: testlookup:api_sli_valid
+    eval_time: 7m
+    exp_samples: []
+  - expr: testlookup:api_sli_error_ratio{window="5m"}
+    eval_time: 12m
+    exp_samples: []
+  - expr: testlookup:api_sli_error_ratio{window="5m"}
+    eval_time: 16m
+    exp_samples:
+    - labels: testlookup:api_sli_error_ratio{installation="site-a",environment="production",cluster="lab",namespace="prod",objective="api_availability",window="5m"}
+      value: 0
+  alert_rule_test:
+  - eval_time: 7m
+    alertname: TestLookupAPIObjectiveDataUnavailable
+    exp_alerts:
+    - exp_labels:
+        installation: site-a
+        environment: production
+        cluster: lab
+        namespace: prod
+        objective: api_availability
+        owner: api-team
+        severity: warning
+        category: objective
+      exp_annotations: &id002
+        summary: Adopted API objective measurement is unavailable
+        description: The adopted scope lacks a complete current pair of outcome counters on every observed
+          configured API target, or a configured target is down. Quiet eligible traffic does not trigger
+          this alert. Restore measurement before assessing compliance; independent scrape-discovery alerts
+          cover vanished targets.
+        runbook_url: https://github.com/test-intelligence/testlookup/blob/main/docs/operations/api-objectives.md
+  - eval_time: 16m
+    alertname: TestLookupAPIObjectiveDataUnavailable
+    exp_alerts: []
+- name: all measurement missing warns only for an adopted scope
+  interval: 1m
+  input_series:
+  - series: testlookup:api_objective_adopted{installation="site-a",environment="production",cluster="lab",namespace="prod",objective="api_availability",owner="api-team"}
+    values: 1x500
+  alert_rule_test:
+  - eval_time: 6m
+    alertname: TestLookupAPIObjectiveDataUnavailable
+    exp_alerts:
+    - exp_labels: &id004
+        installation: site-a
+        environment: production
+        cluster: lab
+        namespace: prod
+        objective: api_availability
+        owner: api-team
+        severity: warning
+        category: objective
+      exp_annotations: *id002
+  - eval_time: 6m
+    alertname: TestLookupAPIObjectiveBudgetBurnPage
+    exp_alerts: []
+- name: duplicate active owners disable objective paging and expose policy ambiguity
+  interval: 1m
+  input_series:
+  - series: up{cluster="lab",namespace="prod",job="testlookup-backend",instance="a"}
+    values: 1x90
+  - series: testlookup_api_sli_configured{installation="site-a",environment="production",cluster="lab",namespace="prod",objective="api_availability",job="testlookup-backend",instance="a"}
+    values: 1x90
+  - series: testlookup_api_journey_events_total{installation="site-a",environment="production",cluster="lab",namespace="prod",objective="api_availability",job="testlookup-backend",instance="a",outcome="good"}
+    values: '0x90'
+  - series: testlookup_api_journey_events_total{installation="site-a",environment="production",cluster="lab",namespace="prod",objective="api_availability",job="testlookup-backend",instance="a",outcome="bad"}
+    values: 0+1000x90
+  - series: testlookup:api_objective_adopted{installation="site-a",environment="production",cluster="lab",namespace="prod",objective="api_availability",owner="api-team"}
+    values: 1x500
+  - series: testlookup:api_objective_adopted{installation="site-a",environment="production",cluster="lab",namespace="prod",objective="api_availability",owner="second-team"}
+    values: 1x500
+  alert_rule_test:
+  - eval_time: 70m
+    alertname: TestLookupAPIObjectiveBudgetBurnPage
+    exp_alerts: []
+  - eval_time: 70m
+    alertname: TestLookupAPIObjectivePolicyAmbiguous
+    exp_alerts:
+    - exp_labels:
+        installation: site-a
+        environment: production
+        cluster: lab
+        namespace: prod
+        objective: api_availability
+        severity: warning
+        category: objective
+      exp_annotations:
+        summary: Multiple API objective owners are active in one scope
+        description: More than one adopted policy matches the same installation, environment, cluster,
+          namespace and objective. Objective paging is disabled for the ambiguous scope until exactly
+          one reviewed policy remains.
+        runbook_url: https://github.com/test-intelligence/testlookup/blob/main/docs/operations/api-objectives.md
+- name: slow burn requires three-day coverage and clears after the short six-hour window recovers
+  interval: 1m
+  input_series:
+  - series: up{cluster="lab",namespace="prod",job="testlookup-backend",instance="a"}
+    values: 1x5000
+  - series: testlookup_api_sli_configured{installation="site-a",environment="production",cluster="lab",namespace="prod",objective="api_availability",job="testlookup-backend",instance="a"}
+    values: 1x5000
+  - series: testlookup_api_journey_events_total{installation="site-a",environment="production",cluster="lab",namespace="prod",objective="api_availability",job="testlookup-backend",instance="a",outcome="good"}
+    values: 0+9985x4360 43544585+10000x639
+  - series: testlookup_api_journey_events_total{installation="site-a",environment="production",cluster="lab",namespace="prod",objective="api_availability",job="testlookup-backend",instance="a",outcome="bad"}
+    values: 0+15x4360 65400x639
+  - series: testlookup:api_objective_adopted{installation="site-a",environment="production",cluster="lab",namespace="prod",objective="api_availability",owner="api-team"}
+    values: 1x5000
+  alert_rule_test:
+  - eval_time: 4300m
+    alertname: TestLookupAPIObjectiveBudgetBurnTicket
+    exp_alerts: []
+  - eval_time: 4336m
+    alertname: TestLookupAPIObjectiveBudgetBurnTicket
+    exp_alerts:
+    - exp_labels:
+        installation: site-a
+        environment: production
+        cluster: lab
+        namespace: prod
+        objective: api_availability
+        owner: api-team
+        severity: warning
+        category: objective
+      exp_annotations:
+        summary: Adopted API objective has sustained error budget burn
+        description: Both the three-day and six-hour windows exceed one times the proposed error budget
+          burn, with at least three estimated bad attempts in the short window. Inspect the scoped objective
+          and route diagnostics before changing the policy.
+        runbook_url: https://github.com/test-intelligence/testlookup/blob/main/docs/operations/api-objectives.md
+  - eval_time: 4730m
+    alertname: TestLookupAPIObjectiveBudgetBurnTicket
+    exp_alerts: []
+  - eval_time: 4336m
+    alertname: TestLookupAPIObjectiveBudgetBurnPage
+    exp_alerts: []
+- name: failed scrape invalidates a previously burning scope while old counters still exist
+  interval: 1m
+  input_series:
+  - series: up{cluster="lab",namespace="prod",job="testlookup-backend",instance="a"}
+    values: 1x65 0x24
+  - series: testlookup_api_sli_configured{installation="site-a",environment="production",cluster="lab",namespace="prod",objective="api_availability",job="testlookup-backend",instance="a"}
+    values: 1x90
+  - series: testlookup_api_journey_events_total{installation="site-a",environment="production",cluster="lab",namespace="prod",objective="api_availability",job="testlookup-backend",instance="a",outcome="good"}
+    values: 0+980x65 64700+1000x24
+  - series: testlookup_api_journey_events_total{installation="site-a",environment="production",cluster="lab",namespace="prod",objective="api_availability",job="testlookup-backend",instance="a",outcome="bad"}
+    values: 0+20x65 1300x24
+  - series: testlookup:api_objective_adopted{installation="site-a",environment="production",cluster="lab",namespace="prod",objective="api_availability",owner="api-team"}
+    values: 1x500
+  alert_rule_test:
+  - eval_time: 63m
+    alertname: TestLookupAPIObjectiveBudgetBurnPage
+    exp_alerts: *id003
+  - eval_time: 67m
+    alertname: TestLookupAPIObjectiveBudgetBurnPage
+    exp_alerts: []
+  - eval_time: 72m
+    alertname: TestLookupAPIObjectiveDataUnavailable
+    exp_alerts:
+    - exp_labels: *id004
+      exp_annotations: *id002
+- name: latency uses its distinct five-percent proposed budget and recovers
+  interval: 1m
+  input_series:
+  - series: up{cluster="lab",namespace="prod",job="testlookup-backend",instance="a"}
+    values: 1x160
+  - series: testlookup_api_sli_configured{installation="site-a",environment="production",cluster="lab",namespace="prod",objective="api_latency",job="testlookup-backend",instance="a"}
+    values: 1x160
+  - series: testlookup_api_journey_events_total{installation="site-a",environment="production",cluster="lab",namespace="prod",objective="api_latency",job="testlookup-backend",instance="a",outcome="good"}
+    values: 0+980x70 68800+200x74 84600+1000x15
+  - series: testlookup_api_journey_events_total{installation="site-a",environment="production",cluster="lab",namespace="prod",objective="api_latency",job="testlookup-backend",instance="a",outcome="bad"}
+    values: 0+20x70 2200+800x74 61400x15
+  - series: testlookup:api_objective_adopted{installation="site-a",environment="production",cluster="lab",namespace="prod",objective="api_latency",owner="api-team"}
+    values: 1x500
+  alert_rule_test:
+  - eval_time: 63m
+    alertname: TestLookupAPIObjectiveBudgetBurnPage
+    exp_alerts: []
+  - eval_time: 140m
+    alertname: TestLookupAPIObjectiveBudgetBurnPage
+    exp_alerts:
+    - exp_annotations:
+        description: Both the long and short windows exceed the proposed page burn threshold with at least
+          three estimated bad attempts in the short window. Scope and owner come from the explicitly adopted
+          policy. This covers completed eligible API attempts; censored in-flight requests require independent
+          availability monitoring.
+        runbook_url: https://github.com/test-intelligence/testlookup/blob/main/docs/operations/api-objectives.md
+        summary: Adopted API objective is consuming error budget quickly
+      exp_labels:
+        category: objective
+        cluster: lab
+        environment: production
+        installation: site-a
+        namespace: prod
+        objective: api_latency
+        owner: api-team
+        severity: critical
+  - eval_time: 155m
+    alertname: TestLookupAPIObjectiveBudgetBurnPage
+    exp_alerts: []
+  promql_expr_test:
+  - eval_time: 63m
+    expr: testlookup:api_sli_burn_rate{window="1h"}
+    exp_samples:
+    - labels: testlookup:api_sli_burn_rate{installation="site-a",environment="production",cluster="lab",namespace="prod",objective="api_latency",window="1h"}
+      value: 0.39999999999999997
+group_eval_order:
+- testlookup.api-objectives
+- testlookup.api-objectives-slow
+- testlookup.api-objective-alerts

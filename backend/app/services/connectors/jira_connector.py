@@ -10,7 +10,7 @@ import httpx
 import structlog
 
 from app.core.config import settings
-from app.core.http_client import get_http_client
+from app.core.http_client import get_integration_http_client
 from app.services.connectors.base import (
     ConnectorFetchError,
     ConnectorScopeRefused,
@@ -102,6 +102,14 @@ class JiraKnowledgeConnector(KnowledgeConnectorBase):
         )
 
     async def test_connection(self) -> dict:
+        if settings.AI_OFFLINE_MODE:
+            return {
+                "success": False,
+                "latency_ms": 0,
+                "error": "offline_mode",
+                "detail": "AI_OFFLINE_MODE is enabled — outbound calls are disabled",
+            }
+
         t_start = time.monotonic()
         try:
             if not (
@@ -116,7 +124,7 @@ class JiraKnowledgeConnector(KnowledgeConnectorBase):
                     "detail": "Set the Jira domain, email and API token under Settings -> Integrations",
                 }
             url = f"{self._base_url()}/rest/api/3/myself"
-            client = get_http_client()
+            client = get_integration_http_client()
             resp = await client.get(url, headers=self._headers(), timeout=10.0)
             latency = int((time.monotonic() - t_start) * 1000)
             if resp.status_code == 200:
@@ -162,7 +170,7 @@ class JiraKnowledgeConnector(KnowledgeConnectorBase):
         params = {"fields": "summary,description,issuetype,status,priority,labels,subtasks,comment,project"}
 
         try:
-            client = get_http_client()
+            client = get_integration_http_client()
             resp = await client.get(
                 url, headers=self._headers(), params=params,
                 timeout=float(settings.KNOWLEDGE_SYNC_TIMEOUT_SECONDS),
@@ -346,7 +354,7 @@ class JiraKnowledgeConnector(KnowledgeConnectorBase):
                 "fields": "summary,description,issuetype,status,priority",
                 "maxResults": 50,
             }
-            client = get_http_client()
+            client = get_integration_http_client()
             resp = await client.get(
                 url, headers=self._headers(), params=params,
                 timeout=float(settings.KNOWLEDGE_SYNC_TIMEOUT_SECONDS),

@@ -27,10 +27,12 @@ import {
   MAX_UPLOAD_BYTES,
   SUPPORTED_FORMATS,
   defaultBuildLabel,
+  newUploadIdempotencyKey,
   reportUploadService,
   type ReportFormat,
   type UploadStatus,
 } from '@/services/reportUploadService'
+import { extractErrorMessage } from '@/services/apiErrors'
 
 interface UploadReportModalProps {
   /** Project the run will be ingested into, when one is already active.
@@ -111,6 +113,10 @@ export default function UploadReportModal({
   const [newRunId, setNewRunId] = useState<string | null>(null)
   const [taskId, setTaskId] = useState<string | null>(null)
   const [result, setResult] = useState<UploadStatus['result']>(null)
+  const [publicationConfirmed, setPublicationConfirmed] = useState(true)
+  const attempt = useRef<{
+    files: File[]; signature: string; file: File; build: string; key: string
+  } | null>(null)
 
   const busy = phase === 'uploading' || phase === 'processing'
 
@@ -128,13 +134,21 @@ export default function UploadReportModal({
       try {
         const st = await reportUploadService.getStatus(taskId)
         if (!active) return
+        if (st.task_id !== taskId || (st.run_id && newRunId && st.run_id !== newRunId)) {
+          setErrorMsg('The status response did not match this upload. Keep the original receipt and check it again.')
+          setPhase('error')
+          return
+        }
+        if (['parsing', 'ingesting', 'succeeded'].includes(st.state)) setPublicationConfirmed(true)
         if (st.state === 'succeeded') {
+          attempt.current = null
           setResult(st.result ?? null)
           setPhase('success')
           toast.success('Report processed')
           return
         }
         if (st.state === 'failed') {
+          attempt.current = null
           setErrorMsg(st.error?.message || 'The report could not be processed.')
           setPhase('error')
           return
@@ -164,7 +178,7 @@ export default function UploadReportModal({
       active = false
       clearTimeout(timer)
     }
-  }, [phase, taskId])
+  }, [phase, taskId, newRunId])
 
   const rejectFiles = (msg: string) => {
     // Clear any prior selection so Upload disables and the user can't submit a
@@ -222,10 +236,14 @@ export default function UploadReportModal({
     setProgress(0)
     setErrorMsg('')
     try {
+      const signature = JSON.stringify([effectiveProjectId, buildNumber.trim(), format, branch.trim(), commitHash.trim(), releaseName.trim(), runAi])
+      const previous = attempt.current
       // Multiple files → bundle into one .zip client-side; the backend's
       // archive path (tier-2) parses each entry. A single file uploads as-is.
       let upload: File
-      if (files.length === 1) {
+      if (previous?.files === files && previous.signature === signature) {
+        upload = previous.file
+      } else if (files.length === 1) {
         upload = files[0]
       } else {
         const entries: Record<string, Uint8Array> = {}
@@ -245,33 +263,37 @@ export default function UploadReportModal({
         setPhase('error')
         return
       }
+      if (previous?.files !== files || previous.signature !== signature) {
+        attempt.current = { files, signature, file: upload, build: buildNumber.trim() || defaultBuildLabel(), key: newUploadIdempotencyKey() }
+      }
+      const current = attempt.current
+      if (!current) throw new Error('Upload preparation did not complete.')
       const res = await reportUploadService.upload({
         projectId: effectiveProjectId,
         file: upload,
-        buildNumber,
+        buildNumber: current.build,
         format,
         branch,
         commitHash,
         releaseName,
         runAi,
         onProgress: setProgress,
+        idempotencyKey: current.key,
       })
       setNewRunId(res.run_id)
       setTaskId(res.task_id)
+      setPublicationConfirmed(res.publication_confirmed !== false)
       // Move to processing; the poll effect resolves it to success/error.
       setPhase('processing')
     } catch (err: unknown) {
-      // The axios interceptor already toasts 4xx/5xx, but surface a precise
-      // inline message too (e.g. a 503 for a disabled Cypress/Playwright flag).
-      const anyErr = err as { response?: { data?: { detail?: unknown } }; message?: string }
+      // This caller owns diagnostics. Retain bytes, metadata and key after
+      // uncertain delivery, so a deliberate retry is the same invocation.
+      const anyErr = err as { response?: { status?: number; data?: { detail?: unknown } }; message?: string }
+      const code = anyErr?.response?.status
+      if (code && code >= 400 && code < 500 && code !== 429) attempt.current = null
       // FastAPI 422 returns `detail` as an array of objects, not a string —
       // only use it when it's actually a string so we never render [object Object].
-      const detail = anyErr?.response?.data?.detail
-      setErrorMsg(
-        (typeof detail === 'string' && detail) ||
-          anyErr?.message ||
-          'Upload failed. Check the file and try again.',
-      )
+      setErrorMsg(extractErrorMessage(anyErr?.response?.data?.detail, anyErr?.message || 'Upload failed. Check the file and try again.'))
       setPhase('error')
     }
   }, [files, busy, effectiveProjectId, buildNumber, format, branch, commitHash, releaseName, runAi])
@@ -292,6 +314,11 @@ export default function UploadReportModal({
           >
             View run
           </button>
+          {!result && (
+            <button onClick={() => setPhase('processing')} className="btn-primary">
+              Check status
+            </button>
+          )}
         </>
       ) : phase === 'processing' ? (
         // Run continues server-side if the user closes mid-processing.
@@ -340,9 +367,9 @@ export default function UploadReportModal({
           <div className="flex flex-col items-center text-center gap-3 py-6">
             <Loader2 className="h-8 w-8 text-[var(--color-text-muted)] animate-spin" />
             <div>
-              <p className="text-sm font-medium text-[var(--color-text)]">Processing report…</p>
+              <p className="text-sm font-medium text-[var(--color-text)]">{publicationConfirmed ? 'Processing report…' : 'Checking upload receipt…'}</p>
               <p className="text-xs text-[var(--color-text-muted)] mt-1 max-w-sm">
-                Parsing and ingesting the test results.
+                {publicationConfirmed ? 'Parsing and ingesting the test results.' : 'Queue confirmation is unavailable. Checking the original upload.'}
               </p>
             </div>
           </div>
@@ -367,10 +394,11 @@ export default function UploadReportModal({
                 </>
               ) : (
                 <>
-                  <p className="text-sm font-medium text-[var(--color-text)]">Upload accepted</p>
+                  <p className="text-sm font-medium text-[var(--color-text)]">{publicationConfirmed ? 'Upload accepted' : 'Upload confirmation pending'}</p>
                   <p className="text-xs text-[var(--color-text-muted)] mt-1 max-w-sm">
-                    The report is still being processed in the background. The run will
-                    populate on its detail page shortly.
+                    {publicationConfirmed
+                      ? 'The report is still being processed in the background. The run will populate on its detail page shortly.'
+                      : 'The server kept this upload receipt. Check its status before starting another upload.'}
                   </p>
                 </>
               )}

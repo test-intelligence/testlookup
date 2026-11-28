@@ -29,7 +29,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, PlainTextResponse, Response
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from app.core.request_path import routed_path
+from app.core.request_path import telemetry_path
 from app.core.scim_errors import (
     scim_http_exception_handler,
     scim_validation_exception_handler,
@@ -239,19 +239,27 @@ async def http_exception_handler(request: Request, exc: Exception) -> Response:
 
 
 async def unhandled_exception_handler(request: Request, exc: Exception) -> Response:
-    """The last resort. For analytics routes a JSON body carrying the request id
-    and no trace; everywhere else exactly Starlette's non-debug default."""
-    if not uses_analytics_contract(request):
-        return PlainTextResponse("Internal Server Error", status_code=500)
+    """Correlated diagnostics for all routes, preserving their response bodies."""
+    from app.middleware.telemetry import accepted_request_id
+
+    request.state.request_id = accepted_request_id(request_id_of(request) or None)
+    analytics = uses_analytics_contract(request)
     # The body tells the caller to quote this id, so the log line must carry
     # the same one -- and the trace, which the body deliberately does not.
     logger.error(
-        "analytics_unhandled_error",
+        "analytics_unhandled_error" if analytics else "http_unhandled_error",
         request_id=request_id_of(request),
         error_type=type(exc).__name__,
-        path=routed_path(request),
+        path=telemetry_path(request),
+        method=request.method,
+        status_code=500,
         exc_info=exc,
     )
+    if not analytics:
+        return PlainTextResponse(
+            "Internal Server Error", status_code=500,
+            headers={"X-Request-ID": request_id_of(request)},
+        )
     body = error_body(
         request,
         code="internal_error",

@@ -60,7 +60,7 @@ from sqlalchemy import func as sa_func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
-from app.core.http_client import get_http_client
+from app.core.http_client import get_integration_http_client
 from app.models.postgres import (
     AccessAuditLog,
     AIAnalysis,
@@ -366,14 +366,14 @@ def _base_url(cfg: dict[str, Any]) -> str:
 
 
 async def _jira_get(cfg: dict[str, Any], path: str, params: Optional[dict] = None):
-    client = get_http_client()
+    client = get_integration_http_client()
     return await client.get(
         f"{_base_url(cfg)}{path}", headers=_headers(cfg), params=params, timeout=15.0,
     )
 
 
 async def _jira_post(cfg: dict[str, Any], path: str, json: dict):
-    client = get_http_client()
+    client = get_integration_http_client()
     return await client.post(
         f"{_base_url(cfg)}{path}", headers=_headers(cfg), json=json, timeout=15.0,
     )

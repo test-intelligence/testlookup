@@ -1,0 +1,23 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: testlookup-backend
+spec:
+  template:
+    spec:
+      containers:
+        - name: backend
+          env:
+            - name: METRICS_TOKEN_FILE
+              value: /run/secrets/testlookup-metrics/token
+          volumeMounts:
+            - name: metrics-token
+              mountPath: /run/secrets/testlookup-metrics
+              readOnly: true
+      volumes:
+        - name: metrics-token
+          secret:
+            secretName: testlookup-metrics-auth
+            items:
+              - key: token
+                path: token

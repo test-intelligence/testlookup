@@ -24,6 +24,7 @@ import asyncio
 import copy
 import hashlib
 import json
+import os
 import time
 import uuid
 from datetime import datetime, timezone
@@ -80,6 +81,11 @@ _MAX_ANALYSIS_RETRIES = 1
 # Non-LLM engines and deterministic fallbacks are repeatable; retrying them
 # just burns CPU/LLM fallback budget and returns the same low-confidence answer.
 _DETERMINISTIC_ANALYSIS_ENGINES = {"rules", "ml", "blocked"}
+# D-156 (review F6): the per-test ``mode_used`` values that are an engine
+# answering (analysis_router: llm | ml | rules). Not engines: "hint"
+# (classification_hint_service), "human_corrected" (analysis_corrections) and
+# "unknown" (no engine recorded). Only these count towards a "mixed" stage.
+_ANSWERING_ENGINES = frozenset({"llm", "ml", "rules"})
 _METADATA_CACHE_TTL_SECONDS = 30
 _METADATA_CACHE_MAX_ENTRIES = 64
 _METADATA_CACHE: dict[str, tuple[float, dict[str, dict]]] = {}
@@ -88,6 +94,56 @@ _LOCAL_LLM_PROVIDERS = {"ollama", "lmstudio", "localai"}
 _REMOTE_LLM_PROVIDERS = {"openai", "gemini", "anthropic"}
 _HIGH_LATENCY_SECONDS = 20.0
 _LOW_LATENCY_SECONDS = 4.0
+# D-144: the tiered root-cause path makes up to two model calls in sequence,
+# the small model's verdict and then the escalated explanation. Each call is
+# bounded on its own by the configured per-call timeout (``BudgetedLLM`` stamps
+# it on every provider call; the ReAct loop's ``max_execution_time`` is the
+# same value), so the per-test guard allows one timeout per call instead of
+# splitting one timeout across both.
+_TIERED_MODEL_CALLS = 2
+
+
+def _progressive_tier1_timeout(timeout: int | float) -> int:
+    """The quick classification's own timeout after a timed-out analysis."""
+    return max(1, min(30, int(timeout) // 2))
+
+
+#: A test's guard never drops below this, even with the pipeline deadline
+#: almost reached (review finding 2: the bound must never go negative).
+_MIN_OPERATION_SECONDS = 1.0
+
+
+def _seconds_to_deadline(state: dict) -> float | None:
+    """Seconds left before the pipeline's own deadline, or None (no deadline)."""
+    deadline_ts = float(state.get("pipeline_deadline_ts") or 0.0)
+    return deadline_ts - time.monotonic() if deadline_ts else None
+
+
+#: Where ``Settings`` reads its env file (``model_config["env_file"]``).
+_ENV_FILES: tuple[str, ...] = (".env",)
+_CONCURRENCY_ENV = "LLM_MAX_CONCURRENT_ANALYSES"
+
+
+def _concurrency_set_by_operator() -> bool:
+    """Whether the operator set LLM_MAX_CONCURRENT_ANALYSES (env or env file).
+
+    D-144 / review finding 11: ``settings.model_fields_set`` gains the name on
+    ANY assignment (a test's monkeypatch, a runtime override) and keeps it, so
+    it cannot tell "set by the operator" from "assigned once". This reads the
+    sources ``Settings`` reads, the same way (an empty value counts as unset,
+    ``env_ignore_empty``).
+    """
+    if os.environ.get(_CONCURRENCY_ENV, "").strip():
+        return True
+    try:
+        from dotenv import dotenv_values
+
+        for path in _ENV_FILES:
+            if os.path.isfile(path) and str(dotenv_values(path).get(_CONCURRENCY_ENV) or "").strip():
+                return True
+    except Exception:  # noqa: BLE001 -- an unreadable env file is "not set"
+        return False
+    return False
 
 
 def _hash_text(value: object) -> str | None:
@@ -115,6 +171,11 @@ def _frozen_model_field(state: dict, key: str, default: Any) -> Any:
     resolution = state.get("analysis_mode_resolution") if isinstance(state, dict) else None
     value = resolution.get(key) if isinstance(resolution, dict) else None
     return value if isinstance(value, str) and value else default
+
+
+def _effective_provider(state: dict) -> str:
+    """The frozen effective provider, lower-cased (``unknown`` when none)."""
+    return str(_frozen_model_field(state, "provider", settings.LLM_PROVIDER) or "unknown").lower()
 
 
 def _is_failed_attempt(analysis: dict, routing_metadata: dict) -> bool:
@@ -541,11 +602,19 @@ class AnalysisAgent(BaseAgent):
             if audit.get("fallback_from"):
                 fallback_count += 1
         dominant_mode = max(mode_counts, key=mode_counts.get) if mode_counts else None
+        # D-156: three rules answers and one model answer used to read "rules".
+        # When the tests ran on more than one engine the stage says "mixed" and
+        # the split stays in result_data.mode_distribution (the decision trail
+        # exposes it per stage). Only an engine that answered counts towards
+        # "mixed" (_ANSWERING_ENGINES): a QA lead's hint, a replayed human
+        # correction or an unrecorded engine ("unknown") is not a second engine.
+        recorded_engines = [m for m in mode_counts if m in _ANSWERING_ENGINES]
+        stage_mode = "mixed" if len(recorded_engines) > 1 else dominant_mode
         stage_fallback_reason = (
             f"{fallback_count}/{total_analysed} tests fell back from requested engine"
             if fallback_count else None
         )
-        self._record_latency_feedback(analyses)
+        self._record_latency_feedback(analyses, state)
 
         await self.mark_stage_done(
             pipeline_run_id,
@@ -563,7 +632,7 @@ class AnalysisAgent(BaseAgent):
                 "budget_skipped": len(budget_skipped),
                 "config_skipped": len(threshold_skipped),
             },
-            analysis_mode=dominant_mode,
+            analysis_mode=stage_mode,
             fallback_reason=stage_fallback_reason,
             project_id=project_id,
         )
@@ -641,7 +710,9 @@ class AnalysisAgent(BaseAgent):
     async def _resolve_adaptive_concurrency(self, state: dict, total_tests: int) -> dict:
         """Choose per-run analysis fan-out from engine, provider, latency, and circuit state."""
         base = max(1, int(settings.LLM_MAX_CONCURRENT_ANALYSES or 1))
-        provider = str(settings.LLM_PROVIDER or "unknown").lower()
+        # Review finding 1: the provider the pipeline froze (Settings > AI
+        # over env), not the env value; a state without a snapshot keeps env.
+        provider = _effective_provider(state)
         mode = str(state.get("analysis_mode_resolved") or "auto").lower()
         if state.get("_cost_budget_mode_override") in ("ml", "rules"):
             mode = str(state["_cost_budget_mode_override"])
@@ -655,8 +726,15 @@ class AnalysisAgent(BaseAgent):
             concurrency = min(max(base, base * 2), 8)
             reasons.append(f"remote_provider={provider}")
         elif provider in _LOCAL_LLM_PROVIDERS:
-            concurrency = min(base, 3)
-            reasons.append(f"local_provider={provider}")
+            # D-144: a local model shares one machine; parallel calls on a
+            # processor slow each other into the timeout. One at a time unless
+            # the operator set LLM_MAX_CONCURRENT_ANALYSES (a GPU host).
+            if _concurrency_set_by_operator():
+                concurrency = min(base, 3)
+                reasons.append(f"local_provider={provider}")
+            else:
+                concurrency = 1
+                reasons.append(f"local_provider={provider}; one at a time (LLM_MAX_CONCURRENT_ANALYSES not set)")
 
         latency_ewma = _ANALYSIS_LATENCY_EWMA_BY_PROVIDER.get(provider)
         if latency_ewma is not None:
@@ -677,7 +755,7 @@ class AnalysisAgent(BaseAgent):
             "rationale": "; ".join(reasons),
         }
 
-    def _record_latency_feedback(self, analyses: dict[str, dict]) -> None:
+    def _record_latency_feedback(self, analyses: dict[str, dict], state: dict | None = None) -> None:
         """Update provider latency EWMA from completed per-test audit metadata."""
         durations = [
             float((analysis.get("_audit") or {}).get("analysis_duration_seconds"))
@@ -686,7 +764,8 @@ class AnalysisAgent(BaseAgent):
         ]
         if not durations:
             return
-        provider = str(settings.LLM_PROVIDER or "unknown").lower()
+        # Keyed by the same effective provider the concurrency reads.
+        provider = _effective_provider(state or {})
         observed = sum(durations) / len(durations)
         previous = _ANALYSIS_LATENCY_EWMA_BY_PROVIDER.get(provider)
         _ANALYSIS_LATENCY_EWMA_BY_PROVIDER[provider] = (
@@ -893,10 +972,24 @@ class AnalysisAgent(BaseAgent):
                 llm_timeout = effective_llm_timeout(
                     state, agent_id="agent.root_cause_analysis.v1"
                 )
+                tier_context = state.get("_root_cause_tier_context")
+                # D-144: one timeout per model call the operation can make
+                # (see _TIERED_MODEL_CALLS); the legacy path makes one.
+                operation_timeout: float = llm_timeout * (
+                    _TIERED_MODEL_CALLS if tier_context is not None else 1
+                )
+                # Review finding 2: the deadline is checked only before a
+                # test starts, and Celery hard-kills the pipeline soon after
+                # it. A test started near the deadline gets only the time
+                # left (never less than the floor).
+                deadline_left = _seconds_to_deadline(state)
+                if deadline_left is not None:
+                    operation_timeout = max(
+                        _MIN_OPERATION_SECONDS, min(operation_timeout, deadline_left)
+                    )
                 try:
                     from app.services.analysis_router import classify_root_cause_tiered
 
-                    tier_context = state.get("_root_cause_tier_context")
                     run_data = state.get("test_run_data") or {}
                     if tier_context is None:
                         operation = run_triage_agent(
@@ -941,21 +1034,32 @@ class AnalysisAgent(BaseAgent):
                         )
                     analysis = await asyncio.wait_for(
                         operation,
-                        timeout=llm_timeout,
+                        timeout=operation_timeout,
                     )
                 except asyncio.TimeoutError:
                     logger.warning(
                         "react_agent_timeout",
-                        timeout_seconds=llm_timeout,
+                        timeout_seconds=operation_timeout,
+                        per_call_timeout_seconds=llm_timeout,
                         test_case_id=tc_id,
                         fallback="progressive",
                     )
+                    # The quick classification also fits in what is left of
+                    # the pipeline's deadline, or is skipped (0).
+                    quick_timeout = _progressive_tier1_timeout(llm_timeout)
+                    left_after = _seconds_to_deadline(state)
+                    if left_after is not None:
+                        quick_timeout = (
+                            0 if left_after < _MIN_OPERATION_SECONDS
+                            else min(quick_timeout, int(left_after))
+                        )
                     analysis = await self._build_progressive_fallback(
-                        tc_id, meta, timeout=llm_timeout
+                        tc_id, meta, timeout=llm_timeout, quick_timeout=quick_timeout
                     )
                     analysis = self._record_llm_timeout_routing(
                         analysis,
-                        timeout=llm_timeout,
+                        timeout=int(operation_timeout),
+                        quick_timeout=quick_timeout,
                         mode_requested=state.get("analysis_mode_requested"),
                         mode_resolved=mode,
                     )
@@ -1414,7 +1518,8 @@ class AnalysisAgent(BaseAgent):
         return normalize_category_in_analysis(analysis)
 
     async def _build_progressive_fallback(
-        self, tc_id: str, meta: dict, *, timeout: int | None = None
+        self, tc_id: str, meta: dict, *, timeout: int | None = None,
+        quick_timeout: int | None = None,
     ) -> dict:
         """
         3-tier progressive fallback when the full ReAct agent fails:
@@ -1426,8 +1531,14 @@ class AnalysisAgent(BaseAgent):
         its own confidences, so one failure read Flaky 85 in Rules mode and
         Product Bug 45 after a timeout (D-151). It is the rules engine now.
 
-        ``timeout`` is the LLM timeout that just expired (W04 AIC-02); tier 1
-        gets ``min(30, timeout // 2)`` of it.
+        ``timeout`` is the per-call LLM timeout (W04 AIC-02); tier 1 gets
+        ``min(30, timeout // 2)``. D-144: that is a further model call AFTER
+        the analysis's own limit expired, with its own timeout (inside the
+        per-call limit). A test that falls back can therefore take its
+        analysis limit plus this much; the tier-1 reason says so
+        (``_record_llm_timeout_routing``). ``quick_timeout`` overrides tier 1's
+        timeout (the caller fits it in the pipeline's remaining time); 0 skips
+        tier 1.
         """
         error_msg = meta.get("error_message") or ""
         test_name = meta.get("test_name") or tc_id
@@ -1436,8 +1547,12 @@ class AnalysisAgent(BaseAgent):
 
             timeout = effective_llm_timeout(None, agent_id="agent.root_cause_analysis.v1")
 
+        tier1_timeout = _progressive_tier1_timeout(timeout) if quick_timeout is None else quick_timeout
+
         # Tier 1: Fast classifier
         try:
+            if tier1_timeout <= 0:
+                raise TimeoutError("no time left before the pipeline deadline")
             from app.services.training.classifier import FastClassifier
             quick = await asyncio.wait_for(
                 FastClassifier.classify(
@@ -1445,7 +1560,7 @@ class AnalysisAgent(BaseAgent):
                     error_message=error_msg,
                     stack_trace=meta.get("stack_trace") or "",
                 ),
-                timeout=max(1, min(30, int(timeout) // 2)),
+                timeout=tier1_timeout,
             )
             if quick is not None:
                 quick["fallback_tier"] = 1
@@ -1482,6 +1597,7 @@ class AnalysisAgent(BaseAgent):
         timeout: int,
         mode_requested: Any,
         mode_resolved: Any,
+        quick_timeout: int | None = None,
     ) -> dict:
         """Record an LLM timeout as an engine fallback (W04 AIC-02).
 
@@ -1502,6 +1618,10 @@ class AnalysisAgent(BaseAgent):
         if tier == 1:
             used, source = "llm", "react_agent"
             reason = f"react_timeout: full investigation timed out after {int(timeout)} s"
+            if quick_timeout:
+                # D-144: the answer came from a further call after that limit
+                # ("succeeded in 144 s" under a 120 s limit); say so.
+                reason += f"; a quick classification then answered (allowed {int(quick_timeout)} s more)"
         else:
             used, source = ("rules" if tier == 2 else None), "llm"
             reason = f"llm_timeout: LLM timed out after {int(timeout)} s"

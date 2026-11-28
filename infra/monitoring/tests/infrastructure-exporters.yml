@@ -1,0 +1,89 @@
+rule_files:
+  - ../prometheus-rules/testlookup-alerts.yml
+evaluation_interval: 30s
+tests:
+  - name: a missing declared exporter is scoped to the exact target and recovers
+    interval: 30s
+    input_series:
+      - series: 'testlookup:infrastructure_expected_target{cluster="lab-a",namespace="apps",telemetry_profile="kubernetes",telemetry_role="host-exporter",job="testlookup-infra-host",instance="node-a"}'
+        values: '1x12'
+      - series: 'up{cluster="lab-b",namespace="apps",telemetry_profile="kubernetes",telemetry_role="host-exporter",job="testlookup-infra-host",instance="node-a"}'
+        values: '1x12'
+      - series: 'up{cluster="lab-a",namespace="apps",telemetry_profile="kubernetes",telemetry_role="host-exporter",job="testlookup-infra-host",instance="node-b"}'
+        values: '1x12'
+      - series: 'up{cluster="lab-a",namespace="apps",telemetry_profile="kubernetes",telemetry_role="host-exporter",job="testlookup-infra-host",instance="node-a"}'
+        values: '_x5 1x6'
+    promql_expr_test:
+      - expr: 'ALERTS{alertname="TestLookupInfrastructureExporterUnavailable",alertstate="firing"}'
+        eval_time: 1m30s
+        exp_samples: []
+      - expr: 'count by (cluster,namespace,instance,telemetry_role) (ALERTS{alertname="TestLookupInfrastructureExporterUnavailable",alertstate="firing"})'
+        eval_time: 2m
+        exp_samples:
+          - labels: '{cluster="lab-a",namespace="apps",instance="node-a",telemetry_role="host-exporter"}'
+            value: 1
+      - expr: 'ALERTS{alertname="TestLookupInfrastructureExporterUnavailable",alertstate="firing"}'
+        eval_time: 3m
+        exp_samples: []
+
+  - name: an answered host scrape still requires usable root size and a kernel OOM counter
+    interval: 30s
+    input_series:
+      - series: 'testlookup:infrastructure_expected_target{cluster="lab",namespace="apps",telemetry_profile="compose",telemetry_role="host-exporter",job="testlookup-infra-host",instance="root-host"}'
+        values: '1x14'
+      - series: 'up{cluster="lab",namespace="apps",telemetry_profile="compose",telemetry_role="host-exporter",job="testlookup-infra-host",instance="root-host"}'
+        values: '1x14'
+      - series: 'node_filesystem_avail_bytes{cluster="lab",namespace="apps",telemetry_profile="compose",telemetry_role="host-exporter",job="testlookup-infra-host",instance="root-host",mountpoint="/"}'
+        values: '0x14'
+      - series: 'node_filesystem_size_bytes{cluster="lab",namespace="apps",telemetry_profile="compose",telemetry_role="host-exporter",job="testlookup-infra-host",instance="root-host",mountpoint="/"}'
+        values: '0x11 100x2'
+      - series: 'node_vmstat_oom_kill{cluster="lab",namespace="apps",telemetry_profile="compose",telemetry_role="host-exporter",job="testlookup-infra-host",instance="root-host"}'
+        values: '_x11 0x2'
+    promql_expr_test:
+      - expr: 'count by (signal) (ALERTS{alertname="TestLookupInfrastructureExporterSignalMissing",alertstate="firing"})'
+        eval_time: 5m
+        exp_samples:
+          - labels: '{signal="oom_kills"}'
+            value: 1
+          - labels: '{signal="root_size_bytes"}'
+            value: 1
+      - expr: 'ALERTS{alertname="TestLookupInfrastructureExporterSignalMissing",alertstate="firing"}'
+        eval_time: 6m
+        exp_samples: []
+
+  - name: an exporter responds during database outage and capacity is required after recovery
+    interval: 30s
+    input_series:
+      - series: 'testlookup:infrastructure_expected_target{cluster="lab",namespace="apps",telemetry_profile="compose",telemetry_role="postgres-exporter",job="testlookup-infra-postgres",instance="pg-a"}'
+        values: '1x32'
+      - series: 'up{cluster="lab",namespace="apps",telemetry_profile="compose",telemetry_role="postgres-exporter",job="testlookup-infra-postgres",instance="pg-a"}'
+        values: '1x32'
+      - series: 'pg_up{cluster="lab",namespace="apps",telemetry_profile="compose",telemetry_role="postgres-exporter",job="testlookup-infra-postgres",instance="pg-a"}'
+        values: '0x10 1x21'
+      - series: 'pg_settings_max_connections{cluster="lab",namespace="apps",telemetry_profile="compose",telemetry_role="postgres-exporter",job="testlookup-infra-postgres",instance="pg-a"}'
+        values: '_x24 100x7'
+    promql_expr_test:
+      - expr: 'count by (instance) (ALERTS{alertname="TestLookupPostgresExporterDatabaseUnavailable",alertstate="firing"})'
+        eval_time: 2m
+        exp_samples:
+          - labels: '{instance="pg-a"}'
+            value: 1
+      - expr: 'ALERTS{alertname=~"TestLookupInfrastructureExporterUnavailable|TestLookupInfrastructureExporterSignalMissing",alertstate="firing"}'
+        eval_time: 5m
+        exp_samples: []
+      - expr: 'count by (signal) (ALERTS{alertname="TestLookupInfrastructureExporterSignalMissing",alertstate="firing"})'
+        eval_time: 10m30s
+        exp_samples:
+          - labels: '{signal="database_max_connections"}'
+            value: 1
+      - expr: 'ALERTS{alertname=~"TestLookupInfrastructureExporterSignalMissing|TestLookupPostgresExporterDatabaseUnavailable",alertstate="firing"}'
+        eval_time: 13m
+        exp_samples: []
+
+  - name: the base profile can omit infrastructure exporters
+    interval: 30s
+    input_series: []
+    promql_expr_test:
+      - expr: 'ALERTS{alertname=~"TestLookupInfrastructureExporterUnavailable|TestLookupInfrastructureExporterSignalMissing|TestLookupPostgresExporterDatabaseUnavailable",alertstate="firing"}'
+        eval_time: 10m
+        exp_samples: []

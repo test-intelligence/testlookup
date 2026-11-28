@@ -14,6 +14,12 @@ The shipped production contract is:
 - API pool per process: 2 pooled + 1 overflow
 - worker pool per process: 1 pooled + 1 overflow
 
+Receipt-backed JSON and file ingestion reserve one connection from the existing
+worker child pool while processing. The other slot supports the ingestion
+transactions. Keep at least two slots for ingestion children. The receipt lock
+requires a direct PostgreSQL connection or a session-mode pooler. It runs in
+autocommit while the worker holds the connection.
+
 At the production HPA ceilings, every DB-owning Deployment is also charged one
 rolling-surge pod. The resulting maximum is 272 application connections plus
 eight simultaneous migration connections. After the PostgreSQL superuser

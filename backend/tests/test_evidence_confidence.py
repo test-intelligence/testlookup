@@ -131,7 +131,7 @@ def test_evidenceref_contribution_coercion_and_clamp():
 def test_excerpt_redacts_email_ip_and_bearer_token():
     raw_email = "john.doe@example.com"
     raw_ip = "192.168.1.100"
-    raw_token = "abcdefghij1234567890XYZ"
+    raw_token = "abcdefghij1234567890XYZ" # gitleaks:allow -- synthetic test credential, never production authority
     excerpt = (
         f"Contact {raw_email} at {raw_ip} with Bearer {raw_token} to authorize"
     )

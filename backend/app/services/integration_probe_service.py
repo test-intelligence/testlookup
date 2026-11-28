@@ -26,7 +26,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Optional
 
-from app.core.http_client import get_http_client
+from app.core.http_client import get_http_client, get_integration_http_client
+from app.services.prometheus_policy import prometheus_offline_reason
 from app.services.url_safety import egress_block_reason
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
@@ -215,7 +216,7 @@ async def probe_jira(config: dict | None = None) -> ProbeResult:
     start = time.monotonic()
     try:
         url = f"https://{domain}/rest/api/3/serverInfo"
-        client = get_http_client()
+        client = get_integration_http_client()
         resp = await client.get(
             url,
             auth=(email or "", token or ""),
@@ -258,7 +259,7 @@ async def probe_splunk(config: dict | None = None) -> ProbeResult:
     try:
         url = f"{base_url}/services/server/info"
         headers = {"Authorization": f"Bearer {token or ''}"}
-        client = get_http_client()
+        client = get_integration_http_client()
         resp = await client.get(url, headers=headers, timeout=10.0)
         ms = int((time.monotonic() - start) * 1000)
         if resp.status_code == 200:
@@ -293,7 +294,7 @@ async def probe_github(config: dict | None = None) -> ProbeResult:
     start = time.monotonic()
     try:
         headers = {"Authorization": f"token {token}", "Accept": "application/vnd.github.v3+json"}
-        client = get_http_client()
+        client = get_integration_http_client()
         resp = await client.get("https://api.github.com/rate_limit", headers=headers, timeout=10.0)
         ms = int((time.monotonic() - start) * 1000)
         if resp.status_code == 200:
@@ -330,7 +331,7 @@ async def probe_ocp(config: dict | None = None) -> ProbeResult:
     start = time.monotonic()
     try:
         headers = {"Authorization": f"Bearer {token or ''}"}
-        client = get_http_client()
+        client = get_integration_http_client()
         resp = await client.get(
             f"{api_url}/api/v1/namespaces/{namespace}",
             headers=headers,
@@ -499,9 +500,10 @@ async def probe_prometheus(config: dict | None = None) -> ProbeResult:
     """
     from app.services.prometheus_vocab import PROBE_SENTENCES
 
-    refused = _offline_hard_gate("prometheus")
-    if refused:
-        return refused
+    if prometheus_offline_reason() is not None:
+        return ProbeResult(
+            "prometheus", "skipped", message="AI_OFFLINE_MODE=true -- outbound prometheus calls are disabled"
+        )
     config = config or {}
     base_url = (config.get("prometheus_base_url") or "").strip().rstrip("/")
     token = config.get("prometheus_bearer_token")
@@ -516,7 +518,7 @@ async def probe_prometheus(config: dict | None = None) -> ProbeResult:
     start = time.monotonic()
     try:
         headers = {"Authorization": f"Bearer {token}"} if token else {}
-        client = get_http_client()
+        client = get_integration_http_client()
         resp = await client.get(f"{base_url}/api/v1/status/buildinfo", headers=headers, timeout=_PROBE_TIMEOUT)
         ms = int((time.monotonic() - start) * 1000)
         if resp.status_code == 200:
@@ -682,7 +684,9 @@ async def _read_project_targets(
 
 async def _timed_get(url: str, headers: dict[str, str]) -> tuple[Any, int]:
     start = time.monotonic()
-    resp = await get_http_client().get(url, headers=headers, timeout=_PROBE_TIMEOUT)
+    resp = await get_integration_http_client().get(
+        url, headers=headers, timeout=_PROBE_TIMEOUT
+    )
     return resp, int((time.monotonic() - start) * 1000)
 
 

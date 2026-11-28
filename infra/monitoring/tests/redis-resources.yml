@@ -1,0 +1,106 @@
+# Native Redis rules: finite limits, low/zero capacity, stale replicas and recovery.
+rule_files:
+- ../prometheus-rules/testlookup-alerts.yml
+evaluation_interval: 30s
+tests:
+- name: fresh native Redis high memory fires once across replicas and recovers
+  interval: 30s
+  input_series:
+  - series: testlookup_redis_memory_counted_for_evict_bytes{cluster="lab",namespace="prod",job="testlookup-backend",instance="api-a",store_role="application"}
+    values: '95x10 50x29'
+  - series: redis_memory_max_bytes{cluster="lab",namespace="prod",job="testlookup-backend",instance="api-a",store_role="application"}
+    values: '100x40'
+  - series: testlookup_metric_collection_success{cluster="lab",namespace="prod",job="testlookup-backend",instance="api-a",collector="redis"}
+    values: '1x40'
+  - series: testlookup_metric_collection_last_success_timestamp_seconds{cluster="lab",namespace="prod",job="testlookup-backend",instance="api-a",collector="redis"}
+    values: '0+30x40'
+  - series: testlookup_redis_memory_counted_for_evict_bytes{cluster="lab",namespace="prod",job="testlookup-backend",instance="api-b",store_role="application"}
+    values: '95x10 50x29'
+  - series: redis_memory_max_bytes{cluster="lab",namespace="prod",job="testlookup-backend",instance="api-b",store_role="application"}
+    values: '100x40'
+  - series: testlookup_metric_collection_success{cluster="lab",namespace="prod",job="testlookup-backend",instance="api-b",collector="redis"}
+    values: '1x40'
+  - series: testlookup_metric_collection_last_success_timestamp_seconds{cluster="lab",namespace="prod",job="testlookup-backend",instance="api-b",collector="redis"}
+    values: '0+30x40'
+  promql_expr_test:
+  - expr: count(ALERTS{alertname="TestLookupRedisMemoryHigh",alertstate="firing"}) or vector(0)
+    eval_time: 4m30s
+    exp_samples:
+    - labels: '{}'
+      value: 0
+  - expr: count by (cluster,namespace,store_role) (ALERTS{alertname="TestLookupRedisMemoryHigh",alertstate="firing"})
+    eval_time: 5m
+    exp_samples:
+    - labels: '{cluster="lab",namespace="prod",store_role="application"}'
+      value: 1
+  - expr: count(ALERTS{alertname="TestLookupRedisMemoryHigh",alertstate="firing"}) or vector(0)
+    eval_time: 6m
+    exp_samples:
+    - labels: '{}'
+      value: 0
+- name: unlimited memory is a separate policy alert and never infinite saturation
+  interval: 30s
+  input_series:
+  - series: testlookup_redis_memory_counted_for_evict_bytes{cluster="lab",namespace="prod",job="testlookup-backend",instance="api-a",store_role="broker"}
+    values: '50x40'
+  - series: redis_memory_max_bytes{cluster="lab",namespace="prod",job="testlookup-backend",instance="api-a",store_role="broker"}
+    values: '0x40'
+  - series: testlookup_metric_collection_success{cluster="lab",namespace="prod",job="testlookup-backend",instance="api-a",collector="redis"}
+    values: '1x40'
+  - series: testlookup_metric_collection_last_success_timestamp_seconds{cluster="lab",namespace="prod",job="testlookup-backend",instance="api-a",collector="redis"}
+    values: '0+30x40'
+  promql_expr_test:
+  - expr: count(ALERTS{alertname="TestLookupRedisMemoryHigh",alertstate="firing"}) or vector(0)
+    eval_time: 12m
+    exp_samples:
+    - labels: '{}'
+      value: 0
+  - expr: count(ALERTS{alertname="TestLookupRedisMemoryLimitMissing",alertstate="firing"}) or vector(0)
+    eval_time: 9m30s
+    exp_samples:
+    - labels: '{}'
+      value: 0
+  - expr: count by (cluster,namespace,store_role) (ALERTS{alertname="TestLookupRedisMemoryLimitMissing",alertstate="firing"})
+    eval_time: 10m
+    exp_samples:
+    - labels: '{cluster="lab",namespace="prod",store_role="broker"}'
+      value: 1
+- name: failed and stale replicas cannot override fresh low memory or borrow another namespace health
+  interval: 30s
+  input_series:
+  - series: redis_memory_used_bytes{cluster="lab",namespace="prod",job="testlookup-backend",instance="api-a",store_role="application"}
+    values: '95x40'
+  - series: testlookup_redis_memory_counted_for_evict_bytes{cluster="lab",namespace="prod",job="testlookup-backend",instance="api-a",store_role="application"}
+    values: '80x40'
+  - series: redis_memory_max_bytes{cluster="lab",namespace="prod",job="testlookup-backend",instance="api-a",store_role="application"}
+    values: '100x40'
+  - series: testlookup_metric_collection_success{cluster="lab",namespace="prod",job="testlookup-backend",instance="api-a",collector="redis"}
+    values: '1x40'
+  - series: testlookup_metric_collection_last_success_timestamp_seconds{cluster="lab",namespace="prod",job="testlookup-backend",instance="api-a",collector="redis"}
+    values: '0+30x40'
+  - series: testlookup_redis_memory_counted_for_evict_bytes{cluster="lab",namespace="prod",job="testlookup-backend",instance="api-failed",store_role="application"}
+    values: '99x40'
+  - series: redis_memory_max_bytes{cluster="lab",namespace="prod",job="testlookup-backend",instance="api-failed",store_role="application"}
+    values: '100x40'
+  - series: testlookup_metric_collection_success{cluster="lab",namespace="prod",job="testlookup-backend",instance="api-failed",collector="redis"}
+    values: '0x40'
+  - series: testlookup_metric_collection_last_success_timestamp_seconds{cluster="lab",namespace="prod",job="testlookup-backend",instance="api-failed",collector="redis"}
+    values: '0+30x40'
+  - series: testlookup_redis_memory_counted_for_evict_bytes{cluster="lab",namespace="prod",job="testlookup-backend",instance="api-stale",store_role="application"}
+    values: '99x40'
+  - series: redis_memory_max_bytes{cluster="lab",namespace="prod",job="testlookup-backend",instance="api-stale",store_role="application"}
+    values: '100x40'
+  - series: testlookup_metric_collection_success{cluster="lab",namespace="prod",job="testlookup-backend",instance="api-stale",collector="redis"}
+    values: '1x40'
+  - series: testlookup_metric_collection_last_success_timestamp_seconds{cluster="lab",namespace="prod",job="testlookup-backend",instance="api-stale",collector="redis"}
+    values: '0x40'
+  - series: testlookup_redis_memory_counted_for_evict_bytes{cluster="lab",namespace="other",job="testlookup-backend",instance="api-a",store_role="broker"}
+    values: '99x40'
+  - series: redis_memory_max_bytes{cluster="lab",namespace="other",job="testlookup-backend",instance="api-a",store_role="broker"}
+    values: '100x40'
+  promql_expr_test:
+  - expr: count(ALERTS{alertname="TestLookupRedisMemoryHigh",alertstate="firing"}) or vector(0)
+    eval_time: 10m
+    exp_samples:
+    - labels: '{}'
+      value: 0
