@@ -38,14 +38,15 @@ def _require_correction_role(body, current_user) -> None:
     """
     if not _is_correction(body):
         return
-    from app.core.deps import _ROLE_ORDER, _normalize_user_role  # noqa: PLC0415
+    from app.core.deps import _normalize_user_role  # noqa: PLC0415
+    from app.core.permissions import rank_index  # noqa: PLC0415
     from app.models.postgres import UserRole  # noqa: PLC0415
 
     try:
-        idx = _ROLE_ORDER.index(_normalize_user_role(current_user.role))
+        idx = rank_index(_normalize_user_role(current_user.role))
     except ValueError:
         idx = -1
-    if idx < _ROLE_ORDER.index(UserRole.QA_ENGINEER):
+    if idx < rank_index(UserRole.QA_ENGINEER):
         raise HTTPException(
             403, detail="Correcting an AI analysis requires at least QA_ENGINEER role"
         )

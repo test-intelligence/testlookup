@@ -167,6 +167,7 @@ async def accept_invitation(
     of tokens (an invite never skips the second factor).
     """
     from app.core.deps import invalidate_membership_cache
+    from app.core.permissions import job_roles_in
     from app.models.postgres import Project, ProjectMember
     from app.services.access_audit_service import log_access_change
 
@@ -195,6 +196,7 @@ async def accept_invitation(
         full_name=payload.full_name,
         hashed_password=get_password_hash(payload.password),
         role=invitation.role,
+        additional_roles=[r.value for r in job_roles_in(getattr(invitation, "additional_roles", None))] or None,
         must_change_password=False,
     )
     db.add(user)
@@ -210,10 +212,15 @@ async def accept_invitation(
         if project is None or not getattr(project, "is_active", True):
             continue  # archived since the invite: skip, never fail the whole accept
         role_value = str(m.get("role") or UserRole.QA_ENGINEER.value)
-        db.add(ProjectMember(user_id=user.id, project_id=project_id, role=role_value))
+        member_extras = [r.value for r in job_roles_in(m.get("additional_roles")) if r.value != role_value]
+        db.add(ProjectMember(
+            user_id=user.id, project_id=project_id, role=role_value, additional_roles=member_extras or None,
+        ))
+        added: dict = {"role": role_value, "via": "invitation"}
+        if member_extras:
+            added["additional_roles"] = member_extras
         await log_access_change(
-            db, "member_added", None, target_user_id=user.id, project_id=project_id,
-            after_value={"role": role_value, "via": "invitation"},
+            db, "member_added", None, target_user_id=user.id, project_id=project_id, after_value=added,
         )
         granted += 1
 
@@ -633,6 +640,12 @@ _DEV_ROLE_MAP: dict[str, UserRole] = {
     "qa_engineer": UserRole.QA_ENGINEER,
     "tester":      UserRole.TESTER,
     "viewer":      UserRole.VIEWER,
+    # Enterprise roles E00-S06: the four job roles. AGENT is not a slug -- agents
+    # are registered (E01), never signed in as a person.
+    "release_manager": UserRole.RELEASE_MANAGER,
+    "project_manager": UserRole.PROJECT_MANAGER,
+    "product_manager": UserRole.PRODUCT_MANAGER,
+    "developer":       UserRole.DEVELOPER,
 }
 
 # Defaults used when creating a temporary user if the seed has not run yet
@@ -642,6 +655,18 @@ _DEV_ROLE_DEFAULTS: dict[UserRole, dict] = {
     UserRole.QA_ENGINEER: {"email": "engineer@testlookup.dev", "username": "qa_engineer", "full_name": "Dev QA Engineer"},
     UserRole.TESTER:      {"email": "tester@testlookup.dev",   "username": "tester",      "full_name": "Dev Tester"},
     UserRole.VIEWER:      {"email": "viewer@testlookup.dev",   "username": "viewer",      "full_name": "Dev Viewer"},
+    UserRole.RELEASE_MANAGER: {
+        "email": "release.manager@testlookup.dev", "username": "release_manager", "full_name": "Dev Release Manager",
+    },
+    UserRole.PROJECT_MANAGER: {
+        "email": "project.manager@testlookup.dev", "username": "project_manager", "full_name": "Dev Project Manager",
+    },
+    UserRole.PRODUCT_MANAGER: {
+        "email": "product.manager@testlookup.dev", "username": "product_manager", "full_name": "Dev Product Manager",
+    },
+    UserRole.DEVELOPER: {
+        "email": "developer@testlookup.dev", "username": "developer", "full_name": "Dev Developer",
+    },
 }
 
 

@@ -1,6 +1,14 @@
+import type { JobRole, Role } from '@/types/permissions'
 import { api } from './api'
 
-export type UserRole = 'VIEWER' | 'TESTER' | 'QA_ENGINEER' | 'QA_LEAD' | 'ADMIN'
+/** Every role (enterprise roles E00): the five ranks, the four job roles, AGENT (agents only). */
+export type UserRole = Role
+export type { JobRole }
+
+/** Only the extra roles given, so an older server sees the body it always saw. */
+function withExtras<T extends object>(body: T, additional_roles?: JobRole[]): T & { additional_roles?: JobRole[] } {
+  return additional_roles === undefined ? body : { ...body, additional_roles }
+}
 
 export interface UserItem {
   id: string
@@ -8,6 +16,8 @@ export interface UserItem {
   username: string
   full_name: string | null
   role: UserRole
+  /** Enterprise roles D-16: extra job roles beside `role` (which alone gives the rank). An older server omits it. */
+  additional_roles?: JobRole[]
   is_active: boolean
   created_at: string
   /** W31 STRAT-12: the account was erased (pseudonymised) — render "Erased user" + the badge, no actions. */
@@ -23,6 +33,8 @@ export interface ProjectMember {
   user_id: string
   project_id: string
   role: UserRole
+  /** Extra job roles in this project. On a write, the person's global roles and these intersect. */
+  additional_roles?: JobRole[]
   created_at: string
   email: string
   username: string
@@ -58,6 +70,7 @@ export interface InviteUserResponse {
   id: string
   email: string
   role: UserRole
+  additional_roles?: JobRole[]
   expires_at: string
   /** `{base}/accept-invite#token=…` — shown once; only its hash is stored (W17b ADM-01). */
   invitation_link: string
@@ -68,6 +81,7 @@ export interface InviteUserResponse {
 export interface InviteProjectMembership {
   project_id: string
   role: UserRole
+  additional_roles?: JobRole[]
 }
 
 export type InvitationStatus = 'pending' | 'expired' | 'used' | 'revoked'
@@ -77,13 +91,19 @@ export interface InvitationSummary {
   id: string
   email: string
   role: UserRole
+  additional_roles?: JobRole[]
   status: InvitationStatus
   expires_at: string
   created_at: string | null
   used_at: string | null
   revoked_at: string | null
   invited_by_name: string | null
-  project_memberships: Array<{ project_id: string; project_name: string | null; role: string }>
+  project_memberships: Array<{
+    project_id: string
+    project_name: string | null
+    role: string
+    additional_roles?: JobRole[]
+  }>
 }
 
 /** W17b ADM-02: an admin-issued reset link; the admin never sees or sets the password. */
@@ -99,6 +119,7 @@ export interface AdminCreateUserResponse {
   username: string
   full_name: string | null
   role: UserRole
+  additional_roles?: JobRole[]
   is_active: boolean
   created_at: string
   temp_password: string
@@ -151,11 +172,20 @@ export const userManagementService = {
   updateUserStatus: (userId: string, is_active: boolean) =>
     api.patch<UserItem>(`/api/v1/users/${userId}/status`, { is_active }).then((r) => r.data),
 
-  inviteUser: (email: string, role: UserRole, project_memberships: InviteProjectMembership[] = []) =>
+  inviteUser: (
+    email: string,
+    role: UserRole,
+    project_memberships: InviteProjectMembership[] = [],
+    additional_roles?: JobRole[],
+  ) =>
     // The Invite User form shows the refusal itself (an e-mail on a reserved domain such as .local is a
     // 422 naming the field), so the global toast stays quiet: before, it raised a second, generic one.
     api
-      .post<InviteUserResponse>('/api/v1/users/invite', { email, role, project_memberships }, { suppressToast: true })
+      .post<InviteUserResponse>(
+        '/api/v1/users/invite',
+        withExtras({ email, role, project_memberships }, additional_roles),
+        { suppressToast: true },
+      )
       .then((r) => r.data),
 
   listInvitations: () =>
@@ -171,9 +201,13 @@ export const userManagementService = {
     api.post<PasswordResetLinkResponse>(`/api/v1/users/${userId}/password-reset-link`).then((r) => r.data),
 
   // Add User and Edit User show the refusal in the form, as Invite User does.
-  createUser: (email: string, username: string, role: UserRole, full_name?: string) =>
+  createUser: (email: string, username: string, role: UserRole, full_name?: string, additional_roles?: JobRole[]) =>
     api
-      .post<AdminCreateUserResponse>('/api/v1/users', { email, username, role, full_name }, { suppressToast: true })
+      .post<AdminCreateUserResponse>(
+        '/api/v1/users',
+        withExtras({ email, username, role, full_name }, additional_roles),
+        { suppressToast: true },
+      )
       .then((r) => r.data),
 
   updateUserProfile: (userId: string, updates: {
@@ -181,13 +215,21 @@ export const userManagementService = {
     username?: string
     full_name?: string | null
     role?: UserRole
+    /** `[]` clears the extra roles; omitted keeps them. */
+    additional_roles?: JobRole[]
     is_active?: boolean
   }) =>
     api.patch<UserItem>(`/api/v1/users/${userId}`, updates, { suppressToast: true }).then((r) => r.data),
 
   // User memberships (aggregated — single call replaces N+1)
   getUserMemberships: (userId: string) =>
-    api.get<Array<{ project_id: string; project_name: string; role: UserRole; created_at: string }>>(
+    api.get<Array<{
+      project_id: string
+      project_name: string
+      role: UserRole
+      additional_roles?: JobRole[]
+      created_at: string
+    }>>(
       `/api/v1/users/${userId}/memberships`,
     ).then((r) => r.data),
 
@@ -195,14 +237,15 @@ export const userManagementService = {
   listProjectMembers: (projectId: string) =>
     api.get<ProjectMember[]>(`/api/v1/projects/${projectId}/members`).then((r) => r.data),
 
-  addProjectMember: (projectId: string, user_id: string, role: UserRole) =>
+  addProjectMember: (projectId: string, user_id: string, role: UserRole, additional_roles?: JobRole[]) =>
     api
-      .post<ProjectMember>(`/api/v1/projects/${projectId}/members`, { user_id, role })
+      .post<ProjectMember>(`/api/v1/projects/${projectId}/members`, withExtras({ user_id, role }, additional_roles))
       .then((r) => r.data),
 
-  updateProjectMemberRole: (projectId: string, userId: string, role: UserRole) =>
+  /** `additional_roles`: `[]` clears them, omitted keeps them. */
+  updateProjectMemberRole: (projectId: string, userId: string, role: UserRole, additional_roles?: JobRole[]) =>
     api
-      .patch<ProjectMember>(`/api/v1/projects/${projectId}/members/${userId}`, { role })
+      .patch<ProjectMember>(`/api/v1/projects/${projectId}/members/${userId}`, withExtras({ role }, additional_roles))
       .then((r) => r.data),
 
   removeProjectMember: (projectId: string, userId: string) =>

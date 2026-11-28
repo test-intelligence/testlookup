@@ -1014,7 +1014,7 @@ Return health status for all tracked integration providers.
 The deployment-wide view only (``scope_key = ''``): per-project GitHub /
 GitLab rows (W10 INT-04) are Integration Health's ``?scope=all`` read.
 
-Source: [backend/app/routers/app_settings.py:1663](../../../backend/app/routers/app_settings.py#L1663).
+Source: [backend/app/routers/app_settings.py:1683](../../../backend/app/routers/app_settings.py#L1683).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -1172,6 +1172,13 @@ Declared Python handler arguments (includes exact role/guard options):
 payload: MfaPolicyUpdate, current_user: User=Depends(require_role(UserRole.ADMIN)), db: AsyncSession=Depends(get_db)
 ```
 
+Direct handler error branches (dependency/service errors can add others):
+
+```python
+HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='AGENT cannot be required to use MFA (agents sign in with keys)')
+HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='The MFA floor must be a rank (VIEWER, TESTER, QA_ENGINEER, QA_LEAD or ADMIN); list job roles under required roles')
+```
+
 ### Declared wire contract
 
 References such as `#/components/schemas/...` resolve in [schemas](../schemas.md) or [OpenAPI JSON](../openapi.json).
@@ -1245,7 +1252,7 @@ The instance retention defaults: the stored values (NULL = the code
 default), the code defaults, the effective values, how many projects
 inherit each field, and who switched the default on. Reads only.
 
-Source: [backend/app/routers/app_settings.py:1713](../../../backend/app/routers/app_settings.py#L1713).
+Source: [backend/app/routers/app_settings.py:1733](../../../backend/app/routers/app_settings.py#L1733).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -1318,7 +1325,7 @@ Save the instance defaults (``clear`` resets a field to the code
 default). ``enabled: true`` is refused (422 ``enable_via_flow``);
 ``enabled: false`` switches the default off at once. Interactive login only.
 
-Source: [backend/app/routers/app_settings.py:1739](../../../backend/app/routers/app_settings.py#L1739).
+Source: [backend/app/routers/app_settings.py:1759](../../../backend/app/routers/app_settings.py#L1759).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -1408,7 +1415,7 @@ Switch the instance default ON for every project without its own
 ``preview_stale``) and the confirmation must be the exact phrase (422
 ``confirmation_mismatch``). Interactive login only.
 
-Source: [backend/app/routers/app_settings.py:1767](../../../backend/app/routers/app_settings.py#L1767).
+Source: [backend/app/routers/app_settings.py:1787](../../../backend/app/routers/app_settings.py#L1787).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -1492,7 +1499,7 @@ no explicit ``enabled``), the hash ``POST …/enable`` must echo and the phrase
 it must type. An instance administrator's deployment-wide view. Writes
 NOTHING.
 
-Source: [backend/app/routers/app_settings.py:1726](../../../backend/app/routers/app_settings.py#L1726).
+Source: [backend/app/routers/app_settings.py:1746](../../../backend/app/routers/app_settings.py#L1746).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -1566,7 +1573,7 @@ none = audit only), whether the gate is enforced right now and why, and the
 distribution attempts that would have been withheld in the last 30 days.
 Reads only.
 
-Source: [backend/app/routers/app_settings.py:1840](../../../backend/app/routers/app_settings.py#L1840).
+Source: [backend/app/routers/app_settings.py:1860](../../../backend/app/routers/app_settings.py#L1860).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -1639,7 +1646,7 @@ Set the enforcement date (an ISO-8601 instant with an offset; past or
 future) or clear it with ``null`` (back to audit only). A past instant
 enforces at once. Interactive login only; audited once per actual change.
 
-Source: [backend/app/routers/app_settings.py:1852](../../../backend/app/routers/app_settings.py#L1852).
+Source: [backend/app/routers/app_settings.py:1872](../../../backend/app/routers/app_settings.py#L1872).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -1727,7 +1734,7 @@ Get Scim Delete Action
 What an identity provider's SCIM ``DELETE /Users/{id}`` does: ``deactivate`` (the default — the account is
 switched off and kept) or ``erase`` (the person's data is erased, as by an administrator). Reads only.
 
-Source: [backend/app/routers/app_settings.py:1901](../../../backend/app/routers/app_settings.py#L1901).
+Source: [backend/app/routers/app_settings.py:1921](../../../backend/app/routers/app_settings.py#L1921).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 
@@ -1799,7 +1806,7 @@ Update Scim Delete Action
 Set what a SCIM ``DELETE`` does: ``deactivate`` or ``erase`` (anything else is the coded 422
 ``scim_delete_action_invalid``). Interactive login only; audited once per actual change.
 
-Source: [backend/app/routers/app_settings.py:1911](../../../backend/app/routers/app_settings.py#L1911).
+Source: [backend/app/routers/app_settings.py:1931](../../../backend/app/routers/app_settings.py#L1931).
 
 Dependency chain: `OAuth2PasswordBearer`, `get_current_active_user`, `get_current_user_or_api_key`, `get_db`, `require_role.<locals>._check`.
 

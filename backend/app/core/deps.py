@@ -17,7 +17,19 @@ from app.core.config import settings
 from app.core.request_path import routed_path
 from app.core.security import ExpiredSignatureError, JWTError, decode_token
 from app.db.postgres import get_db
-from app.models.postgres import ApiKey, User, UserRole
+from app.core.permissions import (
+    LADDER,
+    Permission,
+    assigned_roles,
+    effective_grants,
+    granted,
+    has_permission,
+    normalize_role,
+    permission_refusal_detail,
+    rank_index,
+    user_roles,
+)
+from app.models.postgres import ApiKey, ProjectMember, User, UserRole
 
 logger = logging.getLogger(__name__)
 
@@ -62,14 +74,10 @@ oauth2_scheme_optional = OAuth2PasswordBearer(
     auto_error=False,
 )
 
-# Role hierarchy — higher index = more privileged
-_ROLE_ORDER: list[UserRole] = [
-    UserRole.VIEWER,
-    UserRole.TESTER,
-    UserRole.QA_ENGINEER,
-    UserRole.QA_LEAD,
-    UserRole.ADMIN,
-]
+# Role hierarchy — higher index = more privileged. The five ranks only; job
+# roles and AGENT are placed on it by ``permissions.rank_index`` (base rank
+# VIEWER). Index it through ``rank_index``, never ``_ROLE_ORDER.index``.
+_ROLE_ORDER: list[UserRole] = list(LADDER)
 
 
 def _normalize_user_role(value: UserRole | str) -> UserRole:
@@ -79,12 +87,7 @@ def _normalize_user_role(value: UserRole | str) -> UserRole:
     simple str → enum conversion.  The ``UserRole.`` prefix guard is retained
     only as a safety net for any un-migrated rows.
     """
-    if isinstance(value, UserRole):
-        return value
-    raw_value = str(value).strip()
-    if raw_value.startswith("UserRole."):
-        raw_value = raw_value.split(".", 1)[1]
-    return UserRole(raw_value)
+    return normalize_role(value)
 
 
 def _bind_api_key_project(user: User, project_id: uuid.UUID | None) -> User:
@@ -317,8 +320,17 @@ def _route_takes_scoped_key_writes(request) -> bool:
 # which FastAPI resolves a route's dependencies.
 
 _MIN_ROLE_ATTR = "_testlookup_min_role"
+#: The permission a ``require_role(..., permission=P)`` / ``require_permission(P)``
+#: guard also accepts, and whether its handler checks conditional grants.
+_PERMISSION_ATTR = "_testlookup_permission"
+_CONDITIONAL_OK_ATTR = "_testlookup_conditional_ok"
 _ROUTE_ROLE_FLOOR_ATTR = "_testlookup_route_role_floor"
+_ROUTE_ROLE_REQUIREMENTS_ATTR = "_testlookup_route_role_requirements"
 _PROJECT_ROLE_FLOOR_ATTR = "_testlookup_project_role_floor"
+_PROJECT_ROLE_REQUIREMENTS_ATTR = "_testlookup_project_role_requirements"
+
+#: One role guard on a route: (minimum rank, permission that also admits, conditional grants ok).
+RoleRequirement = tuple[UserRole, Optional[Permission], bool]
 _NOT_COMPUTED = object()
 
 
@@ -341,9 +353,9 @@ def _route_role_floor(request) -> UserRole | None:
         seen.add(id(dependant))
         role = getattr(getattr(dependant, "call", None), _MIN_ROLE_ATTR, None)
         if isinstance(role, UserRole):
-            floor_idx = max(floor_idx, _ROLE_ORDER.index(role))
+            floor_idx = max(floor_idx, rank_index(role))
         pending.extend(getattr(dependant, "dependencies", None) or ())
-    floor = _ROLE_ORDER[floor_idx] if floor_idx >= 0 else None
+    floor = LADDER[floor_idx] if floor_idx >= 0 else None
     try:
         setattr(route, _ROUTE_ROLE_FLOOR_ATTR, floor)
     except Exception:  # a route object that takes no attributes: recompute next time
@@ -351,12 +363,57 @@ def _route_role_floor(request) -> UserRole | None:
     return floor
 
 
+def _route_role_requirements(request) -> tuple[RoleRequirement, ...]:
+    """Every role guard among the matched route's dependencies, as requirements.
+
+    A route can carry more than one guard; with permissions each one is a
+    separate (floor, permission) pair and the project check must hold the
+    caller to all of them, not only to the highest floor.
+    """
+    scope = getattr(request, "scope", None)
+    route = scope.get("route") if isinstance(scope, dict) else None
+    if route is None:
+        return ()
+    cached = getattr(route, _ROUTE_ROLE_REQUIREMENTS_ATTR, _NOT_COMPUTED)
+    if cached is not _NOT_COMPUTED:
+        return cached if isinstance(cached, tuple) else ()
+    found: list[RoleRequirement] = []
+    seen: set[int] = set()
+    pending = [getattr(route, "dependant", None)]
+    while pending:
+        dependant = pending.pop()
+        if dependant is None or id(dependant) in seen:
+            continue
+        seen.add(id(dependant))
+        call = getattr(dependant, "call", None)
+        role = getattr(call, _MIN_ROLE_ATTR, None)
+        if isinstance(role, UserRole):
+            permission = getattr(call, _PERMISSION_ATTR, None)
+            requirement = (
+                role,
+                permission if isinstance(permission, Permission) else None,
+                getattr(call, _CONDITIONAL_OK_ATTR, False) is True,
+            )
+            if requirement not in found:
+                found.append(requirement)
+        pending.extend(getattr(dependant, "dependencies", None) or ())
+    requirements = tuple(found)
+    try:
+        setattr(route, _ROUTE_ROLE_REQUIREMENTS_ATTR, requirements)
+    except Exception:  # a route object that takes no attributes: recompute next time
+        pass
+    return requirements
+
+
 def _bind_project_role_floor(user: User, request) -> User:
     """Record on the request's user the role its writes need in a project."""
-    floor = _route_role_floor(request) if _is_write(request) else None
+    write = _is_write(request)
+    floor = _route_role_floor(request) if write else None
+    requirements = _route_role_requirements(request) if write else ()
     # Not guarded: if the minimum could not be recorded the project guards
     # would not apply it, so a failure here must fail the request, not pass.
     setattr(user, _PROJECT_ROLE_FLOOR_ATTR, floor)
+    setattr(user, _PROJECT_ROLE_REQUIREMENTS_ATTR, requirements)
     return user
 
 
@@ -371,6 +428,16 @@ def _project_role_floor(user: User) -> UserRole | None:
     return value if isinstance(value, UserRole) else None
 
 
+def _project_role_requirements(user: User) -> tuple[RoleRequirement, ...]:
+    """The role guards this write must also pass in a project (``()`` for none)."""
+    value = getattr(user, _PROJECT_ROLE_REQUIREMENTS_ATTR, ())
+    return value if isinstance(value, tuple) else ()
+
+
+def _names_a_permission(requirements: Sequence[RoleRequirement]) -> bool:
+    return any(permission is not None for _, permission, _ in requirements)
+
+
 def _is_instance_admin(user: User) -> bool:
     try:
         return _normalize_user_role(user.role) == UserRole.ADMIN
@@ -381,7 +448,7 @@ def _is_instance_admin(user: User) -> bool:
 def _role_at_least(role: object, floor: UserRole) -> bool:
     try:
         normalized = _normalize_user_role(role if isinstance(role, UserRole) else str(role))
-        return _ROLE_ORDER.index(normalized) >= _ROLE_ORDER.index(floor)
+        return rank_index(normalized) >= rank_index(floor)
     except ValueError:
         return False
 
@@ -397,6 +464,54 @@ def _project_role_refusal(floor: UserRole) -> HTTPException:
     )
 
 
+def _permission_refusal(permission: Permission, *, in_project: bool) -> HTTPException:
+    _count_auth_failure("insufficient_role")
+    return HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail=permission_refusal_detail(permission, in_project=in_project),
+    )
+
+
+def _instance_holds(user: User, permission: Permission, *, allow_conditional: bool = False) -> bool:
+    """Whether the caller's instance roles (primary + extra) grant ``permission``."""
+    try:
+        roles = user_roles(user)
+    except ValueError:
+        return False
+    return has_permission(roles, permission, allow_conditional=allow_conditional)
+
+
+def _requirements_refusal(
+    user: User,
+    member_role: UserRole | str,
+    member_additional: object,
+    requirements: Sequence[RoleRequirement],
+) -> HTTPException | None:
+    """Hold a member to every role guard of a write; ``None`` when they pass.
+
+    A guard passes on the membership's rank (the rule before permissions) or
+    on its permission, held in BOTH the caller's instance roles and project
+    roles (the intersection: "the lower of the two decides").
+    """
+    grants = None
+    for min_role, permission, conditional_ok in requirements:
+        if _role_at_least(member_role, min_role):
+            continue
+        if permission is not None:
+            if grants is None:
+                try:
+                    grants = effective_grants(
+                        user_roles(user), assigned_roles(member_role, member_additional), is_write=True
+                    )
+                except ValueError:
+                    grants = {}
+            if granted(grants, permission, allow_conditional=conditional_ok):
+                continue
+            return _permission_refusal(permission, in_project=True)
+        return _project_role_refusal(min_role)
+    return None
+
+
 async def enforce_project_role_floor(db: AsyncSession, user: User, project_id: uuid.UUID | None) -> None:
     """403 when this request is a write whose route minimum the caller does not
     hold in ``project_id``. A caller with no membership row is left to the
@@ -405,6 +520,23 @@ async def enforce_project_role_floor(db: AsyncSession, user: User, project_id: u
     if floor is None or project_id is None or _is_instance_admin(user):
         return
     from app.models.postgres import ProjectMember
+
+    requirements = _project_role_requirements(user)
+    if _names_a_permission(requirements):
+        row = (
+            await db.execute(
+                select(ProjectMember.role, ProjectMember.additional_roles).where(
+                    ProjectMember.user_id == user.id,
+                    ProjectMember.project_id == project_id,
+                )
+            )
+        ).one_or_none()
+        if row is None:
+            return
+        refusal = _requirements_refusal(user, row[0], row[1], requirements)
+        if refusal is not None:
+            raise refusal
+        return
 
     result = await db.execute(
         select(ProjectMember.role).where(
@@ -420,7 +552,11 @@ async def enforce_project_role_floor(db: AsyncSession, user: User, project_id: u
 
 
 async def holds_role_for_project_write(
-    db: AsyncSession, user: User, project_id: uuid.UUID | None, min_role: UserRole
+    db: AsyncSession,
+    user: User,
+    project_id: uuid.UUID | None,
+    min_role: UserRole,
+    permission: Permission | None = None,
 ) -> bool:
     """Whether ``user`` holds ``min_role`` on the instance AND in ``project_id``.
 
@@ -429,10 +565,17 @@ async def holds_role_for_project_write(
     status needs QA_LEAD). Same rule as the guards apply: the lower of the two
     roles decides, and an instance ADMIN passes. A key with a scope list needs
     ``project:admin`` at QA_LEAD and above, as on a ``require_role`` route.
+
+    ``permission`` also admits a caller below ``min_role`` who holds it, on the
+    instance and in the project (as ``require_role(..., permission=...)``).
     """
-    if not _role_at_least(user.role, min_role):
+    if permission is not None and permission.legacy_min_rank != min_role:
+        raise ValueError(f"{permission.value} belongs to {permission.legacy_min_rank.value}, not {min_role.value}")
+    if not _role_at_least(user.role, min_role) and not (
+        permission is not None and _instance_holds(user, permission)
+    ):
         return False
-    if _ROLE_ORDER.index(min_role) >= _ROLE_ORDER.index(UserRole.QA_LEAD):
+    if rank_index(min_role) >= rank_index(UserRole.QA_LEAD):
         grant = api_key_grant(user)
         if grant is not None and not grant.allows(PROJECT_ADMIN_SCOPE):
             return False
@@ -442,6 +585,16 @@ async def holds_role_for_project_write(
         return False
     from app.models.postgres import ProjectMember
 
+    if permission is not None:
+        row = (
+            await db.execute(
+                select(ProjectMember.role, ProjectMember.additional_roles).where(
+                    ProjectMember.user_id == user.id,
+                    ProjectMember.project_id == project_id,
+                )
+            )
+        ).one_or_none()
+        return row is not None and _requirements_refusal(user, row[0], row[1], ((min_role, permission, False),)) is None
     role = (
         await db.execute(
             select(ProjectMember.role).where(
@@ -457,7 +610,8 @@ async def _project_ids_with_role(db: AsyncSession, user: User, floor: UserRole) 
     """The caller's projects in which their membership role is at least ``floor``."""
     from app.models.postgres import ProjectMember
 
-    roles = [role.value for role in _ROLE_ORDER[_ROLE_ORDER.index(floor):]]
+    # Every role whose rank reaches the floor: job roles count as VIEWER.
+    roles = [role.value for role in UserRole if rank_index(role) >= rank_index(floor)]
     result = await db.execute(
         select(ProjectMember.project_id).where(
             ProjectMember.user_id == user.id,
@@ -465,6 +619,32 @@ async def _project_ids_with_role(db: AsyncSession, user: User, floor: UserRole) 
         )
     )
     return {row[0] for row in result.all()}
+
+
+async def _project_ids_meeting(
+    db: AsyncSession, user: User, requirements: Sequence[RoleRequirement]
+) -> set[uuid.UUID]:
+    """The caller's projects in which they pass every role guard of this write."""
+    from app.models.postgres import ProjectMember
+
+    result = await db.execute(
+        select(ProjectMember.project_id, ProjectMember.role, ProjectMember.additional_roles).where(
+            ProjectMember.user_id == user.id,
+        )
+    )
+    return {
+        row[0]
+        for row in result.all()
+        if _requirements_refusal(user, row[1], row[2], requirements) is None
+    }
+
+
+async def _project_ids_for_write(db: AsyncSession, user: User, floor: UserRole) -> set[uuid.UUID]:
+    """Projects this write may reach: by rank, or by the permissions its guards name."""
+    requirements = _project_role_requirements(user)
+    if _names_a_permission(requirements):
+        return await _project_ids_meeting(db, user, requirements)
+    return await _project_ids_with_role(db, user, floor)
 
 
 def _bind_api_key_grant(user: User, grant: ApiKeyGrant | None) -> User:
@@ -955,7 +1135,13 @@ PROJECT_KEY_NOT_INSTANCE_ADMIN_DETAIL = (
 )
 
 
-def require_role(min_role: UserRole, *, allow_project_key: bool = False) -> Callable:
+def require_role(
+    min_role: UserRole,
+    *,
+    allow_project_key: bool = False,
+    permission: Permission | None = None,
+    conditions_checked_in_handler: bool = False,
+) -> Callable:
     """
     Return a FastAPI dependency that enforces a minimum role level.
 
@@ -1006,9 +1192,26 @@ def require_role(min_role: UserRole, *, allow_project_key: bool = False) -> Call
     A legacy key with an empty list stays full-access, and a JWT has no scopes
     at all. Below QA_LEAD the scopes are not read here; the project-scoped
     guards refuse such a key's writes (see ``_refuse_scoped_key_write``).
+
+    **``permission`` admits the roles that are not rungs (enterprise roles
+    E00).** A caller below ``min_role`` passes when their roles grant
+    ``permission``; ``permission.legacy_min_rank`` must equal ``min_role``, so
+    for the five ladder roles nothing changes. Prefer ``require_permission(P)``,
+    which picks ``min_role`` for you. A conditional grant (for example a
+    DEVELOPER's "failures I own") counts only with
+    ``conditions_checked_in_handler=True``, and the handler then owes a
+    ``permissions.check_condition`` on the resource. Key and scope rules are
+    computed from ``min_role`` as before.
     """
-    min_idx = _ROLE_ORDER.index(min_role)
-    at_least_qa_lead = min_idx >= _ROLE_ORDER.index(UserRole.QA_LEAD)
+    if min_role not in LADDER:
+        raise ValueError(f"require_role takes a rank ({', '.join(r.value for r in LADDER)}), not {min_role!r}")
+    if permission is not None and permission.legacy_min_rank != min_role:
+        raise ValueError(
+            f"{permission.value} belongs to {permission.legacy_min_rank.value}, not {min_role.value}: "
+            "use require_permission() so the floor cannot drift"
+        )
+    min_idx = rank_index(min_role)
+    at_least_qa_lead = min_idx >= rank_index(UserRole.QA_LEAD)
     if allow_project_key and not at_least_qa_lead:
         raise ValueError(
             "allow_project_key applies only to require_role(UserRole.QA_LEAD) and "
@@ -1021,7 +1224,7 @@ def require_role(min_role: UserRole, *, allow_project_key: bool = False) -> Call
         current_user: User = Depends(get_current_active_user),
     ) -> User:
         try:
-            user_idx = _ROLE_ORDER.index(_normalize_user_role(current_user.role))
+            user_idx = rank_index(_normalize_user_role(current_user.role))
         except ValueError:
             _count_auth_failure("insufficient_role")
             raise HTTPException(
@@ -1029,11 +1232,17 @@ def require_role(min_role: UserRole, *, allow_project_key: bool = False) -> Call
                 detail="Insufficient permissions",
             )
         if user_idx < min_idx:
-            _count_auth_failure("insufficient_role")
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Requires at least {min_role.value} role",
-            )
+            if permission is not None:
+                if not _instance_holds(
+                    current_user, permission, allow_conditional=conditions_checked_in_handler
+                ):
+                    raise _permission_refusal(permission, in_project=False)
+            else:
+                _count_auth_failure("insufficient_role")
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"Requires at least {min_role.value} role",
+                )
         if refuse_project_key and _api_key_bound_project(current_user) is not None:
             # Counted like any other role shortfall: a leaked CI key probing
             # the admin surface is exactly the burst an operator wants to see.
@@ -1049,7 +1258,37 @@ def require_role(min_role: UserRole, *, allow_project_key: bool = False) -> Call
     # Read by ``_route_role_floor``: on a write the project guards hold the
     # caller to this role in the project the request names as well.
     setattr(_check, _MIN_ROLE_ATTR, min_role)
+    setattr(_check, _PERMISSION_ATTR, permission)
+    setattr(_check, _CONDITIONAL_OK_ATTR, conditions_checked_in_handler)
     return _check
+
+
+def require_permission(
+    permission: Permission,
+    *,
+    conditions_checked_in_handler: bool = False,
+) -> Callable:
+    """A ``require_role`` guard whose floor comes from the permission catalogue.
+
+    ``require_permission(Permission.RELEASE_WRITE)`` is
+    ``require_role(UserRole.QA_LEAD, permission=Permission.RELEASE_WRITE)``:
+    the five ladder roles are answered by rank exactly as before, and the job
+    roles that hold the permission are admitted too. The returned dependency
+    IS a ``require_role`` closure, so the role-floor snapshot
+    (``tests/test_security_role_floor.py``), the per-role access matrix and the
+    write-route checks read it unchanged.
+
+    It takes no ``allow_project_key``: a route that lets a project-bound key in
+    keeps ``require_role(UserRole.X, allow_project_key=True, permission=P)``,
+    the form the opt-in review ratchet
+    (``tests/regression/test_admin_routes_refuse_project_keys.py``) reads, and
+    ``require_role`` refuses a ``P`` whose floor is not ``X``.
+    """
+    return require_role(
+        permission.legacy_min_rank,
+        permission=permission,
+        conditions_checked_in_handler=conditions_checked_in_handler,
+    )
 
 
 INGEST_MIN_ROLE = UserRole.QA_ENGINEER
@@ -1067,10 +1306,10 @@ def ensure_ingest_role(user: User) -> None:
     CI key -- its owner's role -- passes unchanged.
     """
     try:
-        idx = _ROLE_ORDER.index(_normalize_user_role(user.role))
+        idx = rank_index(_normalize_user_role(user.role))
     except ValueError:
         idx = -1
-    if idx < _ROLE_ORDER.index(INGEST_MIN_ROLE):
+    if idx < rank_index(INGEST_MIN_ROLE):
         _count_auth_failure("insufficient_role")
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -1104,17 +1343,30 @@ def require_instance_admin() -> Callable:
     return require_role(UserRole.ADMIN)
 
 
-def require_project_role(min_role: UserRole) -> Callable:
+def require_project_role(
+    min_role: UserRole,
+    *,
+    permission: Permission | None = None,
+    conditions_checked_in_handler: bool = False,
+) -> Callable:
     """
     Dependency that checks project-level role from project_members table,
     falling back to the user's global role when no project membership exists.
 
     The project_id is read from path params. If no project_id in path,
     falls back to global role check.
+
+    ``permission`` admits a caller below ``min_role`` whose roles grant it: on
+    a read the project roles, on a write the instance and project roles
+    together (the intersection), with no membership the instance roles.
     """
     from app.models.postgres import ProjectMember  # local import to avoid circular
 
-    min_idx = _ROLE_ORDER.index(min_role)
+    if min_role not in LADDER:
+        raise ValueError(f"require_project_role takes a rank, not {min_role!r}")
+    if permission is not None and permission.legacy_min_rank != min_role:
+        raise ValueError(f"{permission.value} belongs to {permission.legacy_min_rank.value}, not {min_role.value}")
+    min_idx = rank_index(min_role)
 
     async def _check(
         request: Request,
@@ -1123,8 +1375,9 @@ def require_project_role(min_role: UserRole) -> Callable:
     ) -> User:
         # At QA_LEAD and above a write administers the project: project:admin.
         _refuse_scoped_key_write(
-            request, current_user, admin=min_idx >= _ROLE_ORDER.index(UserRole.QA_LEAD)
+            request, current_user, admin=min_idx >= rank_index(UserRole.QA_LEAD)
         )
+        membership = None
         project_id_str = request.path_params.get("project_id")
         if project_id_str:
             try:
@@ -1146,7 +1399,7 @@ def require_project_role(min_role: UserRole) -> Callable:
                     if instance_role == UserRole.ADMIN:
                         effective_role = instance_role
                     elif _is_write(request) and (
-                        _ROLE_ORDER.index(instance_role) < _ROLE_ORDER.index(effective_role)
+                        rank_index(instance_role) < rank_index(effective_role)
                     ):
                         effective_role = instance_role
                 else:
@@ -1157,11 +1410,18 @@ def require_project_role(min_role: UserRole) -> Callable:
             effective_role = _normalize_user_role(current_user.role)
 
         try:
-            user_idx = _ROLE_ORDER.index(effective_role)
+            user_idx = rank_index(effective_role)
         except ValueError:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
 
         if user_idx < min_idx:
+            if permission is not None:
+                if not _project_permission_held(
+                    current_user, membership, permission,
+                    is_write=_is_write(request), allow_conditional=conditions_checked_in_handler,
+                ):
+                    raise _permission_refusal(permission, in_project=True)
+                return current_user
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Requires at least {min_role.value} role for this project",
@@ -1169,6 +1429,23 @@ def require_project_role(min_role: UserRole) -> Callable:
         return current_user
 
     return _check
+
+
+def _project_permission_held(
+    user: User, membership: ProjectMember | None, permission: Permission, *, is_write: bool, allow_conditional: bool
+) -> bool:
+    """``require_project_role``'s permission branch (see its docstring)."""
+    try:
+        instance = user_roles(user)
+        project = (
+            assigned_roles(membership.role, getattr(membership, "additional_roles", None))
+            if membership is not None
+            else None
+        )
+    except ValueError:
+        return False
+    grants = effective_grants(instance, project, is_write=is_write)
+    return granted(grants, permission, allow_conditional=allow_conditional)
 
 
 # ── Project / run-scoped access (BL-01: tenant isolation) ────────────────────
@@ -1195,7 +1472,7 @@ async def get_accessible_project_ids(
             return {bound_project_id}
         # A write through a key whose owner is not an ADMIN: the owner must
         # hold the route's role in the key's project too.
-        return {bound_project_id} & await _project_ids_with_role(db, user, floor)
+        return {bound_project_id} & await _project_ids_for_write(db, user, floor)
 
     if _normalize_user_role(user.role) == UserRole.ADMIN:
         return None  # ADMIN sees everything
@@ -1205,7 +1482,7 @@ async def get_accessible_project_ids(
         # which the caller holds that role. Asked of the database each time:
         # the cache below holds membership, not roles, and writes are rare
         # next to reads.
-        return await _project_ids_with_role(db, user, floor)
+        return await _project_ids_for_write(db, user, floor)
 
     # P3-2: Check Redis cache first. A persistent Redis failure would silently
     # cascade into every request hitting the DB; log the first occurrence per

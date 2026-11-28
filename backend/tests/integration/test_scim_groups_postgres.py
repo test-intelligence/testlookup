@@ -163,6 +163,43 @@ async def test_the_highest_role_wins_and_deleting_a_group_removes_its_grant(worl
     assert u[3].id not in await _members(world, pay.id) and u[3].id not in await _members(world, gw.id)
 
 
+async def test_a_job_role_group_adds_an_extra_role_and_leaving_it_removes_it(world):
+    """Enterprise roles E00-S05: a group mapped to a job role ADDS it to the membership's extra roles (the highest
+    rank still sets the role); a project only job-role groups grant gets VIEWER; leaving the group removes it;
+    AGENT and ADMIN are not mappable."""
+    from app.models.postgres import ProjectMember
+    from app.routers.scim import scim_patch_group
+
+    u, pay, gw = world.users, world.projects[0], world.projects[1]
+    qa = await _create(world, world.names[0], [u[3].id])
+    release = await _create(world, world.names[1], [u[3].id])
+    await _map(world, qa["id"], [(pay.id, "QA_ENGINEER")])
+    await _map(world, release["id"], [(pay.id, "RELEASE_MANAGER"), (gw.id, "DEVELOPER")])
+
+    async def _row(project_id):
+        """(role, source, additional_roles) of u[3]'s membership, read at once (an expired row cannot lazy-load)."""
+        world.db.expire_all()
+        row = (await world.db.execute(
+            select(ProjectMember.role, ProjectMember.source, ProjectMember.additional_roles).where(
+                ProjectMember.project_id == project_id, ProjectMember.user_id == u[3].id,
+            )
+        )).one_or_none()
+        return tuple(row) if row is not None else None
+
+    assert await _row(pay.id) == ("QA_ENGINEER", f"scim:{world.names[0]}", ["RELEASE_MANAGER"])
+    assert await _row(gw.id) == ("VIEWER", f"scim:{world.names[1]}", ["DEVELOPER"])
+
+    patch = {"Operations": [{"op": "remove", "path": f'members[value eq "{u[3].id}"]'}]}
+    await scim_patch_group(uuid.UUID(release["id"]), _Req(patch), scim_token=_TOKEN, db=world.db)
+    assert await _row(pay.id) == ("QA_ENGINEER", f"scim:{world.names[0]}", None)
+    assert await _row(gw.id) is None, "a project only the job-role group granted is removed with it"
+
+    for bad in ("AGENT", "ADMIN"):
+        with pytest.raises(HTTPException) as exc:
+            await _map(world, qa["id"], [(pay.id, bad)])
+        assert exc.value.status_code == 400
+
+
 async def test_filter_conflict_and_unknown_member(world):
     from app.routers.scim import scim_list_groups
 

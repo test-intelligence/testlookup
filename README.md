@@ -77,7 +77,7 @@ Nothing to install? Replay real screens in the browser with the [guided tours](h
 - **Test management**: authored test cases, plans and strategies with a reviewed lifecycle, linked to the executions they describe.
 - **Reports and sharing**: summary reports, PDF and Excel exports, evidence bundles, share links and compliance packs, with an optional human-review gate before AI-generated content is distributed.
 - **Integrations**: Jira, GitHub and GitLab (checks and merge-request notes), Slack, Microsoft Teams and email notifications, outbound webhooks, and knowledge sources for retrieval.
-- **Access control**: five roles (`VIEWER`, `TESTER`, `QA_ENGINEER`, `QA_LEAD`, `ADMIN`) plus project membership, API keys, MFA, SAML and OpenID Connect single sign-on, and SCIM provisioning.
+- **Access control**: five ranked roles (`VIEWER`, `TESTER`, `QA_ENGINEER`, `QA_LEAD`, `ADMIN`), job roles for release teams (`RELEASE_MANAGER`, `PROJECT_MANAGER`, `PRODUCT_MANAGER`, `DEVELOPER`) and an `AGENT` role for AI agents, each a set of permissions; plus project membership, API keys, MFA, SAML and OpenID Connect single sign-on, and SCIM provisioning.
 
 Some features are off by default and are turned on per installation or project with feature flags; the in-app guide (`/docs` on your instance) describes each one.
 

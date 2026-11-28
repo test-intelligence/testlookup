@@ -28,6 +28,7 @@ if TYPE_CHECKING:
 
 from app.core.config import settings
 from app.core.security import get_password_hash
+from app.core.permissions import EXTRA_ROLE_CHOICES, LADDER, job_roles_in, rank_index
 from app.models.postgres import (
     FederatedIdentity,
     IdentityEvent,
@@ -783,7 +784,17 @@ def validate_saml_issuer(parsed: dict, config: SSOConfiguration) -> None:
 
 
 # Role hierarchy for picking the highest match / applying the ceiling.
-_ROLE_ORDER = [UserRole.VIEWER, UserRole.TESTER, UserRole.QA_ENGINEER, UserRole.QA_LEAD, UserRole.ADMIN]
+# The five ranks (``permissions.LADDER``). SSO and SCIM provision a rank; job
+# roles are added as extra roles, never as the primary role.
+_ROLE_ORDER = list(LADDER)
+
+
+def _ladder_index(role) -> int:
+    """Rank position of a ladder role; ``ValueError`` for anything else (a job role is not a rank)."""
+    role = role if isinstance(role, UserRole) else UserRole(role)
+    if role not in _ROLE_ORDER:
+        raise ValueError(f"{role.value} is not a rank")
+    return rank_index(role)
 
 
 def _provisioning_ceiling() -> UserRole:
@@ -823,16 +834,22 @@ def resolve_role_from_groups(
             if mapped:
                 try:
                     role = UserRole(mapped)
-                    idx = _ROLE_ORDER.index(role)
+                    idx = _ladder_index(role)
                     if idx > best_idx:
                         best_idx = idx
                 except (ValueError, KeyError):
                     continue
         resolved = _ROLE_ORDER[best_idx] if best_idx >= 0 else default_role
 
+    if resolved not in _ROLE_ORDER:
+        logger.warning(
+            "IdP/SCIM default role %s is not a rank — provisioning VIEWER", getattr(resolved, "value", resolved),
+        )
+        resolved = UserRole.VIEWER
+
     ceiling = _provisioning_ceiling()
     try:
-        if _ROLE_ORDER.index(resolved) > _ROLE_ORDER.index(ceiling):
+        if _ladder_index(resolved) > _ladder_index(ceiling):
             logger.warning(
                 "IdP/SCIM provisioning resolved role %s exceeds ceiling %s — clamping",
                 resolved.value, ceiling.value,
@@ -842,7 +859,7 @@ def resolve_role_from_groups(
         pass
 
     try:
-        if _ROLE_ORDER.index(resolved) >= _ROLE_ORDER.index(UserRole.QA_LEAD):
+        if _ladder_index(resolved) >= _ladder_index(UserRole.QA_LEAD):
             logger.warning(
                 "IdP/SCIM provisioning granting elevated role %s (groups=%s)",
                 resolved.value, groups,
@@ -851,6 +868,33 @@ def resolve_role_from_groups(
         pass
 
     return resolved
+
+
+def mapping_names_job_roles(role_mapping: dict | None) -> bool:
+    """Does the mapping give any group a job role? Only then does the IdP manage a user's extra roles."""
+    return bool(job_roles_in(list((role_mapping or {}).values())))
+
+
+def resolve_additional_roles_from_groups(groups: list[str], role_mapping: dict | None) -> list[str]:
+    """Extra job roles the user's groups map to (enterprise roles E00-S05), in enum order.
+
+    A group mapped to RELEASE_MANAGER / PROJECT_MANAGER / PRODUCT_MANAGER /
+    DEVELOPER adds that role beside the rank ``resolve_role_from_groups`` picks;
+    it never competes for the rank. AGENT and anything unknown are ignored.
+    """
+    if not role_mapping or not groups:
+        return []
+    mapped = [role_mapping.get(group) for group in groups]
+    return [role.value for role in job_roles_in([m for m in mapped if m])]
+
+
+def _extra_role_sources(groups: list[str], role_mapping: dict | None) -> dict[str, list[str]]:
+    out: dict[str, list[str]] = {}
+    for group in groups:
+        held = job_roles_in([(role_mapping or {}).get(group)])
+        if held:
+            out.setdefault(held[0].value, []).append(group)
+    return {role.value: out[role.value] for role in EXTRA_ROLE_CHOICES if role.value in out}
 
 
 def preview_role_from_groups(
@@ -869,21 +913,24 @@ def preview_role_from_groups(
         if not mapped:
             continue
         try:
-            idx = _ROLE_ORDER.index(UserRole(mapped))
+            idx = _ladder_index(UserRole(mapped))
         except (ValueError, KeyError):
             continue
         matched.append(group)
         best_idx = max(best_idx, idx)
     unclamped = _ROLE_ORDER[best_idx] if best_idx >= 0 else default_role
     ceiling = _provisioning_ceiling()
-    clamped = unclamped in _ROLE_ORDER and _ROLE_ORDER.index(unclamped) > _ROLE_ORDER.index(ceiling)
+    clamped = unclamped in _ROLE_ORDER and _ladder_index(unclamped) > _ladder_index(ceiling)
     role = ceiling if clamped else unclamped
+    extra_sources = _extra_role_sources(groups, role_mapping)
     return {
         "role": role.value,
         "matched_groups": matched,
         "source": "mapping" if best_idx >= 0 else "default",
         "ceiling": ceiling.value,
         "clamped": clamped,
+        "additional_roles": list(extra_sources),
+        "additional_matched_groups": extra_sources,
     }
 
 
@@ -1000,6 +1047,21 @@ async def jit_provision_or_link(
                 detail={"old_role": str(old_role), "new_role": str(new_role), "groups": groups},
                 ip_address=ip_address,
             )
+        # Extra job roles follow the IdP only when the mapping names a job role; otherwise an
+        # administrator manages them and a sign-in leaves them alone.
+        if mapping_names_job_roles(config.role_mapping):
+            old_extras = [r.value for r in job_roles_in(getattr(user, "additional_roles", None))]
+            new_extras = resolve_additional_roles_from_groups(groups, config.role_mapping)
+            if old_extras != new_extras:
+                user.additional_roles = new_extras or None
+                await _log_identity_event(
+                    db,
+                    IdentityEventType.ROLE_MAPPED,
+                    user_id=user.id,
+                    sso_config_id=config.id,
+                    detail={"old_additional_roles": old_extras, "new_additional_roles": new_extras, "groups": groups},
+                    ip_address=ip_address,
+                )
     else:
         # No link yet. Which existing account, if any, does this sign-in name?
         # OIDC: the e-mail claim. SAML: the NameID only.
@@ -1070,6 +1132,7 @@ async def jit_provision_or_link(
                 # SSO users get a random password they'll never use
                 hashed_password=get_password_hash(secrets.token_urlsafe(32)),
                 role=role,
+                additional_roles=resolve_additional_roles_from_groups(groups, config.role_mapping) or None,
                 is_active=True,
                 must_change_password=False,  # SSO users don't need password reset
             )

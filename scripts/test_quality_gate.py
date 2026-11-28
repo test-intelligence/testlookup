@@ -5763,3 +5763,119 @@ def test_ai_word_every_reviewed_entry_has_a_reason_and_the_real_tree_passes() ->
         assert reason.strip(), f"{key} has no reason"
     assert qg._frontend_ai_word_allowlisted() == []
 
+
+
+def test_write_routes_state_a_role_accepts_require_permission(tmp_path: Path) -> None:
+    root = _routers(tmp_path, """
+        from fastapi import APIRouter, Depends
+        router = APIRouter()
+
+        @router.post("/{release_id}/phases")
+        async def add_phase(release_id, user=Depends(require_permission(Permission.RELEASE_WRITE))):
+            return {}
+    """)
+    assert qg._backend_write_routes_state_a_role(root=root, allowed={}) == []
+
+
+# ── backend.single-role-rank-helper (enterprise roles E00) ───────────────────
+
+
+def _app_module(tmp_path: Path, rel: str, body: str) -> Path:
+    _write(tmp_path / "backend" / "app" / rel, body)
+    return tmp_path / "backend" / "app"
+
+
+def test_single_role_rank_helper_flags_index_lists_and_viewer_compares(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    root = _app_module(tmp_path, "services/ranks.py", """
+        from app.core.deps import _ROLE_ORDER
+        from app.models.postgres import UserRole
+
+        ORDER = [
+            UserRole.VIEWER,
+            UserRole.TESTER,
+            UserRole.QA_ENGINEER,
+        ]
+
+        def at_least_lead(role):
+            return _ROLE_ORDER.index(role) >= 3
+
+        def read_only(role):
+            return role == UserRole.VIEWER or role.value == "VIEWER"
+    """)
+    violations = qg._backend_single_role_rank_helper(root=root)
+    lines = sorted(v.line for v in violations)
+    assert lines == [4, 11, 14, 14], [(v.line, v.message) for v in violations]  # line 14 compares twice
+
+
+def test_single_role_rank_helper_passes_the_helper_sets_and_prose(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    root = _app_module(tmp_path, "services/ranks.py", '''
+        """Ranks used to be compared with _ROLE_ORDER.index(role) and role == "VIEWER"."""
+        from app.core.permissions import LADDER, rank_index
+        from app.models.postgres import UserRole
+
+        LEADS = {UserRole.QA_LEAD, UserRole.ADMIN, UserRole.RELEASE_MANAGER}  # a set of the roles meant
+        PAIR = [UserRole.QA_LEAD, UserRole.ADMIN]
+
+        def at_least_lead(role):
+            # not _ROLE_ORDER.index(role)
+            return rank_index(role) >= rank_index(UserRole.QA_LEAD)
+    ''')
+    assert qg._backend_single_role_rank_helper(root=root) == []
+
+
+def _spa_file(tmp_path: Path, rel: str, text: str) -> Path:
+    path = tmp_path / "frontend" / "src" / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(textwrap.dedent(text), encoding="utf-8")
+    return tmp_path / "frontend" / "src"
+
+
+def test_frontend_single_role_order_flags_an_index_and_a_rank_list(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    root = _spa_file(tmp_path, "pages/Foo.tsx", """
+        const ROLE_ORDER = ['VIEWER', 'TESTER', 'QA_ENGINEER', 'QA_LEAD', 'ADMIN'] as const
+        // ROLE_ORDER.indexOf(role) in a comment is fine
+        export const lead = (r: string) => ROLE_ORDER.indexOf(r as never) >= 3
+    """)
+    found = qg._frontend_single_role_order(root=root)
+    assert [v.line for v in found] == [2, 4]
+
+
+def test_frontend_single_role_order_exempts_its_homes_and_tests(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    body = """
+        const ROLE_ORDER = ['VIEWER', 'TESTER', 'QA_ENGINEER', 'QA_LEAD', 'ADMIN']
+        ROLE_ORDER.indexOf('ADMIN')
+    """
+    _spa_file(tmp_path, "lib/roles.ts", body)
+    _spa_file(tmp_path, "types/permissions.ts", body)
+    _spa_file(tmp_path, "hooks/usePermissions.ts", body)
+    root = _spa_file(tmp_path, "pages/Foo.test.tsx", body)
+    assert qg._frontend_single_role_order(root=root) == []
+
+
+def test_frontend_single_role_order_holds_on_the_real_spa() -> None:
+    assert qg._frontend_single_role_order() == []
+
+
+def test_single_role_rank_helper_exempts_the_two_homes(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    _redirect_repo_root(monkeypatch, tmp_path)
+    body = """
+        from app.models.postgres import UserRole
+        _ROLE_ORDER = [UserRole.VIEWER, UserRole.TESTER, UserRole.QA_ENGINEER, UserRole.QA_LEAD, UserRole.ADMIN]
+        def idx(role):
+            return _ROLE_ORDER.index(role)
+    """
+    _app_module(tmp_path, "core/deps.py", body)
+    root = _app_module(tmp_path, "core/permissions.py", body)
+    assert qg._backend_single_role_rank_helper(root=root) == []

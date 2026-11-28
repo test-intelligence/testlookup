@@ -103,10 +103,11 @@ def note_label(text: str) -> str:
 
 
 def _at_least_qa_lead(actor: Any) -> bool:
-    from app.core.deps import _ROLE_ORDER, _normalize_user_role  # noqa: PLC0415
+    from app.core.deps import _normalize_user_role  # noqa: PLC0415
+    from app.core.permissions import rank_index  # noqa: PLC0415
 
     try:
-        return _ROLE_ORDER.index(_normalize_user_role(actor.role)) >= _ROLE_ORDER.index(UserRole.QA_LEAD)
+        return rank_index(_normalize_user_role(actor.role)) >= rank_index(UserRole.QA_LEAD)
     except (ValueError, AttributeError):
         return False
 

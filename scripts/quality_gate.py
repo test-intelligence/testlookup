@@ -462,6 +462,141 @@ def _backend_no_print() -> list[Violation]:
     return violations
 
 
+#: The two modules that own the role ladder (enterprise roles E00).
+_RANK_HELPER_HOMES = {"backend/app/core/permissions.py", "backend/app/core/deps.py"}
+
+
+def _is_user_role_member(node: ast.AST) -> bool:
+    """``UserRole.X`` or ``UserRole.X.value``."""
+    if isinstance(node, ast.Attribute) and node.attr == "value":
+        node = node.value
+    return (
+        isinstance(node, ast.Attribute)
+        and isinstance(node.value, ast.Name)
+        and node.value.id == "UserRole"
+    )
+
+
+def _is_viewer(node: ast.AST) -> bool:
+    if isinstance(node, ast.Constant) and node.value == "VIEWER":
+        return True
+    if isinstance(node, ast.Attribute) and node.attr == "value":
+        node = node.value
+    return _is_user_role_member(node) and isinstance(node, ast.Attribute) and node.attr == "VIEWER"
+
+
+#: The SPA modules that own the role order (enterprise roles E00): the role-aware helpers, the vocabulary, and
+#: the shell's rank-only hook (kept as small as it was: the eager bundle has a few bytes of headroom).
+_FRONTEND_ROLE_ORDER_HOMES = {
+    "frontend/src/lib/roles.ts",
+    "frontend/src/types/permissions.ts",
+    "frontend/src/hooks/usePermissions.ts",
+}
+_FRONTEND_ROLE_ORDER_INDEX = re.compile(r"\bROLE_ORDER\.indexOf\(")
+_FRONTEND_RANK_LIST = re.compile(
+    r"\[\s*['\"]VIEWER['\"]\s*,\s*['\"]TESTER['\"]\s*,\s*['\"]QA_ENGINEER['\"]\s*,\s*['\"]QA_LEAD['\"]\s*,\s*['\"]ADMIN['\"]"
+)
+
+
+def _frontend_single_role_order(root: Optional[Path] = None) -> list[Violation]:
+    """The SPA ranks roles only through ``src/lib/roles.ts`` (``roleRank`` / ``roleAtLeast``).
+
+    The frontend twin of ``backend.single-role-rank-helper``: a page that kept its
+    own ``ROLE_ORDER`` ranked a job role (RELEASE_MANAGER, ...) at -1 -- below
+    VIEWER -- and offered or hid controls differently from the server. Fails,
+    outside ``lib/roles.ts``, ``types/permissions.ts`` (where ``RANK_ROLES``
+    lives) and ``hooks/usePermissions.ts`` (the shell's rank-only hook), on
+    ``ROLE_ORDER.indexOf(`` and on an array literal of the five ranks in order. Test files are skipped (they may spell the ladder out on purpose);
+    comment lines are skipped.
+    """
+    root = root or (REPO_ROOT / "frontend" / "src")
+    violations: list[Violation] = []
+    for path in iter_files(root, (".ts", ".tsx")):
+        try:
+            rel = path.relative_to(REPO_ROOT).as_posix()
+        except ValueError:
+            rel = path.as_posix()
+        if rel in _FRONTEND_ROLE_ORDER_HOMES or ".test." in path.name:
+            continue
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except (UnicodeDecodeError, OSError):
+            continue
+        for number, line in enumerate(lines, 1):
+            stripped = line.lstrip()
+            if stripped.startswith(("//", "*", "/*")):
+                continue
+            if _FRONTEND_ROLE_ORDER_INDEX.search(line):
+                violations.append(Violation(
+                    path, number, "ROLE_ORDER.indexOf(...) — rank a role with roleRank / roleAtLeast from @/lib/roles",
+                ))
+            elif _FRONTEND_RANK_LIST.search(line):
+                violations.append(Violation(
+                    path, number, "a literal list of the five ranks — use RANK_ROLES from @/types/permissions",
+                ))
+    return violations
+
+
+def _backend_single_role_rank_helper(root: Optional[Path] = None) -> list[Violation]:
+    """Every rank lookup goes through ``app.core.permissions.rank_index``.
+
+    The ladder (VIEWER < TESTER < QA_ENGINEER < QA_LEAD < ADMIN) used to be copied
+    into five modules, each indexing it its own way. A role that is not a rung --
+    RELEASE_MANAGER, PROJECT_MANAGER, PRODUCT_MANAGER, DEVELOPER, AGENT -- then
+    ranked below VIEWER in one copy, at -1 in another (where a QA lead could
+    GRANT it), and skipped the provisioning ceiling in a third. Now
+    ``rank_index`` places every role (job roles count as VIEWER) and only
+    ``core/permissions.py`` and ``core/deps.py`` hold the ladder.
+
+    Fails, outside those two modules, on: ``_ROLE_ORDER.index(...)``; a list
+    literal of three or more ``UserRole`` members (another copy of the order);
+    and a comparison of a role with VIEWER (``== UserRole.VIEWER`` /
+    ``== "VIEWER"``), a deny check a job role would slip past because it is not
+    literally VIEWER. AST-based: comments, docstrings and multi-line lists are
+    handled.
+    """
+    root = root or (REPO_ROOT / "backend" / "app")
+    violations: list[Violation] = []
+    for path in iter_files(root, (".py",)):
+        try:
+            rel = path.relative_to(REPO_ROOT).as_posix()
+        except ValueError:
+            rel = path.as_posix()
+        if rel in _RANK_HELPER_HOMES:
+            continue
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+        except (SyntaxError, UnicodeDecodeError, OSError):
+            continue
+        for node in ast.walk(tree):
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and node.func.attr == "index"
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "_ROLE_ORDER"
+            ):
+                violations.append(Violation(
+                    path, node.lineno,
+                    "_ROLE_ORDER.index(...) — rank a role with app.core.permissions.rank_index",
+                ))
+            elif isinstance(node, (ast.List, ast.Tuple)) and len(node.elts) >= 3 and all(
+                _is_user_role_member(e) for e in node.elts
+            ):
+                violations.append(Violation(
+                    path, node.lineno,
+                    "a literal list of UserRole members — use app.core.permissions.LADDER (or a set of the roles you mean)",
+                ))
+            elif isinstance(node, ast.Compare) and any(
+                isinstance(op, (ast.Eq, ast.NotEq)) for op in node.ops
+            ) and any(_is_viewer(side) for side in (node.left, *node.comparators)):
+                violations.append(Violation(
+                    path, node.lineno,
+                    "a role compared with VIEWER — a job role is not literally VIEWER; compare rank_index(role)",
+                ))
+    return violations
+
+
 _DIRECT_TRIAGE_RE = re.compile(
     r"\brun_triage_agent\s*\(|"
     r"\bRulesEngine\s*\(\s*\)\s*\.classify_test\s*\(|"
@@ -3516,7 +3651,9 @@ _ROLE_FREE_WRITE_ROUTES: dict[tuple[str, str], str] = {
     ("sso.py", "exchange_sso_code"): "SSO code exchange: sign-in, before any role exists",
 }
 
-_ROLE_MARKERS = ("require_role(", "require_project_role(", "require_instance_admin(")
+#: ``require_permission(`` (enterprise roles E00) is a ``require_role`` guard whose floor comes from the
+#: permission catalogue.
+_ROLE_MARKERS = ("require_role(", "require_project_role(", "require_instance_admin(", "require_permission(")
 #: A handler whose role depends on the body checks it with this helper.
 _ROLE_BODY_MARKERS = ("holds_role_for_project_write(",)
 _MUTATING_DECORATORS = {"post", "put", "patch", "delete"}
@@ -7949,9 +8086,33 @@ GUARDS: list[Guard] = [
         ),
         check=_backend_write_routes_state_a_role,
         fix_hint=(
-            "Add Depends(require_role(UserRole.X)) to the route. Only when no role applies (the caller's "
-            "own data, a read-shaped POST, a machine credential, a sign-in step) add it to "
-            "_ROLE_FREE_WRITE_ROUTES with that reason."
+            "Add Depends(require_role(UserRole.X)) or Depends(require_permission(Permission.X)) to the route. "
+            "Only when no role applies (the caller's own data, a read-shaped POST, a machine credential, a "
+            "sign-in step) add it to _ROLE_FREE_WRITE_ROUTES with that reason."
+        ),
+    ),
+    Guard(
+        name="backend.single-role-rank-helper",
+        description=(
+            "Outside app/core/permissions.py and app/core/deps.py: no _ROLE_ORDER.index(...), no literal list "
+            "of 3+ UserRole members, no role compared with VIEWER (enterprise roles E00)."
+        ),
+        check=_backend_single_role_rank_helper,
+        fix_hint=(
+            "Rank a role with app.core.permissions.rank_index(role) (job roles count as VIEWER); use "
+            "permissions.LADDER for the order; compare rank_index(role) == 0 instead of role == VIEWER."
+        ),
+    ),
+    Guard(
+        name="frontend.single-role-order",
+        description=(
+            "Outside src/lib/roles.ts, src/types/permissions.ts and src/hooks/usePermissions.ts: no "
+            "ROLE_ORDER.indexOf(...) and no literal list of the five ranks (enterprise roles E00)."
+        ),
+        check=_frontend_single_role_order,
+        fix_hint=(
+            "Rank a role with roleRank / roleAtLeast from @/lib/roles (job roles count as VIEWER); use RANK_ROLES "
+            "from @/types/permissions for the order."
         ),
     ),
     Guard(

@@ -1609,13 +1609,32 @@ async def update_mfa_policy(
     db: AsyncSession = Depends(get_db),
 ) -> MfaPolicyRead:
     """Update the workspace MFA + lockout policy. ADMIN only, audit-logged."""
+    from app.core.permissions import is_ladder_role
     from app.models.postgres import IdentityEventType
-    from app.services.mfa_service import MfaPolicy, load_policy, save_policy
+    from app.services.mfa_service import MfaPolicy, clean_required_roles, load_policy, save_policy
     from app.services.sso_service import log_identity_event
 
     current = await load_policy(db)
     updates = payload.model_dump(exclude_none=True)
     updates.pop("clear_required_for_role", None)
+    updates.pop("required_roles", None)
+
+    # Enterprise roles E00-S05: the floor is a rank; a job role is named in ``required_roles`` instead (a job
+    # role's rank is VIEWER, so as a floor it would silently mean "everyone").
+    if payload.required_for_role is not None and not is_ladder_role(payload.required_for_role):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="The MFA floor must be a rank (VIEWER, TESTER, QA_ENGINEER, QA_LEAD or ADMIN); "
+                   "list job roles under required roles",
+        )
+    if payload.required_roles is not None and UserRole.AGENT in payload.required_roles:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="AGENT cannot be required to use MFA (agents sign in with keys)",
+        )
+    required_roles = (
+        clean_required_roles(payload.required_roles) if payload.required_roles is not None
+        else current.required_roles
+    )
 
     role_value = updates.pop("required_for_role", None)
     if payload.clear_required_for_role:
@@ -1635,6 +1654,7 @@ async def update_mfa_policy(
         lockout_duration_minutes=updates.get(
             "lockout_duration_minutes", current.lockout_duration_minutes
         ),
+        required_roles=required_roles,
     )
     await save_policy(db, merged, actor_id=current_user.id)
 

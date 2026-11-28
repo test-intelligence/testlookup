@@ -3642,6 +3642,20 @@ These are the full generated JSON Schema definitions, including required fields,
 ```json
 {
   "properties": {
+    "additional_roles": {
+      "items": {
+        "enum": [
+          "RELEASE_MANAGER",
+          "PROJECT_MANAGER",
+          "PRODUCT_MANAGER",
+          "DEVELOPER"
+        ],
+        "type": "string"
+      },
+      "maxItems": 4,
+      "title": "Additional Roles",
+      "type": "array"
+    },
     "role": {
       "$ref": "#/components/schemas/UserRole",
       "default": "QA_ENGINEER"
@@ -3665,6 +3679,20 @@ These are the full generated JSON Schema definitions, including required fields,
 ```json
 {
   "properties": {
+    "additional_roles": {
+      "items": {
+        "enum": [
+          "RELEASE_MANAGER",
+          "PROJECT_MANAGER",
+          "PRODUCT_MANAGER",
+          "DEVELOPER"
+        ],
+        "type": "string"
+      },
+      "maxItems": 4,
+      "title": "Additional Roles",
+      "type": "array"
+    },
     "email": {
       "format": "email",
       "title": "Email",
@@ -3707,6 +3735,13 @@ These are the full generated JSON Schema definitions, including required fields,
 ```json
 {
   "properties": {
+    "additional_roles": {
+      "items": {
+        "$ref": "#/components/schemas/UserRole"
+      },
+      "title": "Additional Roles",
+      "type": "array"
+    },
     "created_at": {
       "format": "date-time",
       "title": "Created At",
@@ -23726,6 +23761,13 @@ These are the full generated JSON Schema definitions, including required fields,
 ```json
 {
   "properties": {
+    "additional_roles": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Additional Roles",
+      "type": "array"
+    },
     "project_id": {
       "format": "uuid",
       "title": "Project Id",
@@ -23813,6 +23855,13 @@ These are the full generated JSON Schema definitions, including required fields,
 {
   "description": "W17b ADM-01: one row of the Pending invitations tab. Never carries a token.",
   "properties": {
+    "additional_roles": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Additional Roles",
+      "type": "array"
+    },
     "created_at": {
       "anyOf": [
         {
@@ -23927,6 +23976,20 @@ These are the full generated JSON Schema definitions, including required fields,
 {
   "description": "W17b ADM-01: a project the invitee joins on accept, with its project role.",
   "properties": {
+    "additional_roles": {
+      "items": {
+        "enum": [
+          "RELEASE_MANAGER",
+          "PROJECT_MANAGER",
+          "PRODUCT_MANAGER",
+          "DEVELOPER"
+        ],
+        "type": "string"
+      },
+      "maxItems": 4,
+      "title": "Additional Roles",
+      "type": "array"
+    },
     "project_id": {
       "format": "uuid",
       "title": "Project Id",
@@ -23950,6 +24013,20 @@ These are the full generated JSON Schema definitions, including required fields,
 ```json
 {
   "properties": {
+    "additional_roles": {
+      "items": {
+        "enum": [
+          "RELEASE_MANAGER",
+          "PROJECT_MANAGER",
+          "PRODUCT_MANAGER",
+          "DEVELOPER"
+        ],
+        "type": "string"
+      },
+      "maxItems": 4,
+      "title": "Additional Roles",
+      "type": "array"
+    },
     "email": {
       "format": "email",
       "title": "Email",
@@ -23981,6 +24058,13 @@ These are the full generated JSON Schema definitions, including required fields,
 ```json
 {
   "properties": {
+    "additional_roles": {
+      "items": {
+        "$ref": "#/components/schemas/UserRole"
+      },
+      "title": "Additional Roles",
+      "type": "array"
+    },
     "email": {
       "title": "Email",
       "type": "string"
@@ -29017,6 +29101,13 @@ These are the full generated JSON Schema definitions, including required fields,
           "type": "null"
         }
       ]
+    },
+    "required_roles": {
+      "items": {
+        "$ref": "#/components/schemas/UserRole"
+      },
+      "title": "Required Roles",
+      "type": "array"
     }
   },
   "required": [
@@ -29097,6 +29188,21 @@ These are the full generated JSON Schema definitions, including required fields,
           "type": "null"
         }
       ]
+    },
+    "required_roles": {
+      "anyOf": [
+        {
+          "items": {
+            "$ref": "#/components/schemas/UserRole"
+          },
+          "maxItems": 10,
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Required Roles"
     }
   },
   "title": "MfaPolicyUpdate",
@@ -29667,6 +29773,84 @@ These are the full generated JSON Schema definitions, including required fields,
     "unresolved_total"
   ],
   "title": "MyFailureListResponse",
+  "type": "object"
+}
+```
+
+## MyPermissionsResponse
+
+```json
+{
+  "description": "``GET /api/v1/me/permissions`` (enterprise roles E00-S04): what the caller may do, in one project or globally.\n\n``read_permissions`` answers reads (the project roles decide); ``write_permissions`` answers writes (instance\nroles and project roles intersect). A permission in ``conditional`` is granted only when the handler's check on\nthe resource passes (for example ``owns_failure``); the UI offers it and the server decides.",
+  "properties": {
+    "additional_roles": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Additional Roles",
+      "type": "array"
+    },
+    "conditional": {
+      "additionalProperties": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "title": "Conditional",
+      "type": "object"
+    },
+    "project_additional_roles": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Project Additional Roles",
+      "type": "array"
+    },
+    "project_id": {
+      "anyOf": [
+        {
+          "format": "uuid",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Project Id"
+    },
+    "project_role": {
+      "anyOf": [
+        {
+          "$ref": "#/components/schemas/UserRole"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "read_permissions": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Read Permissions",
+      "type": "array"
+    },
+    "role": {
+      "$ref": "#/components/schemas/UserRole"
+    },
+    "write_permissions": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Write Permissions",
+      "type": "array"
+    }
+  },
+  "required": [
+    "role"
+  ],
+  "title": "MyPermissionsResponse",
   "type": "object"
 }
 ```
@@ -34588,6 +34772,13 @@ These are the full generated JSON Schema definitions, including required fields,
 ```json
 {
   "properties": {
+    "additional_roles": {
+      "items": {
+        "$ref": "#/components/schemas/UserRole"
+      },
+      "title": "Additional Roles",
+      "type": "array"
+    },
     "created_at": {
       "format": "date-time",
       "title": "Created At",
@@ -44659,6 +44850,23 @@ These are the full generated JSON Schema definitions, including required fields,
 ```json
 {
   "properties": {
+    "additional_matched_groups": {
+      "additionalProperties": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "title": "Additional Matched Groups",
+      "type": "object"
+    },
+    "additional_roles": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Additional Roles",
+      "type": "array"
+    },
     "ceiling": {
       "title": "Ceiling",
       "type": "string"
@@ -54982,6 +55190,27 @@ These are the full generated JSON Schema definitions, including required fields,
 ```json
 {
   "properties": {
+    "additional_roles": {
+      "anyOf": [
+        {
+          "items": {
+            "enum": [
+              "RELEASE_MANAGER",
+              "PROJECT_MANAGER",
+              "PRODUCT_MANAGER",
+              "DEVELOPER"
+            ],
+            "type": "string"
+          },
+          "maxItems": 4,
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Additional Roles"
+    },
     "role": {
       "$ref": "#/components/schemas/UserRole"
     }
@@ -55000,6 +55229,27 @@ These are the full generated JSON Schema definitions, including required fields,
 {
   "description": "Editable user attributes. Only non-None fields are applied.",
   "properties": {
+    "additional_roles": {
+      "anyOf": [
+        {
+          "items": {
+            "enum": [
+              "RELEASE_MANAGER",
+              "PROJECT_MANAGER",
+              "PRODUCT_MANAGER",
+              "DEVELOPER"
+            ],
+            "type": "string"
+          },
+          "maxItems": 4,
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "title": "Additional Roles"
+    },
     "email": {
       "anyOf": [
         {
@@ -55221,6 +55471,13 @@ These are the full generated JSON Schema definitions, including required fields,
 ```json
 {
   "properties": {
+    "additional_roles": {
+      "items": {
+        "$ref": "#/components/schemas/UserRole"
+      },
+      "title": "Additional Roles",
+      "type": "array"
+    },
     "created_at": {
       "format": "date-time",
       "title": "Created At",
@@ -55390,7 +55647,12 @@ These are the full generated JSON Schema definitions, including required fields,
     "TESTER",
     "QA_ENGINEER",
     "QA_LEAD",
-    "ADMIN"
+    "ADMIN",
+    "RELEASE_MANAGER",
+    "PROJECT_MANAGER",
+    "PRODUCT_MANAGER",
+    "DEVELOPER",
+    "AGENT"
   ],
   "title": "UserRole",
   "type": "string"

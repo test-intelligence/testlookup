@@ -141,6 +141,47 @@ A Redis compromise (or a bug writing to the wrong key) therefore cannot mint
 authorization: an unsigned or mis-signed entry simply fails HMAC and falls
 through to the database.
 
+### Roles, ranks and permissions (enterprise roles E00)
+
+`backend/app/core/permissions.py` separates **rank** from **role**:
+
+- **Five ranks**, `VIEWER < TESTER < QA_ENGINEER < QA_LEAD < ADMIN`. Every
+  `require_role(X)` compares ranks, and `rank_index` is the only code that
+  indexes the ladder (the `backend.single-role-rank-helper` and
+  `frontend.single-role-order` quality-gate guards keep it that way).
+- **Job roles** (`RELEASE_MANAGER`, `PROJECT_MANAGER`, `PRODUCT_MANAGER`,
+  `DEVELOPER`) and `AGENT` are not rungs. Each has a **base rank of VIEWER**:
+  on a guard that names no permission it gets exactly what a viewer gets, so a
+  new role never gains a write through an old guard by accident (fail closed).
+- A **permission catalogue** (46 permissions, each with the rank that grants it
+  on the ladder and the most an agent may ever hold). Ladder roles' permission
+  sets are computed from rank, so moving a route from `require_role(X)` to
+  `require_permission(P)` (with `P`'s rank equal to `X`) answers every ladder
+  role exactly as before. Job roles' sets are explicit. A permission an agent
+  may never hold (`AGENT_FORBIDDEN`: sign, decide, override, administer,
+  delete, mint keys) is refused to an `AGENT` whatever it was granted.
+- **Extra roles** (`users.additional_roles`, `project_members.additional_roles`)
+  add a job role's permissions; only the primary role gives the rank.
+- **The lower of the two decides**: on a write into a project the caller's
+  instance permissions and project permissions **intersect**; a read uses the
+  project permissions. `enforce_project_role_floor` records every
+  `(rank, permission)` pair a route's guards name and holds a member to all of
+  them.
+- **Grant ceiling**: a non-admin may give a project role or extra role only
+  when every permission of it is in their own effective permissions on that
+  project; `RELEASE_MANAGER`, `PROJECT_MANAGER` and `PRODUCT_MANAGER`
+  (`ADMIN_ONLY_GRANTS`) are given only by an administrator whatever the
+  granter holds; only an administrator changes instance roles; nobody changes
+  their own; `AGENT` is never given through the user or member routes.
+
+What each of the ten roles may do on every route is a reviewed file,
+`backend/tests/security_role_access_matrix.json`, computed from each route's
+guards; a pull request that changes any role's access shows as a diff there.
+`tests/test_role_access_runtime.py` sends real requests as each role to a
+sample of write routes and checks the answers match the file.
+`GET /api/v1/me/permissions` tells the SPA what the caller may do in a project
+(`useMyPermissions().can(...)`); the server stays the authority.
+
 
 ### The ratchet's blind spot — ids that don't arrive in the path
 

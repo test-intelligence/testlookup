@@ -134,6 +134,37 @@ async def test_invite_stores_only_the_hash_and_links_by_fragment(world, caplog):
     assert raw not in caplog.text
 
 
+async def test_extra_job_roles_ride_the_invitation_into_the_account_and_the_project(world):
+    """Enterprise roles E00-S05 (D-16): global and per-project extra roles survive invite → accept."""
+    from app.models.postgres import ProjectMember, User, UserInvitation, UserRole
+    from app.models.schemas import InviteProjectMembership, InviteUserRequest
+    from app.routers.users import invite_user
+
+    payload = InviteUserRequest(
+        email=f"new-{world['marker']}@testlookup.dev",
+        role=UserRole.QA_ENGINEER,
+        additional_roles=["RELEASE_MANAGER"],
+        project_memberships=[InviteProjectMembership(
+            project_id=world["project"].id, role=UserRole.QA_ENGINEER, additional_roles=["DEVELOPER"],
+        )],
+    )
+    answer = await invite_user(payload, db=world["db"], current_user=world["admin"])
+    assert answer.additional_roles == [UserRole.RELEASE_MANAGER]
+    db = world["db"]
+    row = (await db.execute(select(UserInvitation).where(UserInvitation.id == answer.id))).scalar_one()
+    assert row.additional_roles == ["RELEASE_MANAGER"]
+    assert row.project_memberships == [
+        {"project_id": str(world["project"].id), "role": "QA_ENGINEER", "additional_roles": ["DEVELOPER"]},
+    ]
+
+    await _accept(world, _token(answer.invitation_link))
+    db.expire_all()
+    user = (await db.execute(select(User).where(User.email == payload.email))).scalar_one()
+    assert user.additional_roles == ["RELEASE_MANAGER"]
+    member = (await db.execute(select(ProjectMember).where(ProjectMember.user_id == user.id))).scalar_one()
+    assert (member.role, member.additional_roles) == ("QA_ENGINEER", ["DEVELOPER"])
+
+
 async def test_accept_creates_the_account_with_role_and_project_and_signs_in(world):
     from app.models.postgres import ProjectMember, User, UserInvitation
     from app.models.schemas import InvitationTokenRequest, TokenResponse

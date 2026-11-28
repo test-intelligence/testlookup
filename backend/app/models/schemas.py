@@ -3,12 +3,13 @@ import json
 import re
 import uuid
 from datetime import date, datetime
-from typing import Any, ClassVar, Dict, List, Literal, Optional, Union
+from typing import Annotated, Any, ClassVar, Dict, List, Literal, Optional, Union
 
 from pydantic import (
     AliasChoices,
     AwareDatetime,
     BaseModel,
+    BeforeValidator,
     ConfigDict,
     EmailStr,
     Field,
@@ -191,6 +192,22 @@ def check_new_username(value: Optional[str]) -> Optional[str]:
     if value is not None and not _USERNAME_RE.fullmatch(value):
         raise PydanticCustomError("username_characters", USERNAME_RULE_DETAIL)
     return value
+
+
+#: Extra job roles a person may hold beside their primary role (enterprise roles D-16). A request listing
+#: anything else is a 422. ``permissions.EXTRA_ROLE_CHOICES`` is the same list (a test keeps them equal).
+ExtraRole = Literal["RELEASE_MANAGER", "PROJECT_MANAGER", "PRODUCT_MANAGER", "DEVELOPER"]
+
+
+def _stored_extra_roles(value: Any) -> list[str]:
+    """``additional_roles`` read from a row: NULL is ``[]``; anything but a job role is dropped."""
+    from app.core.permissions import job_roles_in
+
+    return [role.value for role in job_roles_in(value)]
+
+
+#: ``additional_roles`` in a response (enum order, never NULL).
+StoredExtraRoles = Annotated[List[UserRole], BeforeValidator(_stored_extra_roles)]
 
 
 class UserCreate(BaseModel):
@@ -660,6 +677,8 @@ class MfaStatusResponse(BaseModel):
 class MfaPolicyRead(BaseModel):
     require_mfa: bool
     required_for_role: Optional[UserRole] = None
+    #: Enterprise roles E00-S05: roles that need MFA whatever the floor (primary or extra role).
+    required_roles: List[UserRole] = Field(default_factory=list)
     lockout_enabled: bool
     lockout_threshold: int
     lockout_duration_minutes: int
@@ -667,7 +686,10 @@ class MfaPolicyRead(BaseModel):
 
 class MfaPolicyUpdate(BaseModel):
     require_mfa: Optional[bool] = None
+    #: A rank (VIEWER .. ADMIN); a job role is refused (400) -- name it in ``required_roles`` instead.
     required_for_role: Optional[UserRole] = None
+    #: ``[]`` clears the list; omitted keeps it. AGENT is refused (agents never hold a second factor).
+    required_roles: Optional[List[UserRole]] = Field(None, max_length=10)
     lockout_enabled: Optional[bool] = None
     lockout_threshold: Optional[int] = Field(None, ge=3, le=100)
     lockout_duration_minutes: Optional[int] = Field(None, ge=1, le=1440)
@@ -6789,6 +6811,8 @@ class UserListResponse(BaseModel):
     username: str
     full_name: Optional[str] = None
     role: UserRole
+    #: Enterprise roles D-16: extra job roles held beside ``role`` (which alone gives the rank).
+    additional_roles: StoredExtraRoles = Field(default_factory=list)
     is_active: bool
     created_at: datetime
     # W31 STRAT-12: an erased account (users.erased_at set) is still listed — as "Erased user" with the badge
@@ -6825,6 +6849,8 @@ class UpdateUserProfileRequest(BaseModel):
     )
     full_name: Optional[str] = None
     role: Optional[UserRole] = None
+    #: Extra job roles; ``[]`` clears them, omitted keeps them.
+    additional_roles: Optional[List[ExtraRole]] = Field(None, max_length=4)
     is_active: Optional[bool] = None
 
     @field_validator("username")
@@ -6837,11 +6863,13 @@ class InviteProjectMembership(BaseModel):
     """W17b ADM-01: a project the invitee joins on accept, with its project role."""
     project_id: uuid.UUID
     role: UserRole = UserRole.QA_ENGINEER
+    additional_roles: List[ExtraRole] = Field(default_factory=list, max_length=4)
 
 
 class InviteUserRequest(BaseModel):
     email: EmailStr
     role: UserRole = UserRole.QA_ENGINEER
+    additional_roles: List[ExtraRole] = Field(default_factory=list, max_length=4)
     project_memberships: List[InviteProjectMembership] = Field(default_factory=list, max_length=50)
 
 
@@ -6849,6 +6877,7 @@ class InviteUserResponse(BaseModel):
     id: uuid.UUID
     email: str
     role: UserRole
+    additional_roles: StoredExtraRoles = Field(default_factory=list)
     expires_at: datetime
     #: ``{public_base_url}/accept-invite#token=…`` — shown once; only its hash is stored.
     invitation_link: str
@@ -6861,6 +6890,7 @@ class InvitationMembershipView(BaseModel):
     project_id: uuid.UUID
     project_name: Optional[str] = None
     role: str
+    additional_roles: List[str] = Field(default_factory=list)
 
 
 class InvitationSummary(BaseModel):
@@ -6868,6 +6898,7 @@ class InvitationSummary(BaseModel):
     id: uuid.UUID
     email: str
     role: UserRole
+    additional_roles: List[str] = Field(default_factory=list)
     #: ``pending`` | ``expired`` | ``used`` | ``revoked``
     status: str
     expires_at: datetime
@@ -6925,6 +6956,7 @@ class AdminCreateUserRequest(BaseModel):
     username: str = Field(..., min_length=3, max_length=50, json_schema_extra={"pattern": USERNAME_PATTERN})
     full_name: Optional[str] = None
     role: UserRole = UserRole.QA_ENGINEER
+    additional_roles: List[ExtraRole] = Field(default_factory=list, max_length=4)
 
     @field_validator("username")
     @classmethod
@@ -6938,6 +6970,7 @@ class AdminCreateUserResponse(BaseModel):
     username: str
     full_name: Optional[str] = None
     role: UserRole
+    additional_roles: StoredExtraRoles = Field(default_factory=list)
     is_active: bool
     created_at: datetime
     temp_password: str  # shown once — admin must share with the user
@@ -6950,6 +6983,9 @@ class ProjectMemberResponse(BaseModel):
     user_id: uuid.UUID
     project_id: uuid.UUID
     role: UserRole
+    #: Enterprise roles D-16: extra job roles in this project. On a write the caller's instance roles and these
+    #: project roles intersect ("the lower of the two decides").
+    additional_roles: StoredExtraRoles = Field(default_factory=list)
     created_at: datetime
     # Joined user fields
     email: str
@@ -6968,10 +7004,31 @@ class ProjectMemberResponse(BaseModel):
 class AddProjectMemberRequest(BaseModel):
     user_id: uuid.UUID
     role: UserRole = UserRole.QA_ENGINEER
+    additional_roles: List[ExtraRole] = Field(default_factory=list, max_length=4)
 
 
 class UpdateProjectMemberRoleRequest(BaseModel):
     role: UserRole
+    #: ``[]`` clears the extra roles; omitted keeps them.
+    additional_roles: Optional[List[ExtraRole]] = Field(None, max_length=4)
+
+
+class MyPermissionsResponse(BaseModel):
+    """``GET /api/v1/me/permissions`` (enterprise roles E00-S04): what the caller may do, in one project or globally.
+
+    ``read_permissions`` answers reads (the project roles decide); ``write_permissions`` answers writes (instance
+    roles and project roles intersect). A permission in ``conditional`` is granted only when the handler's check on
+    the resource passes (for example ``owns_failure``); the UI offers it and the server decides.
+    """
+    role: UserRole
+    additional_roles: List[str] = Field(default_factory=list)
+    project_id: Optional[uuid.UUID] = None
+    #: ``None`` when ``project_id`` is absent, or the caller is an ADMIN who is not a member.
+    project_role: Optional[UserRole] = None
+    project_additional_roles: List[str] = Field(default_factory=list)
+    read_permissions: List[str] = Field(default_factory=list)
+    write_permissions: List[str] = Field(default_factory=list)
+    conditional: Dict[str, List[str]] = Field(default_factory=dict)
 
 
 # ── API Key Schemas ───────────────────────────────────────────
@@ -7452,6 +7509,9 @@ class SSORolePreviewResponse(BaseModel):
     source: Literal["mapping", "default"]
     ceiling: str
     clamped: bool
+    #: Enterprise roles E00-S05: extra job roles the groups add, and the groups that added each.
+    additional_roles: list[str] = Field(default_factory=list)
+    additional_matched_groups: dict[str, list[str]] = Field(default_factory=dict)
 
 
 class SAMLLoginInitResponse(BaseModel):

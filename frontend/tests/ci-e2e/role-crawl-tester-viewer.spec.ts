@@ -1,6 +1,10 @@
 /**
  * GAP-D05 (test-coverage round 2026-11-18, card TEST-D), hermetic: the every-role routes as a TESTER and as a VIEWER.
  *
+ * Enterprise roles E00-S06: and as each job role (RELEASE_MANAGER, PROJECT_MANAGER, PRODUCT_MANAGER, DEVELOPER)
+ * and a DEVELOPER who also holds RELEASE_MANAGER. Until a route names a permission, a job role ranks as VIEWER, so
+ * each must be offered exactly what a VIEWER is offered (and load every page with no toast).
+ *
  * `in-page-sweep.spec.ts` crawls VIEWER, QA ENGINEER, QA LEAD and ADMIN; nothing loads these pages as a TESTER, the
  * role with its own UI (`TestManagementPage.tsx` `canWrite = hasRole('TESTER')`) just under the QA-engineer floor many
  * endpoints use. For every route below, as each of the two roles (one browser context per test, so one account per
@@ -61,12 +65,29 @@ import { attributionRulesWorld } from '../visual/production/fixtures-release-pla
 test.use({ viewport: { width: 1280, height: 1000 }, timezoneId: 'UTC', locale: 'en-US', reducedMotion: 'reduce' })
 
 type Role = 'VIEWER' | 'TESTER' | 'QA_ENGINEER' | 'QA_LEAD' | 'ADMIN'
+type JobRole = 'RELEASE_MANAGER' | 'PROJECT_MANAGER' | 'PRODUCT_MANAGER' | 'DEVELOPER'
 const ORDER: Role[] = ['VIEWER', 'TESTER', 'QA_ENGINEER', 'QA_LEAD', 'ADMIN']
-const reaches = (role: Role, floor: Role) => ORDER.indexOf(role) >= ORDER.indexOf(floor)
+/** A job role's rank is VIEWER on every guard that names no permission (enterprise roles E00). */
+const rankOf = (role: Role | JobRole): Role => ((ORDER as string[]).includes(role) ? (role as Role) : 'VIEWER')
+const reaches = (role: Role | JobRole, floor: Role) => ORDER.indexOf(rankOf(role)) >= ORDER.indexOf(floor)
 
-const ROLES = [
-  { role: 'TESTER' as const, user: TESTER },
-  { role: 'VIEWER' as const, user: VIEWER },
+const jobUser = (role: JobRole, n: number, additional_roles: JobRole[] = []) => ({
+  ...VIEWER,
+  id: `00000000-0000-4000-8000-0000000000f${n}`,
+  username: role.toLowerCase(),
+  full_name: role.replace('_', ' '),
+  role,
+  additional_roles,
+})
+
+const ROLES: Array<{ role: string; rank: Role | JobRole; user: typeof VIEWER }> = [
+  { role: 'TESTER', rank: 'TESTER', user: TESTER },
+  { role: 'VIEWER', rank: 'VIEWER', user: VIEWER },
+  { role: 'RELEASE_MANAGER', rank: 'RELEASE_MANAGER', user: jobUser('RELEASE_MANAGER', 1) },
+  { role: 'PROJECT_MANAGER', rank: 'PROJECT_MANAGER', user: jobUser('PROJECT_MANAGER', 2) },
+  { role: 'PRODUCT_MANAGER', rank: 'PRODUCT_MANAGER', user: jobUser('PRODUCT_MANAGER', 3) },
+  { role: 'DEVELOPER', rank: 'DEVELOPER', user: jobUser('DEVELOPER', 4) },
+  { role: 'DEVELOPER+RELEASE_MANAGER', rank: 'DEVELOPER', user: jobUser('DEVELOPER', 5, ['RELEASE_MANAGER']) },
 ]
 
 interface CrawlAction {
@@ -240,7 +261,7 @@ const TELEMETRY = /^POST \/api\/v1\/onboarding\/track(\?|$)/
 const writesOf = (lines: string[]) => lines.filter((line) => !line.startsWith('GET ') && !TELEMETRY.test(line))
 
 for (const r of ROUTES) {
-  for (const { role, user } of ROLES) {
+  for (const { role, rank, user } of ROLES) {
     test(`${r.route} as ${role}: no toast, no write at load, and only the actions the API lets a ${role} make`, async ({ page }) => {
       const { api, errors } = await openRollout(page, r.path, { handlers: r.handlers(), ready: r.ready, user, flags: r.flags })
       await networkQuiet(page, api)
@@ -253,7 +274,7 @@ for (const r of ROUTES) {
       const offered: string[] = []
       const withheld: string[] = []
       for (const action of r.actions ?? []) {
-        const allowed = reaches(role, action.floor)
+        const allowed = reaches(rank, action.floor)
         if (action.before) {
           if (allowed) await action.before(page)
           else await action.before(page).catch(() => undefined)

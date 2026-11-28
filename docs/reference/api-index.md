@@ -241,6 +241,7 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | GET | `/api/v1/me/erasure-request` | Get My Erasure Request | [Subject rights](api/subject-rights.md) |
 | POST | `/api/v1/me/erasure-request` | File My Erasure Request | [Subject rights](api/subject-rights.md) |
 | POST | `/api/v1/me/erasure-request/withdraw` | Withdraw My Erasure Request | [Subject rights](api/subject-rights.md) |
+| GET | `/api/v1/me/permissions` | Get My Permissions | [My Permissions](api/my-permissions.md) |
 | GET | `/api/v1/memory/projects/{project_id}` | List Project Memories | [Agent Memory](api/agent-memory.md) |
 | POST | `/api/v1/memory/projects/{project_id}/recall` | Recall Similar Memories | [Agent Memory](api/agent-memory.md) |
 | GET | `/api/v1/memory/runs/{run_id}/timeline` | Get Run Memory Timeline | [Agent Memory](api/agent-memory.md) |
@@ -753,4 +754,4 @@ This indexes every OpenAPI HTTP operation. Exact parameters, body schemas and de
 | POST | `/webhooks/minio` | Minio Webhook | [Webhooks](api/webhooks.md) |
 | POST | `/ws/events/{run_id}` | Ingest Live Event | [Live Reporting](api/live-reporting.md) |
 
-Total: **744 HTTP operations**, **630 paths**, **92 domain pages**.
+Total: **745 HTTP operations**, **631 paths**, **93 domain pages**.

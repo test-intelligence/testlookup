@@ -11,15 +11,17 @@ import { Plus, Trash2 } from 'lucide-react'
 
 import { previewSSORole, updateSSOConfig, type SSOConfig, type SSORolePreview } from '@/services/ssoService'
 import { extractErrorMessage } from '@/services/apiErrors'
+import { ROLE_INFO } from '@/content/roles'
+import { JOB_ROLES, RANK_ROLES, type Role } from '@/types/permissions'
 
-const ROLES: { value: string; label: string }[] = [
-  { value: 'VIEWER', label: 'Viewer' },
-  { value: 'TESTER', label: 'Tester' },
-  { value: 'QA_ENGINEER', label: 'QA Engineer' },
-  { value: 'QA_LEAD', label: 'QA Lead' },
-  { value: 'ADMIN', label: 'Admin' },
-]
-const roleLabel = (v: string) => ROLES.find((r) => r.value === v)?.label ?? v
+/** The ranks: a group mapped to one sets the user's role (highest wins); the default role is one of these. */
+const ROLES: { value: string; label: string }[] = RANK_ROLES.map((value) => ({ value, label: ROLE_INFO[value].label }))
+/** Enterprise roles E00-S05: a group mapped to a job role ADDS it as an extra role; it never competes for the rank. */
+const JOB_ROLE_OPTIONS: { value: string; label: string }[] = JOB_ROLES.map((value) => ({
+  value, label: `${ROLE_INFO[value].label} (extra role)`,
+}))
+const MAPPABLE = [...ROLES, ...JOB_ROLE_OPTIONS]
+const roleLabel = (v: string) => ROLE_INFO[v as Role]?.label ?? v
 
 type Row = { group: string; role: string }
 
@@ -92,6 +94,7 @@ export default function SSORoleMappingEditor({ config, onSaved }: { config: SSOC
         <h4 className="text-sm font-medium text-[var(--color-text)]">Role mapping</h4>
         <p className="text-xs text-[var(--color-text-muted)]">
           A user signing in with this IdP gets the highest role any of their groups maps to; no match gets the default role.
+          A group mapped to a job role (Release Manager, Developer, …) adds it as an extra role.
         </p>
       </div>
       <div className="space-y-2">
@@ -102,7 +105,7 @@ export default function SSORoleMappingEditor({ config, onSaved }: { config: SSOC
               onChange={(e) => setRow(i, { group: e.target.value })} className={`${field} flex-1 min-w-0`} />
             <span className="text-xs text-[var(--color-text-muted)]">→</span>
             <select aria-label={`Role for group ${i + 1}`} value={r.role} onChange={(e) => setRow(i, { role: e.target.value })} className={`${field} !w-44 shrink-0`}>
-              {ROLES.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+              {MAPPABLE.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
             </select>
             <button type="button" aria-label={`Remove group ${i + 1}`} onClick={() => { setRows((rs) => rs.filter((_, k) => k !== i)); setPreview(null) }}
               className="p-1 text-[var(--color-text-muted)] hover:text-[var(--ui-danger)]">
@@ -143,6 +146,14 @@ export default function SSORoleMappingEditor({ config, onSaved }: { config: SSOC
           → <strong>{roleLabel(preview.role)}</strong>{' '}
           {preview.source === 'mapping' ? `(matched ${preview.matched_groups.join(', ')})` : '(no group matched: the default role)'}
           {preview.clamped && ` — capped at ${roleLabel(preview.ceiling)} by this deployment's provisioning ceiling`}
+          {(preview.additional_roles ?? []).length > 0 && (
+            <span data-testid="sso-role-preview-extras">
+              {' '}+ {(preview.additional_roles ?? []).map((r) => {
+                const groups = preview.additional_matched_groups?.[r] ?? []
+                return `${roleLabel(r)}${groups.length ? ` (from ${groups.join(', ')})` : ''}`
+              }).join(', ')}
+            </span>
+          )}
         </p>
       )}
     </section>
