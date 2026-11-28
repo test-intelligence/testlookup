@@ -442,11 +442,13 @@ async def update_user_profile(
 
     # Enterprise roles D-16: extra job roles. Only the primary role gives the rank; an extra role only adds
     # permissions. Re-cleaned when the primary role changes (a primary role is never also an extra one).
-    if payload.additional_roles is not None or payload.role is not None:
-        if payload.additional_roles is not None and user.id == current_user.id:
+    # getattr: an older caller's payload (or a test double) may not carry the field at all -- omitted keeps them.
+    requested_extras = getattr(payload, "additional_roles", None)
+    if requested_extras is not None or payload.role is not None:
+        if requested_extras is not None and user.id == current_user.id:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot change your own role")
         before_extras = _stored_extras(getattr(user, "additional_roles", None))
-        wanted = payload.additional_roles if payload.additional_roles is not None else before_extras
+        wanted = requested_extras if requested_extras is not None else before_extras
         after_extras = _clean_extras(wanted, primary=user.role)
         _refuse_extras_for_agent(user.role, after_extras)
         if after_extras != before_extras:
@@ -503,7 +505,7 @@ async def admin_create_user(
         )
 
     _refuse_agent_role(payload.role)
-    extras = _clean_extras(payload.additional_roles, primary=payload.role)
+    extras = _clean_extras(getattr(payload, "additional_roles", None), primary=payload.role)
     temp_password = secrets.token_urlsafe(12)
     logger.info("admin_creating_user", role=str(payload.role), by=str(current_user.id))
     user = User(
@@ -565,7 +567,7 @@ async def invite_user(
         )
 
     _refuse_agent_role(payload.role)
-    extras = _clean_extras(payload.additional_roles, primary=payload.role)
+    extras = _clean_extras(getattr(payload, "additional_roles", None), primary=payload.role)
     memberships = await _validated_invite_memberships(db, payload)
 
     raw, token_hash = new_token()
@@ -884,7 +886,7 @@ async def add_project_member(
     # Privilege-escalation guard: a non-admin cannot grant a project role (or an
     # extra role) above their own, nor add themselves above their current standing.
     _refuse_agent_role(payload.role)
-    extras = _clean_extras(payload.additional_roles, primary=payload.role)
+    extras = _clean_extras(getattr(payload, "additional_roles", None), primary=payload.role)
     await _enforce_member_grant(db, current_user, project_id, payload.role, payload.user_id, additional_roles=extras)
 
     # Check not already a member
@@ -951,7 +953,8 @@ async def update_project_member_role(
     # Extra roles: omitted keeps them (re-cleaned against the new primary role). Only a NEWLY added extra
     # role passes the ceiling -- removing one lowers access and keeping one an admin gave is not a grant.
     previous_extras = _stored_extras(getattr(member, "additional_roles", None))
-    wanted_extras = payload.additional_roles if payload.additional_roles is not None else previous_extras
+    requested_extras = getattr(payload, "additional_roles", None)
+    wanted_extras = requested_extras if requested_extras is not None else previous_extras
     new_extras = _clean_extras(wanted_extras, primary=payload.role)
     _enforce_grant_ceiling(
         current_user, payload.role, user_id,

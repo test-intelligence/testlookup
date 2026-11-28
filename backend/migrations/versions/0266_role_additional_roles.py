@@ -30,15 +30,15 @@ in JSON settings (an SSO ``role_mapping``, the MFA policy's ``required_roles``,
 a feature flag's ``enabled_roles``) need nothing: older code skips a role it
 does not know.
 
-Revision ID: 0261
-Revises: 0260
+Revision ID: 0266
+Revises: 0265
 """
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import JSONB
 
-revision = "0261"
-down_revision = "0260"
+revision = "0266"
+down_revision = "0265"
 branch_labels = None
 depends_on = None
 

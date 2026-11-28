@@ -242,7 +242,7 @@ class User(Base):
     # surface means this is NOT NULL; the row itself is never deleted (it is the pseudonymous key every
     # kept row points at).
     erased_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
-    # Enterprise roles E00 (migration 0261): extra job roles a person holds on the instance besides ``role``
+    # Enterprise roles E00 (migration 0266): extra job roles a person holds on the instance besides ``role``
     # (RELEASE_MANAGER, PROJECT_MANAGER, PRODUCT_MANAGER, DEVELOPER only). ``role`` alone gives the rank;
     # these only add permissions (app/core/permissions.py). NULL = none.
     additional_roles: Mapped[Optional[list]] = mapped_column(JSON().with_variant(JSONB(), "postgresql"), nullable=True)
@@ -4583,7 +4583,7 @@ class ProjectMember(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     # W20 ADM-09: NULL = granted by a person; "scim:<group>" = created by SCIM group reconciliation.
     source: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)
-    # Enterprise roles E00 (migration 0261): extra job roles in this project besides ``role``. On a write
+    # Enterprise roles E00 (migration 0266): extra job roles in this project besides ``role``. On a write
     # the instance roles and these project roles intersect (app/core/permissions.py). NULL = none.
     additional_roles: Mapped[Optional[list]] = mapped_column(JSON().with_variant(JSONB(), "postgresql"), nullable=True)
 
@@ -4922,7 +4922,7 @@ class UserInvitation(Base):
     )
     #: ``[{"project_id": "<uuid>", "role": "<project role>"}]`` granted on accept.
     project_memberships: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True)
-    # Enterprise roles D-16 (migration 0261): extra job roles the invitee gets on accept; NULL = none.
+    # Enterprise roles D-16 (migration 0266): extra job roles the invitee gets on accept; NULL = none.
     additional_roles: Mapped[Optional[list]] = mapped_column(JSON().with_variant(JSONB(), "postgresql"), nullable=True)
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

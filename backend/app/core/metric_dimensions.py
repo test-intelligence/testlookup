@@ -25,7 +25,11 @@ LIFECYCLE_STATES = frozenset({
     "draft", "review_requested", "under_review", "approved", "active", "rejected",
     "needs_update", "deprecated", "archived", "other",
 })
-ACTOR_ROLES = frozenset({"VIEWER", "TESTER", "QA_ENGINEER", "QA_LEAD", "ADMIN", "other"})
+# Every UserRole value (enterprise roles E00 added the four job roles and AGENT): still a closed set of eleven.
+ACTOR_ROLES = frozenset({
+    "VIEWER", "TESTER", "QA_ENGINEER", "QA_LEAD", "ADMIN",
+    "RELEASE_MANAGER", "PROJECT_MANAGER", "PRODUCT_MANAGER", "DEVELOPER", "AGENT", "other",
+})
 TASK_STATES = frozenset({
     "pending", "received", "started", "success", "failure", "retry", "revoked",
     "rejected", "ignored", "unknown", "other",

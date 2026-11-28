@@ -1,4 +1,4 @@
-"""Migration 0261 (enterprise roles E00): extra job roles, and a downgrade older code can read.
+"""Migration 0266 (enterprise roles E00): extra job roles, and a downgrade older code can read.
 
 Upgrade adds a nullable JSONB ``additional_roles`` to users, project_members and user_invitations. Downgrade
 maps every new role value back to VIEWER in every place older code reads a role through its five-value enum --
@@ -13,20 +13,20 @@ import pytest
 
 pytestmark = pytest.mark.regression
 
-MIGRATION = Path(__file__).resolve().parents[2] / "migrations" / "versions" / "0261_role_additional_roles.py"
+MIGRATION = Path(__file__).resolve().parents[2] / "migrations" / "versions" / "0266_role_additional_roles.py"
 NEW_ROLES = ["RELEASE_MANAGER", "PROJECT_MANAGER", "PRODUCT_MANAGER", "DEVELOPER", "AGENT"]
 
 
 def _load():
-    spec = importlib.util.spec_from_file_location("migration_0261", MIGRATION)
+    spec = importlib.util.spec_from_file_location("migration_0266", MIGRATION)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
 
 
-def test_0261_follows_0260():
+def test_0266_follows_0265():
     module = _load()
-    assert (module.revision, module.down_revision) == ("0261", "0260")
+    assert (module.revision, module.down_revision) == ("0266", "0265")
 
 
 def test_upgrade_adds_a_nullable_column_to_three_tables(monkeypatch):
