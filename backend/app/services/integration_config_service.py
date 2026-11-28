@@ -40,6 +40,7 @@ from app.core.config import settings
 from app.core.integration_values import valid_splunk_index
 from app.core.sample_values import configured_value
 from app.models.postgres import AppSetting, Project
+from app.services.prometheus_policy import prometheus_offline_reason
 from app.services.secret_service import read_secret
 
 logger = structlog.get_logger("services.integration_config")
@@ -324,8 +325,9 @@ class IntegrationRuntimeConfig:
         """offline_mode | disabled | not_configured | None (offline read LIVE, D19: no offline exception).
 
         The egress host check is separate (``url_safety.egress_block_reason``, async)."""
-        if settings.AI_OFFLINE_MODE:
-            return "offline_mode"
+        offline_reason = prometheus_offline_reason()
+        if offline_reason is not None:
+            return offline_reason
         if not self.prometheus_enabled:
             return "disabled"
         if not _text(self.prometheus_base_url):

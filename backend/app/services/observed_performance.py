@@ -39,6 +39,7 @@ from typing import Any, Optional
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.core.config import settings
+from app.services.prometheus_policy import prometheus_offline_reason
 
 logger = logging.getLogger(__name__)
 
@@ -317,6 +318,9 @@ async def _in_app_counts(redis: Any, window_seconds: int, now: Optional[float] =
 
 async def _prometheus_rows(budgets: list, window: str) -> Optional[dict[str, dict[str, Any]]]:
     """Per operation ``{p50, p95, p99, count}`` from Prometheus, or None when it cannot answer."""
+    if prometheus_offline_reason() is not None:
+        return None
+
     import httpx
 
     from app.core.http_client import http_verify
